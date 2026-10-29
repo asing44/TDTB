@@ -55,11 +55,11 @@ function initDraft(
 }
 
 const INTAKE_STATE_TEXT: Record<string, string> = {
-  not_configured: "No Capacities source is configured.",
-  refresh_required: "A refresh is required before candidates can be reviewed.",
-  unavailable: "The direct intake is unavailable; no Capacities rows are being served.",
-  degraded: "The direct intake is degraded; rows are served with warnings.",
-  ok: "The direct intake is healthy.",
+  not_configured: "Capacities is not set up yet.",
+  refresh_required: "Refresh first; then these items can be reviewed.",
+  unavailable: "Capacities items are unavailable right now, so none are being used.",
+  degraded: "Capacities items are being read, with warnings.",
+  ok: "Capacities items are being read normally.",
 };
 
 export function CapacitiesUnknownReview({ active }: { active: boolean }) {
@@ -114,7 +114,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
 
   const save = async () => {
     if (!selections) {
-      setError("Selections are not loaded; reload before saving.");
+      setError("Your choices have not loaded; reload before saving.");
       return;
     }
     const currentIds = new Set(selections.selections.map((entry) => entry.identity));
@@ -131,7 +131,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       }
     }
     if (select.length === 0 && deselect.length === 0) {
-      setNotice("No selection changes to save.");
+      setNotice("No changes to save.");
       return;
     }
     setSaving(true);
@@ -148,8 +148,8 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       setDraft(initDraft(saved, candidates));
       setNotice(
         refreshError
-          ? `Selections saved; planning refresh failed: ${refreshError}`
-          : "Selections saved; plan inputs refreshed.",
+          ? `Saved; updating your plan failed: ${refreshError}`
+          : "Saved; your plan is updated.",
       );
       setPhase("ready");
     } catch (e) {
@@ -177,7 +177,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
 
   const okayToPlanAll = async () => {
     if (!selections) {
-      setError("Selections are not loaded; reload before saving.");
+      setError("Your choices have not loaded; reload before saving.");
       return;
     }
     if (unacknowledgedReviewRows.length === 0) return;
@@ -199,8 +199,8 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       setDraft(initDraft(saved, candidates));
       setNotice(
         refreshError
-          ? `Added ${count} review rows to today's plan; planning refresh failed: ${refreshError}`
-          : `Added ${count} review rows to today's plan; plan inputs refreshed.`,
+          ? `Added ${count} items to today's plan; updating your plan failed: ${refreshError}`
+          : `Added ${count} items to today's plan; your plan is updated.`,
       );
       setPhase("ready");
     } catch (e) {
@@ -224,56 +224,64 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       data-settings-section="unknown"
     >
       <div class="setup-section__head">
-        <h3 id="capacities-sec-unknown">Unknown candidate review</h3>
+        <h3 id="capacities-sec-unknown">Items that need a look</h3>
         {selections && (
-          <span class="capacities-settings__revision">Selections revision {selections.revision}</span>
+          <span class="capacities-settings__revision">Saved (version {selections.revision})</span>
         )}
       </div>
       <div class="setup-section__body">
         <p class="capacities-settings__hint">
-          These are Capacities objects the intake could not place on its own.
-          Selecting one promotes it by stable identity; a candidate that carries
-          review reasons stays flagged, and selecting it is enough to plan it.
+          These are Capacities items we could not place on our own. Include an
+          item to let it into your plan; a flagged one stays flagged, and
+          including it is enough. Nothing here blocks planning or committing.
         </p>
 
         {intake ? (
-          <dl class="capacities-status__grid">
-            <div class="capacities-status__cell">
-              <dt>Intake</dt>
-              <dd>{INTAKE_STATE_TEXT[intake.state] ?? intake.state}</dd>
-            </div>
-            <div class="capacities-status__cell">
-              <dt>Generation</dt>
-              <dd>{intake.generation ?? "—"}</dd>
-            </div>
-            <div class="capacities-status__cell">
-              <dt>Coverage</dt>
-              <dd>
-                {intake.coverage.evaluated} / {intake.coverage.members} evaluated ·{" "}
-                {intake.coverage.malformed} malformed · {intake.coverage.unreadable} unreadable
-              </dd>
-            </div>
-          </dl>
+          <>
+            <p class="capacities-settings__state" role="status">
+              {INTAKE_STATE_TEXT[intake.state] ?? intake.state}
+            </p>
+            <details class="settings-hub__details">
+              <summary>Technical details</summary>
+              <dl class="capacities-status__grid">
+                <div class="capacities-status__cell">
+                  <dt>Intake</dt>
+                  <dd>{intake.state}</dd>
+                </div>
+                <div class="capacities-status__cell">
+                  <dt>Generation</dt>
+                  <dd>{intake.generation ?? "—"}</dd>
+                </div>
+                <div class="capacities-status__cell">
+                  <dt>Coverage</dt>
+                  <dd>
+                    {intake.coverage.evaluated} / {intake.coverage.members} evaluated ·{" "}
+                    {intake.coverage.malformed} malformed · {intake.coverage.unreadable} unreadable
+                  </dd>
+                </div>
+              </dl>
+            </details>
+          </>
         ) : (
           <p class="capacities-settings__empty" role="status">
-            This build reports no direct-intake block, so there are no candidates to review.
+            No item information is available, so there is nothing to look at.
           </p>
         )}
 
         {phase === "loading" && (
-          <p class="capacities-settings__state" role="status">Loading selections…</p>
+          <p class="capacities-settings__state" role="status">Loading your choices…</p>
         )}
         {phase === "error" && (
           <section class="capacities-settings__error" role="alert">
-            <strong>Selections could not be read</strong>
+            <strong>Your choices could not be read</strong>
             <span>{error}</span>
-            <button class="btn" onClick={() => void load()}>Reload selections</button>
+            <button class="btn" onClick={() => void load()}>Try again</button>
           </section>
         )}
 
         {phase === "ready" && unconfigured && (
           <p class="capacities-settings__empty" role="status">
-            No Capacities source is configured; there is nothing to select.
+            Capacities is not set up yet; there is nothing to choose.
           </p>
         )}
 
@@ -282,30 +290,30 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
             {conflict && (
               <div class="capacities-settings__save-error" role="alert">
                 <span>
-                  Selections changed since they were read (stored revision {conflict.currentRevision},
-                  expected {conflict.expectedRevision}). Your selection is preserved; reload to review
-                  the newer record before saving.
+                  Your choices changed elsewhere since you opened this (saved version {conflict.currentRevision},
+                  you had {conflict.expectedRevision}). Your selection here is kept; reload to see the
+                  newer version before saving.
                 </span>
-                <button class="btn" onClick={() => void load()}>Reload selections</button>
+                <button class="btn" onClick={() => void load()}>Try again</button>
               </div>
             )}
             {error && !conflict && (
               <div class="capacities-settings__save-error" role="alert">
                 <span>{error}</span>
-                <button class="btn" onClick={() => void load()}>Reload selections</button>
+                <button class="btn" onClick={() => void load()}>Try again</button>
               </div>
             )}
             {notice && <div class="capacities-rule__notice" role="status">{notice}</div>}
 
             {candidates.length === 0 ? (
-              <p class="capacities-settings__empty">No unknown candidates are waiting for review.</p>
+              <p class="capacities-settings__empty">Nothing needs a look right now.</p>
             ) : (
               <>
               {unacknowledgedReviewRows.length >= 2 && (
                 <button
                   class="btn"
                   disabled={ackBusy || saving || selections === null}
-                  aria-label={`Okay to plan all ${unacknowledgedReviewRows.length} review rows`}
+                  aria-label={`Okay to plan all ${unacknowledgedReviewRows.length} items`}
                   onClick={() => void okayToPlanAll()}
                 >
                   {ackBusy
@@ -313,7 +321,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                     : `Okay to plan all (${unacknowledgedReviewRows.length})`}
                 </button>
               )}
-              <div class="capacities-object-list" role="group" aria-label="Unknown Capacities candidates">
+              <div class="capacities-object-list" role="group" aria-label="Items that need a look">
                 {candidates.map((candidate) => {
                   const entry = draft[candidate.identity] ?? { selected: false, acknowledged: false };
                   const canonical = isCanonicalCapacitiesIdentity(candidate.identity);
@@ -324,9 +332,9 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                         <strong>{candidate.name || candidate.identity}</strong>
                         <code>{candidate.identity}</code>
                         {requiresAck && (
-                          <small>Review reasons: {candidate.reviewReasons.join(", ")}</small>
+                          <small>Why it was flagged: {candidate.reviewReasons.join(", ")}</small>
                         )}
-                        {!canonical && <small class="field-error">Not a canonical identity — cannot be selected.</small>}
+                        {!canonical && <small class="field-error">This item's id is not valid, so it can't be chosen.</small>}
                       </div>
                       <div class="capacities-unknown__controls">
                         <label class="capacities-object-row__toggle">
@@ -334,20 +342,20 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                             type="checkbox"
                             checked={entry.acknowledged}
                             disabled={!requiresAck}
-                            aria-label={`Acknowledge ${candidate.identity}`}
+                            aria-label={`Mark ${candidate.identity} as okay`}
                             onChange={() => toggleAck(candidate)}
                           />
-                          <span>Acknowledged</span>
+                          <span>Marked okay</span>
                         </label>
                         <label class="capacities-object-row__toggle">
                           <input
                             type="checkbox"
                             checked={entry.selected}
                             disabled={!canonical}
-                            aria-label={`Select ${candidate.identity}`}
+                            aria-label={`Include ${candidate.identity} in my plan`}
                             onChange={() => toggleSelect(candidate)}
                           />
-                          <span>{entry.selected ? "Selected" : "Not selected"}</span>
+                          <span>{entry.selected ? "Included" : "Left out"}</span>
                         </label>
                       </div>
                     </div>
@@ -363,7 +371,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                 disabled={saving || ackBusy || selections === null}
                 onClick={() => void save()}
               >
-                {saving ? "Saving…" : "Save selections"}
+                {saving ? "Saving…" : "Save choices"}
               </button>
             </div>
           </>

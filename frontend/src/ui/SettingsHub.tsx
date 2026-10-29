@@ -1,6 +1,7 @@
-/* SettingsHub — the body of the one Settings dialog: a status summary line and
-   five plain-language questions, each opening its panel beneath it (an
-   accordion of real buttons with aria-expanded/aria-controls). SettingsShell
+/* SettingsHub — the body of the one Settings dialog: a status summary line, a compact
+   grid of five plain-language entry buttons that always stays in view, and
+   the one open entry's panel beneath the grid (buttons with
+   aria-expanded/aria-controls). SettingsShell
    owns the dialog chrome and focus; the hub owns the entries.
 
    Every panel body stays mounted for the life of the shell so unsaved drafts
@@ -108,7 +109,6 @@ export function SettingsHub() {
         return (
           <>
             <CapacitiesRefreshPanel active={here} />
-            {here && <h3 class="settings-hub__sub">Items that need a look</h3>}
             <CapacitiesUnknownReview active={here} />
             <Fold title="Todoist and Calendar" note="status of each" live={here}>
               {() => (
@@ -169,6 +169,7 @@ export function SettingsHub() {
       case "repair":
         return (
           <>
+            {here && <h3 class="settings-hub__sub">Repair connections</h3>}
             <p class="settings-hub__muted">
               Only needed when something looks wrong. It is folded away so it cannot be changed by accident.
             </p>
@@ -226,19 +227,22 @@ export function SettingsHub() {
                 </span>
                 <span aria-hidden="true">{expanded ? "▾" : "›"}</span>
               </button>
-              <div
-                class="settings-hub__panel"
-                id={hubPanelId(entry.id)}
-                role="region"
-                aria-labelledby={hubEntryId(entry.id)}
-                hidden={!expanded}
-              >
-                {body(entry.id)}
-              </div>
             </li>
           );
         })}
       </ul>
+      {HUB_ENTRIES.map((entry) => (
+        <div
+          key={entry.id}
+          class="settings-hub__panel"
+          id={hubPanelId(entry.id)}
+          role="region"
+          aria-labelledby={hubEntryId(entry.id)}
+          hidden={!isOpen(entry.id)}
+        >
+          {body(entry.id)}
+        </div>
+      ))}
     </div>
   );
 }

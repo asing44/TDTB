@@ -214,7 +214,7 @@ export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
                 <h3 id="tag-exclusion-sec-list">Excluded tags</h3>
                 <span class="tag-exclusion-settings__revision">
                   {settings.persisted
-                    ? `Saved revision ${settings.revision}`
+                    ? `Saved (version ${settings.revision})`
                     : "Using defaults"}
                 </span>
               </div>

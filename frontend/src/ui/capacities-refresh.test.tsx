@@ -1,10 +1,10 @@
-/* capacities-refresh.test.tsx — one explicit "Refresh sources" control.
+/* capacities-refresh.test.tsx — one explicit "Refresh now" control.
 
-   Covers: the single Refresh sources action (mode refresh, scope all) and the
-   absence of a Rescan control, the wait countdown with read progress, Cancel
-   while waiting, the published run summary, a failed run's outcome and
-   warnings, polling only while a job is active, and no polling after
-   unmount. */
+   Covers: the single Refresh now action (mode refresh, scope all) and the
+   absence of a Rescan control, the wait countdown with read progress, Stop
+   refresh while waiting, the finished-run summary, a failed run's outcome and
+   warnings, the raw values behind the closed "Technical details" disclosure,
+   polling only while a job is active, and no polling after unmount. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
@@ -88,7 +88,7 @@ async function openRefresh() {
   const h = makeHarness("ready");
   h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
-  await waitFor(() => expect(rendered.getByRole("button", { name: "Refresh sources" })).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(rendered.getByRole("button", { name: "Refresh now" })).toBeTruthy(), { timeout: 5000 });
   const section = rendered.container.querySelector('[data-settings-section="refresh"]') as HTMLElement;
   return { h, rendered, section };
 }
@@ -125,30 +125,30 @@ describe("refreshProgressText", () => {
 });
 
 describe("CapacitiesRefreshPanel", () => {
-  it("offers only Refresh sources and cancels the active job", async () => {
+  it("offers only Refresh now and stops the active job", async () => {
     const { h, rendered, section } = await openRefresh();
 
     expect(within(section).queryByRole("button", { name: /rescan/i })).toBeNull();
     expect(rendered.queryByText(/Rescan additionally re-lists structures/)).toBeNull();
 
     const start = vi.spyOn(h.controller, "startCapacitiesRefresh");
-    fireEvent.click(within(section).getByRole("button", { name: "Refresh sources" }));
+    fireEvent.click(within(section).getByRole("button", { name: "Refresh now" }));
     await waitFor(() => expect(start).toHaveBeenCalledWith("refresh", "all"));
-    await waitFor(() => expect(rendered.getByRole("button", { name: "Cancel refresh" })).toBeTruthy());
+    await waitFor(() => expect(rendered.getByRole("button", { name: "Stop refresh" })).toBeTruthy());
 
     // Deliberate replacement of the former `toHaveBeenCalledWith("rescan", "all")`
     // assertion: the panel has no second mode to start.
     expect(start.mock.calls.every(([mode]) => mode === "refresh")).toBe(true);
 
-    fireEvent.click(within(section).getByRole("button", { name: "Cancel refresh" }));
-    // The outcome cell and the finish summary both name the outcome.
-    await waitFor(() => expect(rendered.getAllByText(/Cancelled/).length).toBeGreaterThan(0));
+    fireEvent.click(within(section).getByRole("button", { name: "Stop refresh" }));
+    // The finished-run summary names the outcome in plain words.
+    await waitFor(() => expect(rendered.getByText(/Stopped early/)).toBeTruthy());
     await waitFor(() =>
-      expect(rendered.queryByRole("button", { name: "Cancel refresh" })).toBeNull(),
+      expect(rendered.queryByRole("button", { name: "Stop refresh" })).toBeNull(),
     );
   });
 
-  it("counts the wait down and offers Cancel while waiting", async () => {
+  it("counts the wait down and offers Stop refresh while waiting", async () => {
     vi.useFakeTimers({ now: new Date("2026-10-19T12:00:00Z") });
     const resumeAt = Math.round(Date.now() / 1000) + 40;
     const waiting: CapacitiesRefreshWaiting = {
@@ -165,12 +165,12 @@ describe("CapacitiesRefreshPanel", () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(rendered.container.textContent).toContain(
-      "Capacities busy, resuming in 40s · 176/227",
+      "Waiting for Capacities to allow more requests (about 40 s) · read 176 of 227",
     );
-    expect(rendered.getByRole("button", { name: "Cancel refresh" })).toBeTruthy();
+    expect(rendered.getByRole("button", { name: "Stop refresh" })).toBeTruthy();
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(rendered.container.textContent).toContain("Capacities busy, resuming in 39s");
+    expect(rendered.container.textContent).toContain("about 39 s");
 
     rendered.unmount();
     await vi.advanceTimersByTimeAsync(2000);
@@ -187,12 +187,18 @@ describe("CapacitiesRefreshPanel", () => {
       }),
     );
     const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
-    await waitFor(() => expect(rendered.queryByText(/Finished /)).toBeTruthy());
+    await waitFor(() => expect(rendered.queryByText(/Last refreshed /)).toBeTruthy());
 
-    const summary = rendered.queryByText(/Finished /)!.textContent ?? "";
-    expect(summary).toContain("Published a new complete generation.");
-    expect(summary).toContain("176 read, 51 reused");
-    expect(rendered.queryByRole("button", { name: "Cancel refresh" })).toBeNull();
+    const summary = rendered.queryByText(/Last refreshed /)!.textContent ?? "";
+    expect(summary).toContain("Up to date.");
+    expect(summary).toContain("Read 176 items, reused 51.");
+    // The plain summary is the only place the outcome appears: the headline
+    // line must not repeat (or contradict) it on the next row.
+    const outcomeLines = Array.from(rendered.container.querySelectorAll("p")).filter((el) =>
+      el.textContent?.includes("Up to date."),
+    );
+    expect(outcomeLines).toHaveLength(1);
+    expect(rendered.queryByRole("button", { name: "Stop refresh" })).toBeNull();
   });
 
   it("shows a failed run's outcome and warnings", async () => {
@@ -207,13 +213,41 @@ describe("CapacitiesRefreshPanel", () => {
       }),
     );
     const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
-    await waitFor(() => expect(rendered.queryByText(/Finished /)).toBeTruthy());
+    await waitFor(() => expect(rendered.queryByText(/Last refreshed /)).toBeTruthy());
 
-    expect(rendered.queryByText(/Finished /)!.textContent).toContain(
-      "No Capacities rows were produced; nothing was published.",
+    expect(rendered.queryByText(/Last refreshed /)!.textContent).toContain(
+      "Capacities returned no items, so nothing was updated.",
     );
     expect(rendered.getByText("Capacities run failed: provider returned 500")).toBeTruthy();
-    expect(rendered.queryByRole("button", { name: "Cancel refresh" })).toBeNull();
+    expect(rendered.queryByRole("button", { name: "Stop refresh" })).toBeNull();
+  });
+
+  it("keeps the raw values in a Technical details disclosure closed by default", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(
+      statusWith({
+        phase: "complete",
+        outcome: "published",
+        finishedAt: Date.UTC(2026, 9, 19, 12, 34, 0) / 1000,
+        progress: { listed: 227, read: 176, toRead: 227 },
+      }),
+    );
+    const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
+    await waitFor(() => expect(rendered.queryByText(/Last refreshed /)).toBeTruthy());
+
+    const details = rendered.container.querySelector(
+      "details.settings-hub__details",
+    ) as HTMLDetailsElement;
+    expect(details).toBeTruthy();
+    // Closed by default: the plain words are the surface, raw values are opt-in.
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toBe("Technical details");
+    const raw = details.textContent ?? "";
+    expect(raw).toContain("published");
+    expect(raw).toContain("complete");
+    expect(raw).toContain("227 listed · 176 read");
+    // The plain summary is not hidden inside the disclosure it explains.
+    expect(rendered.queryByText(/Last refreshed /)!.closest("details")).toBeNull();
   });
 
   it("polls while a job is active and stops after unmount", async () => {

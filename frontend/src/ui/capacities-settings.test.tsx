@@ -39,55 +39,55 @@ describe("CapacitiesSettingsDrawer", () => {
   it("loads native rules and lists known Capacities identities without inventing inventory", async () => {
     const { rendered } = openWithCapacityRow();
     expect(rendered.getAllByRole("status").some((el: HTMLElement) => el.textContent?.includes("Loading local policy"))).toBe(true);
-    await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Automatic task rules")).toBeTruthy());
 
-    expect(rendered.getByText("Known Capacities objects")).toBeTruthy();
+    expect(rendered.getByText("Known Capacities items")).toBeTruthy();
     expect(rendered.getByText("Capacity task")).toBeTruthy();
     expect(rendered.getByText("capacities:space-1:RootTask:task-1")).toBeTruthy();
     expect(rendered.getByRole("checkbox", { name: /Active status/ })).toBeTruthy();
-    expect((rendered.getByLabelText("Deadline horizon") as HTMLInputElement).value).toBe("2");
-    expect(rendered.getByText(/not a provider inventory browser/)).toBeTruthy();
+    expect((rendered.getByLabelText("Deadline coming up") as HTMLInputElement).value).toBe("2");
+    expect(rendered.getByText(/not a full browser of Capacities/)).toBeTruthy();
   });
 
   it("explains native rules from the section heading and the per-structure label", async () => {
     const { rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Automatic task rules")).toBeTruthy());
 
     // The affordance is reachable by role and accessible name, and it is not
     // a pointer-only native title=.
-    const section = rendered.getByRole("heading", { name: "Native Task Auto rules" }).closest(
+    const section = rendered.getByRole("heading", { name: "Automatic task rules" }).closest(
       ".setup-section",
     ) as HTMLElement;
-    const headingInfo = within(section).getByRole("button", { name: "What native rules are" });
+    const headingInfo = within(section).getByRole("button", { name: "What automatic task rules are" });
     expect(headingInfo.getAttribute("title")).toBeNull();
     expect(rendered.queryByRole("tooltip")).toBeNull();
 
     // Focus produces the bubble and wires the trigger to it.
     fireEvent.focus(headingInfo);
     const tooltip = rendered.getByRole("tooltip");
-    expect(tooltip.textContent).toContain("Native rules");
-    expect(tooltip.textContent).toMatch(/built-in admission rules/i);
-    expect(tooltip.textContent).toMatch(/due date is today or earlier/i);
-    expect(tooltip.textContent).toMatch(/deadline is overdue or within the horizon/i);
+    expect(tooltip.textContent).toContain("Automatic task rules");
+    expect(tooltip.textContent).toMatch(/built-in rules that decide which tasks come in/i);
+    expect(tooltip.textContent).toMatch(/due today or earlier/i);
+    expect(tooltip.textContent).toMatch(/deadline is overdue or coming up soon/i);
     expect(tooltip.textContent).toMatch(/completed and dropped/i);
-    expect(tooltip.textContent).toMatch(/own per-structure rule/i);
+    expect(tooltip.textContent).toMatch(/follows only its own rule/i);
     // The assignment mapping is a separate concern and must not blend in here.
     expect(tooltip.textContent).not.toMatch(/assigned/i);
     expect(headingInfo.getAttribute("aria-describedby")).toBe(tooltip.getAttribute("id"));
     fireEvent.blur(headingInfo);
     expect(rendered.queryByRole("tooltip")).toBeNull();
 
-    // The per-structure "Native rules on / off" label carries the same text.
+    // The per-structure "Automatic rules on / off" label carries the same text.
     const row = rendered
       .getByRole("checkbox", { name: "Native admission for custom-project" })
       .closest(".capacities-object-row") as HTMLElement;
-    const rowInfo = within(row).getByRole("button", { name: "What native rules are" });
+    const rowInfo = within(row).getByRole("button", { name: "What automatic task rules are" });
     // This trigger sits at the right edge of the panel, so its bubble is
     // right-aligned; a centred one runs past the window and clips its text.
     expect(rowInfo.closest(".tooltip-anchor")?.className).toContain("tooltip-anchor--end");
     fireEvent.focus(rowInfo);
     const rowTooltip = rendered.getByRole("tooltip");
-    expect(rowTooltip.textContent).toMatch(/built-in admission rules/i);
+    expect(rowTooltip.textContent).toMatch(/built-in rules that decide which tasks come in/i);
     expect(rowInfo.getAttribute("aria-describedby")).toBe(rowTooltip.getAttribute("id"));
     fireEvent.blur(rowInfo);
     expect(rendered.queryByRole("tooltip")).toBeNull();
@@ -99,7 +99,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
     fireEvent.click(rendered.getByRole("checkbox", { name: /Available to TDTB/ }));
     fireEvent.click(rendered.getByRole("checkbox", { name: /Active status/ }));
-    fireEvent.input(rendered.getByLabelText("Deadline horizon"), { target: { value: "5" } });
+    fireEvent.input(rendered.getByLabelText("Deadline coming up"), { target: { value: "5" } });
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
 
     fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
@@ -164,7 +164,7 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Automatic task rules")).toBeTruthy());
 
     // Toggle a native Task Auto control — the save path that, before the fix,
     // silently cleared active_structures via the full-replacement body.
@@ -198,10 +198,10 @@ describe("CapacitiesSettingsDrawer", () => {
 
   it("adds a checked available structure to the outgoing save body", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
 
     const custom = rendered.getByRole("checkbox", {
-      name: "Active pull for custom-project",
+      name: "Bring in Active items for custom-project",
     }) as HTMLInputElement;
     expect(custom.checked).toBe(false);
     fireEvent.click(custom);
@@ -242,10 +242,10 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
 
     const custom = rendered.getByRole("checkbox", {
-      name: "Active pull for custom-project",
+      name: "Bring in Active items for custom-project",
     }) as HTMLInputElement;
     expect(custom.checked).toBe(true);
     fireEvent.click(custom);
@@ -284,10 +284,10 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
 
     // The stale id is surfaced rather than hidden.
-    expect(rendered.getByText(/Active structures outside the source mapping/)).toBeTruthy();
+    expect(rendered.getByText(/Active-item types that are not set up to appear/)).toBeTruthy();
     expect(rendered.getByText("legacy-structure")).toBeTruthy();
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
@@ -327,10 +327,10 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
 
-    expect(rendered.getByText(/No Capacities structures are configured/)).toBeTruthy();
-    expect(rendered.queryByRole("checkbox", { name: /Active pull for/ })).toBeNull();
+    expect(rendered.getByText(/No Capacities types are set up yet/)).toBeTruthy();
+    expect(rendered.queryByRole("checkbox", { name: /Bring in Active items for/ })).toBeNull();
   });
 
   it("renders both admission keys, reusing the available-structure inventory", async () => {
@@ -359,11 +359,11 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("What counts as active")).toBeTruthy());
 
     // The structure list is the same source mapping the Active
     // pull editor already enumerates — no new discovery path.
-    expect(rendered.getByText(/same inventory as Active pull/)).toBeTruthy();
+    expect(rendered.getByText(/same list as Bring in Active items/)).toBeTruthy();
     expect(
       (rendered.getByRole("checkbox", { name: "Native admission for custom-project" }) as HTMLInputElement).checked,
     ).toBe(true);
@@ -376,7 +376,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
   it("always sends both admission keys on an untouched save", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("What counts as active")).toBeTruthy());
 
     // Nothing in the admission section was edited. Full replacement still
     // requires both keys to be present, or the server resets them.
@@ -391,7 +391,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
   it("always sends the assignment declarations on an untouched save", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
 
     // Nothing in the declarations section was edited. The save route is a
     // full replacement, so the key must still ride along or the server would
@@ -408,9 +408,9 @@ describe("CapacitiesSettingsDrawer", () => {
 
   it("declares a per-structure assignment property with a text input", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
 
-    const input = rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement;
+    const input = rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement;
     expect(input.value).toBe("");
     fireEvent.input(input, { target: { value: "assigned-prop-id" } });
     expect(input.value).toBe("assigned-prop-id");
@@ -449,9 +449,9 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
 
-    const input = rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement;
+    const input = rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement;
     expect(input.value).toBe("old-prop");
     fireEvent.input(input, { target: { value: "" } });
 
@@ -490,12 +490,12 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped. (The native and active
     // stale blocks use the same wording, so count rather than pick one.)
-    expect(rendered.getByText(/Declared structures outside the source mapping/)).toBeTruthy();
-    expect(rendered.getAllByText(/retained unchanged on save/).length).toBeGreaterThan(0);
+    expect(rendered.getByText(/Types with settings that are not set up to appear/)).toBeTruthy();
+    expect(rendered.getAllByText(/kept as they are when you save/).length).toBeGreaterThan(0);
     expect(rendered.getByText("legacy-declared")).toBeTruthy();
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
@@ -548,7 +548,7 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Ignored declarations in the current read")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Settings we skipped")).toBeTruthy());
 
     // The server's own wording, passed through unchanged — never paraphrased.
     expect(rendered.getByText(warning)).toBeTruthy();
@@ -556,7 +556,7 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(rendered.queryByText(coverage)).toBeNull();
     // The declaration stays editable so the operator can correct it.
     expect(
-      (rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement).value,
+      (rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement).value,
     ).toBe("assigned-prop");
   });
 
@@ -586,10 +586,10 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("What counts as active")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped.
-    expect(rendered.getByText(/Native structures outside the source mapping/)).toBeTruthy();
+    expect(rendered.getByText(/Types not set up to appear \(automatic rules\)/)).toBeTruthy();
     expect(rendered.getByText("legacy-native")).toBeTruthy();
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
@@ -658,7 +658,7 @@ describe("CapacitiesSettingsDrawer", () => {
     const groupNames = [
       "Capacities structures admitted to the native Task Auto rules",
       "Capacities structures with a declared assignment property",
-      "Capacities structures honouring an Active status pull",
+      "Capacities types that bring in Active items",
     ];
     await waitFor(() =>
       expect(rendered.getByRole("group", { name: groupNames[2] })).toBeTruthy(),
@@ -684,7 +684,7 @@ describe("CapacitiesSettingsDrawer", () => {
     // The title is display-only: the accessible name still keys on the id.
     expect(
       rendered.getByRole("checkbox", {
-        name: "Active pull for 0d194525-c5a1-4af5-bb62-202b83006b5e",
+        name: "Bring in Active items for 0d194525-c5a1-4af5-bb62-202b83006b5e",
       }),
     ).toBeTruthy();
   });
@@ -756,7 +756,7 @@ describe("CapacitiesSettingsDrawer", () => {
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() =>
-      expect(rendered.getByText(/Active structures outside the source mapping/)).toBeTruthy(),
+      expect(rendered.getByText(/Active-item types that are not set up to appear/)).toBeTruthy(),
     );
 
     // The stale id is outside the source mapping, so it keeps the raw id

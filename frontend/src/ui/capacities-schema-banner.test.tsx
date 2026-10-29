@@ -24,7 +24,7 @@ const SUMMARY =
   "Capacities changed since the last refresh: 1 status option removed. Review the mapping in Connections.";
 const INFO_SUMMARY =
   "Capacities changed since the last refresh: 2 properties added. Review the mapping in Connections.";
-const ACK_NAME = "Acknowledge Capacities change";
+const ACK_NAME = "Dismiss the Capacities change notice";
 
 afterEach(() => {
   cleanup();
@@ -217,7 +217,7 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
     );
 
     const banner = rendered.getByRole("alert");
-    const warnings = rendered.getByText("Warnings");
+    const warnings = rendered.getByText("Heads-up from the last refresh");
 
     // DOCUMENT_POSITION_FOLLOWING means the Warnings heading comes after the
     // banner in document order.
@@ -229,7 +229,7 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
 
     // "Warnings" only appears for the job's own warnings, never for the
     // advisory schema change.
-    expect(rendered.queryByText("Warnings")).toBeNull();
+    expect(rendered.queryByText("Heads-up from the last refresh")).toBeNull();
     expect(rendered.getByRole("alert").textContent).toContain(SUMMARY);
   });
 });

@@ -118,7 +118,7 @@ export function NeedsALookBanner() {
   const okayRows = async (rows: CapacitiesIntakeCandidate[]) => {
     if (!selections || rows.length === 0) return;
     const count = rows.length;
-    const noun = count === 1 ? "review row" : "review rows";
+    const noun = count === 1 ? "item" : "items";
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -187,7 +187,7 @@ export function NeedsALookBanner() {
           class="btn btn--primary"
           type="button"
           disabled={busy}
-          aria-label={`Okay to plan all ${pending.length} review rows`}
+          aria-label={`Okay to plan all ${pending.length} items`}
           onClick={() => void okayRows(pending)}
         >
           {busy ? "Planning…" : `Okay to plan all (${pending.length})`}

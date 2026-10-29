@@ -117,7 +117,7 @@ async function openEditor(
   fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
   await waitFor(() =>
     expect(
-      rendered.getByRole("heading", { name: "Capacities source mapping" }),
+      rendered.getByRole("heading", { name: "Capacities setup (technical details)" }),
     ).toBeTruthy(),
   );
   return { h, rendered, loadSource };
@@ -129,7 +129,7 @@ describe("CapacitiesSourceEditor", () => {
 
     await waitFor(() =>
       expect(
-        rendered.getByText(/No Capacities source mapping has been saved/),
+        rendered.getByText(/No Capacities setup has been saved/),
       ).toBeTruthy(),
     );
     // An absent record is a first visit, not a failure.
@@ -150,7 +150,7 @@ describe("CapacitiesSourceEditor", () => {
     const { h, rendered } = await openEditor({ source: null, persisted: false });
     await waitFor(() =>
       expect(
-        rendered.getByText(/No Capacities source mapping has been saved/),
+        rendered.getByText(/No Capacities setup has been saved/),
       ).toBeTruthy(),
     );
 
@@ -210,7 +210,7 @@ describe("CapacitiesSourceEditor", () => {
         },
       ],
     });
-    await waitFor(() => expect(rendered.getByText("Saved revision 1")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Saved (version 1)")).toBeTruthy());
   });
 
   it("sends every field of every structure plus the loaded revision on save", async () => {
@@ -241,7 +241,7 @@ describe("CapacitiesSourceEditor", () => {
 
     const draft = save.mock.calls[0][0];
     await waitFor(() =>
-      expect(rendered.getByText(/^Saved revision 5 at /)).toBeTruthy(),
+      expect(rendered.getByText(/^Saved \(version 5\) at /)).toBeTruthy(),
     );
     expect(draft).toEqual({
       expectedRevision: 4,
@@ -338,7 +338,7 @@ describe("CapacitiesSourceEditor", () => {
     const review = await waitFor(() => rendered.getByText(/Re-read the record/));
     expect(review.textContent).toContain("revision 7 with 1 structure (Project)");
     expect(rendered.queryByRole("button", { name: "Reload and review" })).toBeNull();
-    expect(rendered.getByText("Saved revision 7")).toBeTruthy();
+    expect(rendered.getByText("Saved (version 7)")).toBeTruthy();
     // Nothing was dropped by the reload: both draft rows and the edit remain.
     expect(rendered.getByLabelText("Structure ID for Project")).toBeTruthy();
     expect(rendered.getByLabelText("Structure ID for Task")).toBeTruthy();
@@ -542,7 +542,7 @@ describe("CapacitiesSourceEditor", () => {
       expect(rendered.getByLabelText("Structure ID for Project")).toBeTruthy(),
     );
     const section = rendered
-      .getByRole("heading", { name: "Capacities source mapping" })
+      .getByRole("heading", { name: "Capacities setup (technical details)" })
       .closest("section") as HTMLElement;
 
     // The observed title leads...
@@ -696,7 +696,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       .mockResolvedValue(catalogFixture);
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     await waitFor(() => expect(discover).toHaveBeenCalledTimes(1));
     // Discovery reads the draft's CURRENT space id.
@@ -741,7 +741,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     const { h, rendered } = await openEditor({ source: null, persisted: false });
     await waitFor(() =>
       expect(
-        rendered.getByText(/No Capacities source mapping has been saved/),
+        rendered.getByText(/No Capacities setup has been saved/),
       ).toBeTruthy(),
     );
     fireEvent.input(rendered.getByLabelText("Capacities space id"), {
@@ -752,7 +752,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     );
     const save = vi.spyOn(h.controller, "saveCapacitiesSource");
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
 
     const add = await waitFor(() =>
@@ -833,7 +833,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     );
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     const alert = await waitFor(() => rendered.getByRole("alert"));
     expect(alert.textContent).toContain(
@@ -893,7 +893,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       ),
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     const credentials = await waitFor(() => {
       const next = rendered.getByRole("alert");
@@ -916,7 +916,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       ),
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     const rateLimited = await waitFor(() => {
       const next = rendered.getByRole("alert");
@@ -939,7 +939,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       ),
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     const generic = await waitFor(() => {
       const next = rendered.getByRole("alert");
@@ -967,12 +967,12 @@ describe("CapacitiesSourceEditor discovery", () => {
     );
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     await waitFor(() =>
       expect(
         (
-          rendered.getByRole("button", { name: "Discovering…" }) as HTMLButtonElement
+          rendered.getByRole("button", { name: "Looking up…" }) as HTMLButtonElement
         ).disabled,
       ).toBe(true),
     );
@@ -982,7 +982,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       expect(
         (
           rendered.getByRole("button", {
-            name: "Discover from Capacities",
+            name: "Look up properties in Capacities",
           }) as HTMLButtonElement
         ).disabled,
       ).toBe(false),
@@ -1013,7 +1013,7 @@ describe("CapacitiesSourceEditor discovery", () => {
       });
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     await waitFor(() => expect(discover).toHaveBeenCalledWith("space-42"));
     const catalog = await waitFor(() =>
@@ -1041,7 +1041,7 @@ describe("CapacitiesSourceEditor field choices", () => {
     const { h, rendered } = await openEditor({ source: null, persisted: false });
     await waitFor(() =>
       expect(
-        rendered.getByText(/No Capacities source mapping has been saved/),
+        rendered.getByText(/No Capacities setup has been saved/),
       ).toBeTruthy(),
     );
     fireEvent.input(rendered.getByLabelText("Capacities space id"), {
@@ -1051,7 +1051,7 @@ describe("CapacitiesSourceEditor field choices", () => {
       catalogFixture,
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
 
     // Both structures enter the draft through the real per-row action.
@@ -1117,7 +1117,7 @@ describe("CapacitiesSourceEditor field choices", () => {
       catalogFixture,
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
 
     // The option id is the chip's value; the option title is its label.
@@ -1224,7 +1224,7 @@ describe("CapacitiesSourceEditor field choices", () => {
       catalogFixture,
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     await waitFor(() =>
       expect(
@@ -1273,7 +1273,7 @@ describe("CapacitiesSourceEditor field choices", () => {
       catalogFixture,
     );
     fireEvent.click(
-      rendered.getByRole("button", { name: "Discover from Capacities" }),
+      rendered.getByRole("button", { name: "Look up properties in Capacities" }),
     );
     await waitFor(() =>
       expect(
@@ -1369,7 +1369,7 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
     ).toBeTruthy();
     expect(
       within(empty).getByText(
-        "Superseded by Assigned On; kept so existing mappings keep working.",
+        "Replaced by the “Assigned to me” date; kept so existing setups keep working.",
       ),
     ).toBeTruthy();
     expect(detailsOf("Assignment values for Task")).toBe(empty);
@@ -1384,9 +1384,9 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
   it("renders an Assigned On property field outside the legacy disclosure", async () => {
     const { rendered } = await openEditor({ source: recordFixture, persisted: true });
     await waitFor(() =>
-      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+      expect(rendered.getByLabelText("“Assigned to me” date for Project")).toBeTruthy(),
     );
-    const assignedOn = input(rendered.getByLabelText("Assigned On property for Project"));
+    const assignedOn = input(rendered.getByLabelText("“Assigned to me” date for Project"));
     expect(assignedOn.value).toBe("");
     expect(assignedOn.placeholder).toBe("unset");
     // It is a live field, not part of the collapsed legacy disclosure.
@@ -1410,9 +1410,9 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
     };
     const { rendered } = await openEditor({ source: withValue, persisted: true });
     await waitFor(() =>
-      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+      expect(rendered.getByLabelText("“Assigned to me” date for Project")).toBeTruthy(),
     );
-    expect(input(rendered.getByLabelText("Assigned On property for Project")).value).toBe(
+    expect(input(rendered.getByLabelText("“Assigned to me” date for Project")).value).toBe(
       "assigned-on-prop",
     );
   });
@@ -1420,9 +1420,9 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
   it("sends assigned_on_property when the operator types an Assigned On value", async () => {
     const { h, rendered } = await openEditor({ source: recordFixture, persisted: true });
     await waitFor(() =>
-      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+      expect(rendered.getByLabelText("“Assigned to me” date for Project")).toBeTruthy(),
     );
-    fireEvent.input(rendered.getByLabelText("Assigned On property for Project"), {
+    fireEvent.input(rendered.getByLabelText("“Assigned to me” date for Project"), {
       target: { value: "assigned-on-prop" },
     });
     const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
@@ -1448,9 +1448,9 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
     };
     const { h, rendered } = await openEditor({ source: withValue, persisted: true });
     await waitFor(() =>
-      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+      expect(rendered.getByLabelText("“Assigned to me” date for Project")).toBeTruthy(),
     );
-    fireEvent.input(rendered.getByLabelText("Assigned On property for Project"), {
+    fireEvent.input(rendered.getByLabelText("“Assigned to me” date for Project"), {
       target: { value: "" },
     });
     const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({

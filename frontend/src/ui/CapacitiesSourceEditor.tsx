@@ -435,8 +435,8 @@ function StructureRow({
           }
         />
         <PropertyField
-          label="Assigned On property"
-          ariaLabel={`Assigned On property for ${rowRef}`}
+          label="“Assigned to me” date"
+          ariaLabel={`“Assigned to me” date for ${rowRef}`}
           value={row.assignedOnProperty ?? null}
           placeholder="unset"
           hint="A date on or before today marks the item assigned. Takes precedence over legacy assignment. A declaration under Connections → Capacities structures wins if both are set."
@@ -452,7 +452,7 @@ function StructureRow({
         >
           <summary>Legacy assignment (optional)</summary>
           <small>
-            Superseded by Assigned On; kept so existing mappings keep working.
+            Replaced by the “Assigned to me” date; kept so existing setups keep working.
           </small>
           <div class="capacities-source-row__fields">
         <PropertyField
@@ -688,9 +688,9 @@ export function CapacitiesSourceEditor({
       aria-labelledby="capacities-sec-source"
     >
       <div class="setup-section__head">
-        <h3 id="capacities-sec-source">Capacities source mapping</h3>
+        <h3 id="capacities-sec-source">Capacities setup (technical details)</h3>
         <span class="capacities-settings__revision">
-          {record !== null ? `Saved revision ${record.revision}` : "No mapping saved yet"}
+          {record !== null ? `Saved (version ${record.revision})` : "Nothing saved yet"}
         </span>
       </div>
       <div class="setup-section__body">
@@ -703,13 +703,13 @@ export function CapacitiesSourceEditor({
 
         {loading && (
           <p class="capacities-settings__state" role="status">
-            Loading source mapping…
+            Loading Capacities setup…
           </p>
         )}
 
         {!loading && draft === null && (
           <section class="capacities-settings__error" role="alert">
-            <strong>Source mapping could not be loaded</strong>
+            <strong>Capacities setup could not be loaded</strong>
             <span>{loadError}</span>
             <button class="btn" onClick={() => void loadSource()}>
               Reload mapping
@@ -721,7 +721,7 @@ export function CapacitiesSourceEditor({
           <>
             {record === null && (
               <p class="capacities-settings__empty">
-                No Capacities source mapping has been saved yet.
+                No Capacities setup has been saved yet.
                 Name the Capacities space and add at least one structure to
                 start one.
               </p>
@@ -744,7 +744,7 @@ export function CapacitiesSourceEditor({
                 onClick={() => void discover()}
                 disabled={discovering || draft.spaceId === ""}
               >
-                {discovering ? "Discovering…" : "Discover from Capacities"}
+                {discovering ? "Looking up…" : "Look up properties in Capacities"}
               </button>
               <small>
                 Reads the space's real structures and properties so their ids can
@@ -903,7 +903,7 @@ export function CapacitiesSourceEditor({
                   : dirty
                     ? "Unsaved changes"
                     : savedAt !== null && record !== null
-                      ? `Saved revision ${record.revision} at ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                      ? `Saved (version ${record.revision}) at ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                       : ""}
               </span>
               <button

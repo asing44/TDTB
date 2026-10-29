@@ -64,7 +64,7 @@ async function openReview(candidates: CapacitiesIntakeCandidate[]) {
 
 function ackAllButton(section: HTMLElement, count: number): HTMLButtonElement {
   return within(section).getByRole("button", {
-    name: `Okay to plan all ${count} review rows`,
+    name: `Okay to plan all ${count} items`,
   }) as HTMLButtonElement;
 }
 
@@ -104,14 +104,14 @@ describe("Capacities unknown review — okay to plan all", () => {
     // Success re-reads the saved record exactly like the per-row save does, so
     // both rows read as acknowledged and the control clears.
     await waitFor(() =>
-      expect(within(section).getByText(/Added 2 review rows to today's plan/)).toBeTruthy(),
+      expect(within(section).getByText(/Added 2 items to today's plan/)).toBeTruthy(),
     );
     expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
     expect(
-      (within(section).getByLabelText(`Acknowledge ${A}`) as HTMLInputElement).checked,
+      (within(section).getByLabelText(`Mark ${A} as okay`) as HTMLInputElement).checked,
     ).toBe(true);
     expect(
-      (within(section).getByLabelText(`Acknowledge ${B}`) as HTMLInputElement).checked,
+      (within(section).getByLabelText(`Mark ${B} as okay`) as HTMLInputElement).checked,
     ).toBe(true);
   });
 
@@ -158,7 +158,7 @@ describe("Capacities unknown review — okay to plan all", () => {
       deselect: [],
     });
 
-    const ackC = within(section).getByLabelText(`Acknowledge ${C}`) as HTMLInputElement;
+    const ackC = within(section).getByLabelText(`Mark ${C} as okay`) as HTMLInputElement;
     expect(ackC.checked).toBe(true);
     fireEvent.click(ackC);
     expect(ackC.checked).toBe(false);
@@ -177,7 +177,7 @@ describe("Capacities unknown review — okay to plan all", () => {
       { identity: B, acknowledge: true },
     ]);
     expect(
-      (within(section).getByLabelText("Acknowledge not-canonical") as HTMLInputElement)
+      (within(section).getByLabelText("Mark not-canonical as okay") as HTMLInputElement)
         .checked,
     ).toBe(false);
   });
@@ -216,7 +216,7 @@ describe("Capacities unknown review — okay to plan all", () => {
     });
 
     await waitFor(() =>
-      expect(within(section).getByText(/Added 2 review rows to today's plan/)).toBeTruthy(),
+      expect(within(section).getByText(/Added 2 items to today's plan/)).toBeTruthy(),
     );
     expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
   });
@@ -244,8 +244,8 @@ describe("Capacities unknown review — okay to plan all", () => {
 
     // Nothing was acknowledged: the count is unchanged and both per-row
     // controls still respond.
-    const ackA = within(section).getByLabelText(`Acknowledge ${A}`) as HTMLInputElement;
-    const ackB = within(section).getByLabelText(`Acknowledge ${B}`) as HTMLInputElement;
+    const ackA = within(section).getByLabelText(`Mark ${A} as okay`) as HTMLInputElement;
+    const ackB = within(section).getByLabelText(`Mark ${B} as okay`) as HTMLInputElement;
     expect(ackA.checked).toBe(false);
     expect(ackB.checked).toBe(false);
     expect(ackAllButton(section, 2).disabled).toBe(false);

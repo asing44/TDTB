@@ -16,16 +16,16 @@
    rule. The Assigned On / legacy assignment mapping is a separate concern and
    deliberately never appears here. */
 
-export const NATIVE_RULES_LABEL = "Native rules";
+export const NATIVE_RULES_LABEL = "Automatic task rules";
 
 /** Accessible name of the info trigger. Same copy everywhere. */
-export const NATIVE_RULES_TRIGGER_LABEL = "What native rules are";
+export const NATIVE_RULES_TRIGGER_LABEL = "What automatic task rules are";
 
 /** Bubble detail: what the native rules are, not only what they are called. */
 export const NATIVE_RULES_DETAIL =
-  "Built-in admission rules, applied only to the structures that have native " +
-  "rules switched on. An item is admitted when any one of them matches: its " +
-  "source status matches a configured status value, its due date is today or " +
-  "earlier, or its deadline is overdue or within the horizon. Each rule can " +
-  "be switched off. Completed and dropped items are always left out; a " +
-  "structure without native rules is judged only by its own per-structure rule.";
+  "Built-in rules that decide which tasks come in without you doing anything. " +
+  "They apply only to the types that have automatic task rules switched on. A " +
+  "task comes in when any one of them matches: its status in Capacities counts " +
+  "as active, it is due today or earlier, or its deadline is overdue or coming " +
+  "up soon. Each rule can be switched off. Completed and dropped items always " +
+  "stay out; a type without automatic task rules follows only its own rule.";

@@ -149,7 +149,7 @@ describe("TagExclusionSettingsDrawer", () => {
     });
     const { h, rendered } = open(load);
     await waitFor(() => expect(rendered.getByText("#habituals")).toBeTruthy());
-    expect(rendered.getByText("Saved revision 2")).toBeTruthy();
+    expect(rendered.getByText("Saved (version 2)")).toBeTruthy();
 
     fireEvent.click(
       rendered.getByRole("checkbox", { name: `Exclude #chores (${TAG_B})` }),
@@ -172,7 +172,7 @@ describe("TagExclusionSettingsDrawer", () => {
       tags: [identity(TAG_B), identity(TAG_A)],
       todoist: [],
     });
-    await waitFor(() => expect(rendered.getByText("Saved revision 3")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("Saved (version 3)")).toBeTruthy());
     expect(rendered.getByText("Saved.")).toBeTruthy();
   });
 

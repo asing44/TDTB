@@ -138,17 +138,17 @@ function RuleNodeEditor({
       <div class={`capacities-rule__node capacities-rule__node--group`} data-depth={depth}>
         <div class="capacities-rule__row">
           <label class="capacities-rule__label">
-            <span class="sr-only">Combinator</span>
+            <span class="sr-only">Match any / Match all</span>
             <select
               value={combinator}
-              aria-label="Combinator"
+              aria-label="Match any / Match all"
               onChange={(e) => {
                 const next = (e.currentTarget as HTMLSelectElement).value;
                 onChange(next === "any" ? { any: children } : { all: children });
               }}
             >
-              <option value="all">ALL of</option>
-              <option value="any">ANY of</option>
+              <option value="all">Match all of</option>
+              <option value="any">Match any of</option>
             </select>
           </label>
           <div class="capacities-rule__actions">
@@ -171,7 +171,7 @@ function RuleNodeEditor({
         </div>
         {children.length === 0 ? (
           <p class="capacities-settings__empty">
-            {combinator === "all" ? "An empty ALL matches everything." : "An empty ANY matches nothing."}
+            {combinator === "all" ? "An empty “match all” group matches everything." : "An empty “match any” group matches nothing."}
           </p>
         ) : (
           <div class="capacities-rule__children">
@@ -338,12 +338,12 @@ function StructureRuleRow({
               ? `${Object.keys(structure.schema).length} known properties`
               : "no published schema"}
           </span>
-          {!structure.mapped && <span class="capacities-rule__badge capacities-rule__badge--warn">not mapped</span>}
+          {!structure.mapped && <span class="capacities-rule__badge capacities-rule__badge--warn">not set up yet</span>}
         </span>
       </div>
 
       <p class="capacities-settings__hint">
-        Active rule: {structure.active ? "configured (eligibility authority)" : "none — this type admits nothing"}
+        Rule in use: {structure.active ? "set" : "none — this type brings in nothing"}
       </p>
 
       {!structure.schemaAvailable && (
@@ -463,15 +463,15 @@ export function CapacitiesRulesEditor({ active }: { active: boolean }) {
       data-settings-section="rules"
     >
       <div class="setup-section__head">
-        <h3 id="capacities-sec-rules">Per-type inclusion rules</h3>
+        <h3 id="capacities-sec-rules">Fine-tune by item type</h3>
         {rules && <span class="capacities-settings__revision">Rules revision {rules.revision}</span>}
       </div>
       <div class="setup-section__body">
         <p class="capacities-settings__hint">
-          Each Capacities type admits objects through its own nested predicate
-          (ALL / ANY / NOT of property conditions). A rule that is valid for the
-          published type shape becomes active; an invalid rule is stored as a
-          draft and the previous active rule is preserved.
+          Give one kind of item (tasks, projects, notes) its own rule, built from
+          match-all, match-any and not conditions on its properties. A valid rule
+          starts working right away; an invalid one is stored as a draft and the
+          previous rule keeps working.
         </p>
 
         {phase === "loading" && (

@@ -1,19 +1,21 @@
-/* CapacitiesRefreshPanel — the one explicit "Refresh sources" control for
-   the Connections surface.
+/* CapacitiesRefreshPanel — the one explicit "Refresh now" control for the
+   Settings hub.
 
    Contract this surface keeps:
-   - Refresh sources is ONE explicit action: a token-guarded
+   - Refresh now is ONE explicit action: a token-guarded
      POST /capacities/refresh/start with mode "refresh" and scope "all". A
      full-scope run already re-lists every mapped structure, so there is no
      separate Rescan control and no hint claiming one re-lists more than the
      other. Nothing here runs on mount except a tokenless status read.
-   - Status is truthful: an unconfigured source disables the action and says
-     so; a running job shows its phase, live progress ("Reading 176/227", or
-     "Capacities busy, resuming in 40s · 176/227" while a rate-limit wait
-     counts down) and warnings; a terminal job shows when it finished, what
-     it did, and what it read or reused; a snapshot summary distinguishes "no
-     complete generation yet" from a real installed generation. Partial/stale
-     warnings are rendered verbatim, never smoothed into success.
+   - Status is truthful in plain words: an unconfigured source disables the
+     action and says so; a running job shows "Reading 176 of 227", or
+     "Waiting for Capacities to allow more requests (about 40 s) · read 176 of
+     227" while a rate-limit wait counts down; a finished job says when it was
+     last refreshed, what it did, and what it read or reused; a snapshot
+     summary distinguishes "no full refresh has finished yet" from a real
+     installed snapshot. Partial/stale warnings are rendered verbatim, never
+     smoothed into success. The raw phase/outcome/generation values live in a
+     "Technical details" disclosure closed by default.
    - Polling runs ONLY while a job is active and the panel is mounted/active;
      the interval is cleared on unmount, on deactivation, and as soon as the
      job reaches a terminal phase. The countdown tick exists only while a
@@ -24,13 +26,14 @@
    - A stored schema-change notice rides the SAME status read as ONE banner
      above the job's own warnings: 'warn' is an alert, 'info' a quieter
      notice. Its sentence is rendered verbatim (the panel adds no names or
-     counts), nothing is shown once it is acknowledged, and Acknowledge posts
-     the notice's own to_hash and then re-reads the status — a stale 409 means
-     a newer notice exists, so it re-reads without reporting a failure. */
+     counts), nothing is shown once it is acknowledged, and the notice's own
+     "Got it" button posts its to_hash and then re-reads the status — a stale
+     409 means a newer notice exists, so it re-reads without reporting a
+     failure. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
-import { refreshProgressText, useCapacitiesRefreshTick } from "./useCapacitiesRefreshJob";
+import { useCapacitiesRefreshTick } from "./useCapacitiesRefreshJob";
 import { capacitiesSchemaChangeAckStaleOf } from "../adapters/api";
 import type { CapacitiesRefreshMode, CapacitiesRefreshStatus } from "../model/types";
 
@@ -54,24 +57,59 @@ function formatTimestamp(value: number | null): string {
   return date.toLocaleString();
 }
 
-function outcomeText(status: CapacitiesRefreshStatus): string {
-  const outcome = status.outcome ?? "—";
-  if (outcome === "published") return "Published a new complete generation.";
-  if (outcome === "cancelled") return "Cancelled; partial reads were kept and no new generation was installed.";
-  if (outcome === "interrupted") return "Interrupted before completion; no new generation was installed.";
-  if (outcome === "staleConfiguration") return "The Capacities configuration changed mid-job; nothing was published.";
-  if (outcome === "noCapacities") return "No Capacities rows were produced; nothing was published.";
-  return outcome;
+/** Plain "8:12 AM" for today, a full local date and time for any other day. */
+function formatWhen(value: number | null): string {
+  if (value === null) return "unknown";
+  const date = new Date(value * 1000);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === new Date().toDateString() ? `${time} today` : date.toLocaleString();
 }
 
-/** R7: what the last terminal run did and when. ``reused`` is derived as
-    listed minus read, because the job document does not carry a reuse
-    counter; it never goes negative. */
+function outcomeText(status: CapacitiesRefreshStatus): string {
+  const outcome = status.outcome;
+  if (outcome === "published") {
+    // Warnings mean the run finished without covering everything; saying
+    // "Up to date" there would smooth a partial read into success.
+    return status.warnings.length > 0 ? "Refreshed, with warnings." : "Up to date.";
+  }
+  if (outcome === "cancelled") return "Stopped early. What was read was kept; your plan still uses the last full copy.";
+  if (outcome === "interrupted") return "Interrupted before finishing; your plan still uses the last full copy.";
+  if (outcome === "staleConfiguration") return "Your Capacities setup changed during the refresh, so nothing was updated.";
+  if (outcome === "noCapacities") return "Capacities returned no items, so nothing was updated.";
+  if (status.phase === "failed") return "The refresh failed.";
+  return "No result was reported.";
+}
+
+/** What the last finished run did and when, in plain words. ``reused`` is
+    derived as listed minus read, because the job document does not carry a
+    reuse counter; it never goes negative. */
 function runSummaryText(status: CapacitiesRefreshStatus): string | null {
   const finishedAt = status.job?.finishedAt ?? null;
   if (finishedAt === null) return null;
   const reused = Math.max(0, status.progress.listed - status.progress.read);
-  return `Finished ${formatTimestamp(finishedAt)}: ${outcomeText(status)}; ${status.progress.read} read, ${reused} reused`;
+  return `Last refreshed ${formatWhen(finishedAt)}. ${outcomeText(status)} Read ${status.progress.read} items, reused ${reused}.`;
+}
+
+/** One plain sentence for a running job; a rate-limit wait counts down. */
+function plainProgressText(status: CapacitiesRefreshStatus | null, nowMs: number): string | null {
+  if (!isRunning(status) || !status) return null;
+  const { read, toRead, waiting } = status.progress;
+  const counted = toRead === null ? `${read} so far` : `${read} of ${toRead}`;
+  if (waiting && waiting.resumeAt !== null) {
+    const remainingSeconds = Math.max(0, Math.ceil(waiting.resumeAt - nowMs / 1000));
+    return `Waiting for Capacities to allow more requests (about ${remainingSeconds} s) · read ${counted}`;
+  }
+  if (waiting) return `Waiting for Capacities to allow more requests · read ${counted}`;
+  return `Reading ${counted}`;
+}
+
+/** The headline state before any run exists. A finished run is already summed
+    up by ``runSummaryText``, so this returns null then rather than repeating
+    (or contradicting) the same outcome on the next line. */
+function plainStatusLine(status: CapacitiesRefreshStatus): string | null {
+  if (status.phase !== null || status.job !== null) return null;
+  return status.snapshot?.present ? "Up to date." : "Not refreshed yet.";
 }
 
 export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
@@ -124,9 +162,10 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
 
   if (!active) return null;
 
-  const progressText = running ? refreshProgressText(status, nowMs) : null;
+  const progressText = running ? plainProgressText(status, nowMs) : null;
   const summaryText = running || !status ? null : runSummaryText(status);
   // A wait is a running state; spell it out so Cancel stays offered there.
+  const statusLine = status ? plainStatusLine(status) : null;
   const cancellable = running || waiting !== null;
 
   const start = async (mode: CapacitiesRefreshMode) => {
@@ -197,31 +236,28 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
       data-settings-section="refresh"
     >
       <div class="setup-section__head">
-        <h3 id="capacities-sec-refresh">Source refresh</h3>
-        {status?.phase && (
-          <span class="capacities-settings__revision">Phase {status.phase}</span>
-        )}
+        <h3 id="capacities-sec-refresh">Capacities refresh</h3>
       </div>
       <div class="setup-section__body">
         <p class="capacities-settings__hint">
-          Refresh sources re-reads the Capacities source: one explicit, paced run that
-          also re-lists every mapped structure. It never runs on its own.
+          Refresh now checks Capacities for changes and updates your plan. It is one
+          careful, paced pass and never runs on its own.
         </p>
 
         {phase === "loading" && (
-          <p class="capacities-settings__state" role="status">Loading refresh status…</p>
+          <p class="capacities-settings__state" role="status">Checking the refresh status…</p>
         )}
         {phase === "error" && (
           <section class="capacities-settings__error" role="alert">
-            <strong>Refresh status could not be read</strong>
+            <strong>Could not check the refresh status</strong>
             <span>{error}</span>
-            <button class="btn" onClick={() => void load()}>Reload status</button>
+            <button class="btn" onClick={() => void load()}>Try again</button>
           </section>
         )}
 
         {status && phase !== "loading" && !configured && (
           <p class="capacities-settings__empty" role="status">
-            No Capacities source is configured; refresh is unavailable. Save a source mapping first.
+            Capacities is not set up yet, so refresh is unavailable. Save your Capacities setup first.
           </p>
         )}
 
@@ -233,11 +269,11 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                 disabled={busy !== null || running}
                 onClick={() => void start("refresh")}
               >
-                {busy === "starting" ? "Starting…" : "Refresh sources"}
+                {busy === "starting" ? "Starting…" : "Refresh now"}
               </button>
               {cancellable && (
                 <button class="btn" disabled={busy !== null} onClick={() => void cancel()}>
-                  {busy === "cancelling" ? "Cancelling…" : "Cancel refresh"}
+                  {busy === "cancelling" ? "Stopping…" : "Stop refresh"}
                 </button>
               )}
             </div>
@@ -255,24 +291,7 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
             )}
             {summaryText && <p class="capacities-settings__hint">{summaryText}</p>}
 
-            <dl class="capacities-status__grid">
-              <div class="capacities-status__cell">
-                <dt>Job</dt>
-                <dd>{status.job ? `${status.job.mode ?? "job"} · ${status.job.scope ?? "all"}` : "None yet"}</dd>
-              </div>
-              <div class="capacities-status__cell">
-                <dt>Phase</dt>
-                <dd>{status.phase ?? "idle"}</dd>
-              </div>
-              <div class="capacities-status__cell">
-                <dt>Outcome</dt>
-                <dd>{status.outcome ? outcomeText(status) : "—"}</dd>
-              </div>
-              <div class="capacities-status__cell">
-                <dt>Progress</dt>
-                <dd>{status.progress.listed} listed · {status.progress.read} read</dd>
-              </div>
-            </dl>
+            {!running && statusLine && <p class="capacities-settings__state">{statusLine}</p>}
 
             {schemaNotice && (
               <>
@@ -282,10 +301,10 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                     <button
                       class="btn"
                       disabled={ackBusy}
-                      aria-label="Acknowledge Capacities change"
+                      aria-label="Dismiss the Capacities change notice"
                       onClick={() => void acknowledge(schemaNotice.toHash)}
                     >
-                      {ackBusy ? "Acknowledging…" : "Acknowledge"}
+                      {ackBusy ? "Saving…" : "Got it"}
                     </button>
                   </section>
                 ) : (
@@ -294,10 +313,10 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                     <button
                       class="btn"
                       disabled={ackBusy}
-                      aria-label="Acknowledge Capacities change"
+                      aria-label="Dismiss the Capacities change notice"
                       onClick={() => void acknowledge(schemaNotice.toHash)}
                     >
-                      {ackBusy ? "Acknowledging…" : "Acknowledge"}
+                      {ackBusy ? "Saving…" : "Got it"}
                     </button>
                   </div>
                 )}
@@ -311,9 +330,9 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
 
             {status.warnings.length > 0 && (
               <div class="capacities-exclusion-list">
-                <h4>Warnings</h4>
+                <h4>Heads-up from the last refresh</h4>
                 <p class="capacities-settings__hint">
-                  These are the job's own warnings, shown verbatim. A completed job with warnings did not mean complete coverage.
+                  Shown exactly as reported. A refresh that finished with warnings may not have covered everything.
                 </p>
                 {status.warnings.map((warning) => (
                   <div class="capacities-exclusion-row" key={warning}>
@@ -326,12 +345,39 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
             <div class="capacities-snapshot">
               {snapshot && snapshot.present ? (
                 <p class="capacities-settings__hint">
-                  Last complete generation {snapshot.generation} · {snapshot.memberCount} members · installed {formatTimestamp(snapshot.installedAt)}
+                  Last full refresh: {formatWhen(snapshot.installedAt)} · {snapshot.memberCount} items
                 </p>
               ) : (
-                <p class="capacities-settings__empty">No complete generation is installed yet.</p>
+                <p class="capacities-settings__empty">No full refresh has finished yet.</p>
               )}
             </div>
+
+            <details class="settings-hub__details">
+              <summary>Technical details</summary>
+              <dl class="capacities-status__grid">
+                <div class="capacities-status__cell">
+                  <dt>Job</dt>
+                  <dd>{status.job ? `${status.job.mode ?? "job"} · ${status.job.scope ?? "all"}` : "None yet"}</dd>
+                </div>
+                <div class="capacities-status__cell">
+                  <dt>Phase</dt>
+                  <dd>{status.phase ?? "idle"}</dd>
+                </div>
+                <div class="capacities-status__cell">
+                  <dt>Outcome</dt>
+                  <dd>{status.outcome ?? "—"}</dd>
+                </div>
+                <div class="capacities-status__cell">
+                  <dt>Progress</dt>
+                  <dd>{status.progress.listed} listed · {status.progress.read} read</dd>
+                </div>
+              </dl>
+              {snapshot && snapshot.present && (
+                <p class="capacities-settings__hint">
+                  Last complete generation {snapshot.generation} · {snapshot.memberCount} members · installed {formatTimestamp(snapshot.installedAt)}
+                </p>
+              )}
+            </details>
           </>
         )}
       </div>

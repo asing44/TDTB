@@ -485,7 +485,7 @@ describe("Connections screen (U13)", () => {
 
     const heading = rendered.getByText("Admit when");
     const info = within(heading.parentElement as HTMLElement).getByRole("button", {
-      name: "What native rules are",
+      name: "What automatic task rules are",
     });
     expect(info.getAttribute("title")).toBeNull();
     expect(rendered.queryByRole("tooltip")).toBeNull();
@@ -493,8 +493,8 @@ describe("Connections screen (U13)", () => {
     // Focus opens the bubble and points the trigger at it.
     fireEvent.focus(info);
     const tooltip = rendered.getByRole("tooltip");
-    expect(tooltip.textContent).toContain("Native rules");
-    expect(tooltip.textContent).toMatch(/built-in admission rules/i);
+    expect(tooltip.textContent).toContain("Automatic task rules");
+    expect(tooltip.textContent).toMatch(/built-in rules that decide which tasks come in/i);
     expect(tooltip.textContent).toMatch(/any one of them matches/i);
     expect(tooltip.textContent).toMatch(/completed and dropped/i);
     expect(tooltip.textContent).not.toMatch(/assigned/i);
@@ -505,7 +505,7 @@ describe("Connections screen (U13)", () => {
 
     // Hover serves pointer users from the same trigger.
     fireEvent.mouseEnter(info);
-    expect(rendered.getByRole("tooltip").textContent).toMatch(/built-in admission rules/i);
+    expect(rendered.getByRole("tooltip").textContent).toMatch(/built-in rules that decide which tasks come in/i);
     fireEvent.mouseLeave(info);
     expect(rendered.queryByRole("tooltip")).toBeNull();
   });

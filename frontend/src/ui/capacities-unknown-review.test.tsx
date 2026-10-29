@@ -37,15 +37,18 @@ describe("CapacitiesUnknownReview", () => {
   it("selects a review-reason candidate without acknowledging it first", async () => {
     const { h, section } = await openReview();
     const save = vi.spyOn(h.controller, "saveCapacitiesSelections");
-    const select = within(section).getByLabelText(`Select ${CANONICAL_ACK}`) as HTMLInputElement;
-    const ack = within(section).getByLabelText(`Acknowledge ${CANONICAL_ACK}`) as HTMLInputElement;
+    const select = within(section).getByLabelText(`Include ${CANONICAL_ACK} in my plan`) as HTMLInputElement;
+    const ack = within(section).getByLabelText(`Mark ${CANONICAL_ACK} as okay`) as HTMLInputElement;
 
     expect(ack.checked).toBe(false);
     fireEvent.click(select);
     expect(select.checked).toBe(true);
-    expect(section.textContent).not.toContain("Acknowledge this candidate before selecting it.");
+    // Nothing here states an acknowledgement-first requirement: the include
+    // control is enabled with the acknowledgement unchecked.
+    expect(select.disabled).toBe(false);
+    expect(section.textContent).not.toMatch(/mark .* as okay (first|before)/i);
 
-    fireEvent.click(within(section).getByRole("button", { name: "Save selections" }));
+    fireEvent.click(within(section).getByRole("button", { name: "Save choices" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][0]).toEqual({
@@ -59,9 +62,9 @@ describe("CapacitiesUnknownReview", () => {
     const { h, section } = await openReview();
     const save = vi.spyOn(h.controller, "saveCapacitiesSelections");
 
-    fireEvent.click(within(section).getByLabelText(`Acknowledge ${CANONICAL_ACK}`));
-    fireEvent.click(within(section).getByLabelText(`Select ${CANONICAL_ACK}`));
-    fireEvent.click(within(section).getByRole("button", { name: "Save selections" }));
+    fireEvent.click(within(section).getByLabelText(`Mark ${CANONICAL_ACK} as okay`));
+    fireEvent.click(within(section).getByLabelText(`Include ${CANONICAL_ACK} in my plan`));
+    fireEvent.click(within(section).getByRole("button", { name: "Save choices" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][0]).toEqual({
@@ -91,15 +94,38 @@ describe("CapacitiesUnknownReview", () => {
       ),
     );
 
-    const select = within(section).getByLabelText(`Select ${CANONICAL}`) as HTMLInputElement;
+    const select = within(section).getByLabelText(`Include ${CANONICAL} in my plan`) as HTMLInputElement;
     fireEvent.click(select);
-    fireEvent.click(within(section).getByRole("button", { name: "Save selections" }));
+    fireEvent.click(within(section).getByRole("button", { name: "Save choices" }));
 
     await waitFor(() =>
-      expect(rendered.getByText(/Selections changed since they were read/)).toBeTruthy(),
+      expect(rendered.getByText(/Your choices changed elsewhere since you opened this/)).toBeTruthy(),
     );
-    expect(rendered.getByText(/stored revision 2/)).toBeTruthy();
+    expect(rendered.getByText(/saved version 2/)).toBeTruthy();
     expect(select.checked).toBe(true);
+  });
+
+  it("shows one plain intake sentence and keeps the raw values behind Technical details", async () => {
+    const { section } = await openReview();
+    const details = section.querySelector(
+      "details.settings-hub__details",
+    ) as HTMLDetailsElement;
+    expect(details).toBeTruthy();
+    // Closed by default; the visible line is the plain sentence.
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toBe("Technical details");
+    const plain = Array.from(section.querySelectorAll("p"))
+      .filter((p) => p.closest("details") === null)
+      .map((p) => p.textContent ?? "")
+      .join(" ");
+    // The visible line is a plain sentence, never the raw intake enum.
+    expect(plain).toMatch(/Capacities items are being read/);
+    expect(plain).not.toMatch(/\b(degraded|refresh_required|not_configured|unavailable|ok)\b/);
+    // Raw values (the enum state, generation, coverage) live in the disclosure.
+    const raw = details.textContent ?? "";
+    expect(raw).toContain("Generation");
+    expect(raw).toContain("Coverage");
+    expect(raw).toMatch(/\d+ \/ \d+ evaluated/);
   });
 
   it("refuses a non-canonical identity", async () => {
@@ -119,8 +145,8 @@ describe("CapacitiesUnknownReview", () => {
       ledger: h.store.getState().ledger!,
     });
     await waitFor(() => expect(rendered.getByText("Bogus")).toBeTruthy());
-    const select = within(section).getByLabelText("Select not-canonical") as HTMLInputElement;
+    const select = within(section).getByLabelText("Include not-canonical in my plan") as HTMLInputElement;
     expect(select.disabled).toBe(true);
-    expect(section.textContent).toContain("Not a canonical identity");
+    expect(section.textContent).toContain("This item's id is not valid, so it can't be chosen.");
   });
 });

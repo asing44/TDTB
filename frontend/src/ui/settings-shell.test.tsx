@@ -122,12 +122,12 @@ describe("SettingsShell", () => {
     const rendered = h.ui(<SettingsShell />);
     openTechnical(rendered);
     await waitFor(() =>
-      expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
+      expect(rendered.getByText("Automatic task rules")).toBeTruthy(),
     );
 
     const horizon = () =>
-      (rendered.getByLabelText("Deadline horizon") as HTMLInputElement).value;
-    fireEvent.input(rendered.getByLabelText("Deadline horizon"), {
+      (rendered.getByLabelText("Deadline coming up") as HTMLInputElement).value;
+    fireEvent.input(rendered.getByLabelText("Deadline coming up"), {
       target: { value: "5" },
     });
     expect(horizon()).toBe("5");
@@ -169,10 +169,10 @@ describe("SettingsShell", () => {
     const rendered = h.ui(<SettingsShell />);
     openTechnical(rendered);
     await waitFor(() =>
-      expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
+      expect(rendered.getByText("Automatic task rules")).toBeTruthy(),
     );
 
-    fireEvent.input(rendered.getByLabelText("Deadline horizon"), {
+    fireEvent.input(rendered.getByLabelText("Deadline coming up"), {
       target: { value: "5" },
     });
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
@@ -182,7 +182,7 @@ describe("SettingsShell", () => {
 
     await waitFor(() =>
       expect(
-        (rendered.getByLabelText("Deadline horizon") as HTMLInputElement).value,
+        (rendered.getByLabelText("Deadline coming up") as HTMLInputElement).value,
       ).toBe("7"),
     );
   });

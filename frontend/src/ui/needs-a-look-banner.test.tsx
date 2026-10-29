@@ -167,11 +167,11 @@ describe("NeedsALookBanner — visibility and count", () => {
     // batched control exists only after that read resolves.
     const reviewControl = await waitFor(() =>
       within(section).getByRole("button", {
-        name: /Okay to plan all \d+ review rows/,
+        name: /Okay to plan all \d+ items/,
       }),
     );
     const reviewCount = Number(
-      /Okay to plan all (\d+) review rows/.exec(reviewControl.getAttribute("aria-label") ?? "")?.[1],
+      /Okay to plan all (\d+) items/.exec(reviewControl.getAttribute("aria-label") ?? "")?.[1],
     );
     const bannerCount = Number(
       /(\d+) items need a look/.exec(banner(rendered.container)!.textContent ?? "")?.[1],
@@ -192,7 +192,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
       .mockResolvedValue({ selections: savedSelections([A, B], 1), refreshError: null });
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Okay to plan all 2 review rows" }),
+      rendered.getByRole("button", { name: "Okay to plan all 2 items" }),
     );
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
@@ -217,7 +217,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
     const refresh = vi.spyOn(h.controller, "refreshSources");
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Okay to plan all 2 review rows" }),
+      rendered.getByRole("button", { name: "Okay to plan all 2 items" }),
     );
 
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
@@ -252,7 +252,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
     );
     expect(
       within(banner(rendered.container)!).getByText(
-        /Added 1 review row to today's plan; plan inputs refreshed\./,
+        /Added 1 item to today's plan; plan inputs refreshed\./,
       ),
     ).toBeTruthy();
   });
@@ -276,7 +276,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
     );
 
     fireEvent.click(
-      rendered.getByRole("button", { name: "Okay to plan all 2 review rows" }),
+      rendered.getByRole("button", { name: "Okay to plan all 2 items" }),
     );
 
     await waitFor(() =>
@@ -327,7 +327,7 @@ describe("NeedsALook row chip and non-gating", () => {
     expect(assignmentRows(h.store.getState()).assigned.map((r) => r.id)).toEqual(before);
     // Every control on the banner is available while rows need a look.
     expect(
-      (rendered.getByRole("button", { name: "Okay to plan all 2 review rows" }) as HTMLButtonElement)
+      (rendered.getByRole("button", { name: "Okay to plan all 2 items" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
   });
@@ -340,6 +340,6 @@ describe("NeedsALook row chip and non-gating", () => {
     const box = banner(rendered.container)!;
     expect(box.getAttribute("role")).toBe("status");
     expect(within(box).getByRole("button", { name: "Okay to plan Draft launch brief" })).toBeTruthy();
-    expect(within(box).getByRole("button", { name: "Okay to plan all 1 review rows" })).toBeTruthy();
+    expect(within(box).getByRole("button", { name: "Okay to plan all 1 items" })).toBeTruthy();
   });
 });

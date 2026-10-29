@@ -301,7 +301,7 @@ export function CapacitiesSettingsPanel({
           <>
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-auto">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-auto">Native Task Auto rules</h3>
+                <h3 id="capacities-sec-auto">Automatic task rules</h3>
                 <Tooltip
                   label={NATIVE_RULES_LABEL}
                   detail={NATIVE_RULES_DETAIL}
@@ -312,7 +312,7 @@ export function CapacitiesSettingsPanel({
                   </button>
                 </Tooltip>
                 <span class="capacities-settings__revision">
-                  {settings?.persisted ? `Saved revision ${settings.revision}` : "Using defaults"}
+                  {settings?.persisted ? `Saved (version ${settings.revision})` : "Using defaults"}
                 </span>
               </div>
               <div class="setup-section__body">
@@ -353,7 +353,7 @@ export function CapacitiesSettingsPanel({
                   </span>
                 </label>
                 <div class="field capacities-settings__horizon">
-                  <label for="capacities-deadline-horizon">Deadline horizon</label>
+                  <label for="capacities-deadline-horizon">Deadline coming up</label>
                   <div class="capacities-settings__horizon-control">
                     <input
                       id="capacities-deadline-horizon"
@@ -380,21 +380,21 @@ export function CapacitiesSettingsPanel({
 
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-admission">Admission vocabulary</h3>
+                <h3 id="capacities-sec-admission">What counts as active</h3>
                 {staleNativeStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} outside the source mapping
+                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} not set up to appear
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
-                <h4>Native task structures</h4>
+                <h4>Types with automatic task rules</h4>
                 <p class="capacities-settings__hint">
-                  Native Task Auto applies only to structures admitted here. The list is read from the Capacities source mapping — the same inventory as Active pull, not from the current plan inputs.
+                  Automatic task rules apply only to the types switched on here. The list comes from your Capacities setup (the same list as Bring in Active items), not from today's plan.
                 </p>
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    The Capacities source mapping lists no structures; saved admissions are preserved on save.
+                    Your Capacities setup lists no types yet; saved choices are kept when you save.
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures admitted to the native Task Auto rules">
@@ -415,7 +415,7 @@ export function CapacitiesSettingsPanel({
                                 aria-label={`Native admission for ${structureId}`}
                                 onChange={() => toggleNativeStructure(structureId)}
                               />
-                              <span>{admitted ? "Native rules on" : "Native rules off"}</span>
+                              <span>{admitted ? "Automatic rules on" : "Automatic rules off"}</span>
                             </label>
                             {/* The row sits at the right edge of the panel, so
                                 a centred 340px bubble would run off the window
@@ -442,9 +442,9 @@ export function CapacitiesSettingsPanel({
                 )}
                 {staleNativeStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Native structures outside the source mapping</h4>
+                    <h4>Types not set up to appear (automatic rules)</h4>
                     <p class="capacities-settings__hint">
-                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
+                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
                     </p>
                     {staleNativeStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
@@ -491,22 +491,22 @@ export function CapacitiesSettingsPanel({
 
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-assigned">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-assigned">Assigned flag declarations</h3>
+                <h3 id="capacities-sec-assigned">“Assigned to me” settings</h3>
                 {staleAssignedStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} outside the source mapping
+                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} not set up to appear
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  Declare the raw Capacities property id whose boolean true means "assigned at TDTB level" for a structure, and optionally the read-only date-time Assigned On property whose fall on today's date marks an item as assigned. The legacy flag is read as present true / present false / absent neutral, so a declaration can never change which structures are enumerated. A blank field declares nothing.
+                  For each type, name the Capacities property that marks an item as assigned to you: a date (the “Assigned to me” date) or an older checkbox. A date that falls on today puts the item in today's plan. A blank field sets nothing, and nothing here changes which types are read.
                 </p>
                 {assignmentWarnings.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Ignored declarations in the current read</h4>
+                    <h4>Settings we skipped</h4>
                     <p class="capacities-settings__hint">
-                      The server reported that these declarations could not be honoured. The wording is the server's own; correct the property id below and save.
+                      These entries could not be understood, so we left them out this time. The wording is the server's own; correct the property id below and save.
                     </p>
                     {assignmentWarnings.map((warning) => (
                       <div class="capacities-exclusion-row" key={warning}>
@@ -517,9 +517,9 @@ export function CapacitiesSettingsPanel({
                 )}
                 {assignedOnWarnings.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Assigned On diagnostics in the current read</h4>
+                    <h4>Notes about the “Assigned to me” date</h4>
                     <p class="capacities-settings__hint">
-                      The server reported these read-time Assigned On diagnostics. The wording is the server's own.
+                      These notes came from the latest read. The wording is the server's own.
                     </p>
                     {assignedOnWarnings.map((warning) => (
                       <div class="capacities-exclusion-row" key={warning}>
@@ -530,7 +530,7 @@ export function CapacitiesSettingsPanel({
                 )}
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    The Capacities source mapping lists no structures; saved declarations are preserved on save.
+                    Your Capacities setup lists no types yet; saved settings are kept when you save.
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
@@ -545,19 +545,19 @@ export function CapacitiesSettingsPanel({
                           </div>
                           <div class="capacities-object-row__fields">
                             <label class="capacities-object-row__field">
-                              <span class="capacities-object-row__field-label">Assigned On property</span>
+                              <span class="capacities-object-row__field-label">“Assigned to me” date</span>
                               <span class="capacities-object-row__field-row">
                                 <input
                                   class="capacities-object-row__property"
                                   type="text"
                                   value={assignedOn}
                                   placeholder="property id"
-                                  aria-label={`Assigned On property for ${structureId}`}
+                                  aria-label={`“Assigned to me” date for ${structureId}`}
                                   onInput={(e) => setAssignedOnProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
                                 />
                                 <button
                                   class="btn"
-                                  aria-label={`Clear Assigned On property for ${structureId}`}
+                                  aria-label={`Clear “Assigned to me” date for ${structureId}`}
                                   disabled={assignedOn === ""}
                                   onClick={() => setAssignedOnProperty(structureId, "")}
                                 >
@@ -569,19 +569,19 @@ export function CapacitiesSettingsPanel({
                               </small>
                             </label>
                             <label class="capacities-object-row__field">
-                              <span class="capacities-object-row__field-label">Assigned flag (legacy)</span>
+                              <span class="capacities-object-row__field-label">Old “assigned” checkbox</span>
                               <input
                                 class="capacities-object-row__property"
                                 type="text"
                                 value={assignedStructures[structureId] ?? ""}
                                 placeholder="property id"
-                                aria-label={`Assigned property for ${structureId}`}
+                                aria-label={`Old assigned checkbox for ${structureId}`}
                                 disabled={assignedOn !== ""}
                                 onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
                               />
                               <small class="capacities-object-row__field-help">
-                                Used only when no Assigned On property is mapped.
-                                {assignedOn !== "" ? " Ignored while Assigned On is mapped" : ""}
+                                Only used when no “Assigned to me” date is set.
+                                {assignedOn !== "" ? " Ignored while an “Assigned to me” date is set." : ""}
                               </small>
                             </label>
                           </div>
@@ -592,9 +592,9 @@ export function CapacitiesSettingsPanel({
                 )}
                 {staleAssignedStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Declared structures outside the source mapping</h4>
+                    <h4>Types with settings that are not set up to appear</h4>
                     <p class="capacities-settings__hint">
-                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
+                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
                     </p>
                     {staleAssignedStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
@@ -607,9 +607,9 @@ export function CapacitiesSettingsPanel({
                 )}
                 {staleAssignedOnStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Assigned On structures outside the source mapping</h4>
+                    <h4>Types with an “Assigned to me” date that are not set up to appear</h4>
                     <p class="capacities-settings__hint">
-                      These {staleAssignedOnStructures.length} saved {staleAssignedOnStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
+                      These {staleAssignedOnStructures.length} saved {staleAssignedOnStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
                     </p>
                     {staleAssignedOnStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
@@ -625,12 +625,12 @@ export function CapacitiesSettingsPanel({
 
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-objects">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-objects">Known Capacities objects</h3>
+                <h3 id="capacities-sec-objects">Known Capacities items</h3>
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  This list is limited to Capacities rows in the current TDTB snapshot. It is not a provider inventory browser.
-                  A source-owned Assigned marker still wins over a TDTB exclusion.
+                  This list only covers items from the latest refresh. It is not a full browser of Capacities.
+                  An item that Capacities itself marks as assigned still wins over an exclusion set in TDTB.
                 </p>
                 {known.length === 0 ? (
                   <p class="capacities-settings__empty">
@@ -677,23 +677,23 @@ export function CapacitiesSettingsPanel({
 
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-active-pull">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-active-pull">Active pull</h3>
+                <h3 id="capacities-sec-active-pull">Bring in Active items</h3>
                 {staleActiveStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} outside the source mapping
+                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} not set up to appear
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  Choose which Capacities structures honour an Active status pull. The list is read from the Capacities source mapping, not from the current plan inputs.
+                  Choose which Capacities types bring in items whose status is Active. The list comes from your Capacities setup, not from today's plan.
                 </p>
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    No Capacities structures are configured yet. Add a Capacities source mapping before choosing which structures honour an Active status pull.
+                    No Capacities types are set up yet. Save your Capacities setup before choosing which types bring in Active items.
                   </p>
                 ) : (
-                  <div class="capacities-object-list" role="group" aria-label="Capacities structures honouring an Active status pull">
+                  <div class="capacities-object-list" role="group" aria-label="Capacities types that bring in Active items">
                     {availableStructures.map((structureId) => {
                       const active = draft.activeStructures.includes(structureId);
                       const title = structureTitleOf(structureId);
@@ -707,10 +707,10 @@ export function CapacitiesSettingsPanel({
                             <input
                               type="checkbox"
                               checked={active}
-                              aria-label={`Active pull for ${structureId}`}
+                              aria-label={`Bring in Active items for ${structureId}`}
                               onChange={() => toggleActiveStructure(structureId)}
                             />
-                            <span>{active ? "Active pull on" : "Active pull off"}</span>
+                            <span>{active ? "Bringing in Active items" : "Not bringing in Active items"}</span>
                           </label>
                         </div>
                       );
@@ -719,9 +719,9 @@ export function CapacitiesSettingsPanel({
                 )}
                 {staleActiveStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Active structures outside the source mapping</h4>
+                    <h4>Active-item types that are not set up to appear</h4>
                     <p class="capacities-settings__hint">
-                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
+                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
                     </p>
                     {staleActiveStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
