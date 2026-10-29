@@ -1,7 +1,9 @@
 /* drawer-row-columns.test.tsx — the Not in plan drawer's rows share one
-   fixed-column grid: title/meta | duration (reserved even when empty) |
-   action. A row without a duration must still render the duration cell, so its
-   Add to plan switch lines up with rows that show "90 min".
+   fixed-column grid: title/meta | duration (reserved even when the row has no
+   duration of its own) | action. A server-held row without a duration still
+   renders the duration cell, so its Restore button lines up with rows that
+   show "90 min"; a local row fills that same reserved cell with the inline
+   duration slider, so its Add to plan switch keeps the same slot.
 
    jsdom does no layout, so the structure is asserted on the DOM and the grid
    template is read off the stylesheet on disk. */
@@ -17,15 +19,15 @@ import { makeHarness } from "./test-harness";
 afterEach(cleanup);
 
 describe("drawer rows reserve the duration column", () => {
-  it("renders a duration cell on every row, empty or not, before the action cell", async () => {
+  it("renders a duration cell on every row, before the action cell", async () => {
     const h = makeHarness("ready", (sc) => {
       const pin = (id: string, blocks: number) => {
         const item = sc.inputs.assigned.find((i) => i.id === id);
         if (!item) throw new Error(`no input row ${id}`);
         item.blocks = blocks;
       };
-      pin("Press", 0); // no duration -> empty reserved cell
-      pin("Note Processing", 3); // 90 min
+      pin("Press", 0); // all-day -> the slider's leftmost notch
+      pin("Note Processing", 3); // 90 min -> the slider's readout
     });
     const { container } = h.ui(<Queue />);
     for (const name of ["Press", "Note Processing"]) {
@@ -51,12 +53,11 @@ describe("drawer rows reserve the duration column", () => {
         "trow__acts",
       ]);
     }
-    const durs = rows.map((r) => r.querySelector(".trow__dur")?.textContent);
-    expect(durs).toContain("");
-    expect(durs).toContain("90 min");
-    expect(
-      rows.filter((r) => r.querySelector(".trow__dur--empty")).length,
-    ).toBe(durs.filter((d) => d === "").length);
+    const durs = rows.map((r) => r.querySelector(".trow__dur")?.textContent ?? "");
+    // Each row names its own duration in that cell; none is left blank.
+    expect(durs.some((d) => d.includes("All day"))).toBe(true);
+    expect(durs.some((d) => d.includes("1hr 30min"))).toBe(true);
+    expect(durs.filter((d) => d.trim() === "")).toEqual([]);
   });
 });
 

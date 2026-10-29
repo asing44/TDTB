@@ -10657,6 +10657,23 @@ button.strip-cal {
   text-transform: uppercase;
   vertical-align: 1px;
 }
+/* task-actions F4a/U3b: a LOCAL drawer row carries the same adjustments as a
+   plan row (inline duration slider with its provenance badge, May-overlap-Mint,
+   Expand), so its grid grows the slider's duration column and lets the action
+   cell size to its three controls instead of the fixed 150px slot a
+   restore-only row uses. Scoped to the drawer list, so the Removed from Todoist
+   and Skipped today groups keep their own narrow duration | button columns.
+   Tokens and the slider's own --trow-dur-w breakpoints only. */
+.skipped-today__list > .qrow.trow--unassigned.trow--dslider {
+  grid-template-columns: minmax(0, 1fr) var(--trow-dur-w) auto;
+}
+.skipped-today__list > .qrow.trow--unassigned.trow--dslider > .trow__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
 @media (max-width: 640px) {
   .queue__band .qrow.trow,
   .qrow.trow {

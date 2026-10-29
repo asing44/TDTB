@@ -172,6 +172,44 @@ export function AssignSwitch({
   );
 }
 
+/** The row's permanent "May overlap Mint" grant, applied the moment it is
+    clicked through the row's local edit path. It is a per-row opt-in keyed by
+    the item id, so a row that is NOT in today's plan carries the same control:
+    the grant is plan-day shaping, not plan membership. Shared by the plan row
+    and the Not in plan drawer, so the two never drift. */
+export function MintToggle({ item, s }: { item: AssignedItem; s: AppState }) {
+  const { controller } = useApp();
+  const blocks = effectiveBlocks(s, item.id);
+  const rowFacts = rowFactsOf(s, item.id);
+  const mintOn = s.mintOverlapOptIns[item.id] === true;
+  const mintWhy =
+    blocks === 0
+      ? EXCLUSION_REASONS.mintAllDay
+      : rowFacts?.isMintSession
+        ? EXCLUSION_REASONS.mintSession
+        : null;
+  return (
+    <button
+      type="button"
+      class={`trow__mint${mintOn && mintWhy === null ? " trow__mint--on" : ""}`}
+      aria-pressed={mintOn && mintWhy === null}
+      aria-label={`May overlap Mint: ${item.name}`}
+      disabled={s.runtimeBusy || mintWhy !== null}
+      title={
+        mintWhy ??
+        (mintOn
+          ? "May overlap Mint — on. This row may share time with a Mint session. Click to turn off."
+          : "May overlap Mint — off. Click to let this row share time with a Mint session.")
+      }
+      onClick={() =>
+        controller.applyRowEdit(item.id, (d) => ({ ...d, mintOverlap: !mintOn }))
+      }
+    >
+      Mint
+    </button>
+  );
+}
+
 export function TaskRow({
   item,
   s,
@@ -209,12 +247,6 @@ export function TaskRow({
   const rowFacts = rowFactsOf(s, item.id);
   const allDayLock =
     rowFacts && isProtectedNative(rowFacts) ? EXCLUSION_REASONS.protectedAllDay : null;
-  const mintOn = s.mintOverlapOptIns[item.id] === true;
-  const mintWhy = allDay
-    ? EXCLUSION_REASONS.mintAllDay
-    : rowFacts?.isMintSession
-      ? EXCLUSION_REASONS.mintSession
-      : null;
   const nameId = rowId(item, "name");
   const expId = rowId(item, "exp");
 
@@ -379,24 +411,7 @@ export function TaskRow({
         />
       </span>
       <div class="trow__acts">
-        <button
-          type="button"
-          class={`trow__mint${mintOn && mintWhy === null ? " trow__mint--on" : ""}`}
-          aria-pressed={mintOn && mintWhy === null}
-          aria-label={`May overlap Mint: ${item.name}`}
-          disabled={s.runtimeBusy || mintWhy !== null}
-          title={
-            mintWhy ??
-            (mintOn
-              ? "May overlap Mint — on. This row may share time with a Mint session. Click to turn off."
-              : "May overlap Mint — off. Click to let this row share time with a Mint session.")
-          }
-          onClick={() =>
-            controller.applyRowEdit(item.id, (d) => ({ ...d, mintOverlap: !mintOn }))
-          }
-        >
-          Mint
-        </button>
+        <MintToggle item={item} s={s} />
         <AssignSwitch id={item.id} name={item.name} assigned={true} s={s} />
         <button
           type="button"

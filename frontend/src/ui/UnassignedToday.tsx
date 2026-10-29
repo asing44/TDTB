@@ -51,13 +51,22 @@ import { dueLabel } from "../model/urgency";
 import { kindLabel } from "./TaskRow";
 import {
   assignmentRows,
+  effectiveBlocks,
+  rowFactsOf,
   taskActionDisabledReason,
   type AssignmentRow,
   type AppState,
   type SkippedTodayRow,
 } from "../store/store";
-import { ADD_TO_PLAN_LABEL, AssignSwitch } from "./TaskRow";
+import { ADD_TO_PLAN_LABEL, AssignSwitch, MintToggle, rowId } from "./TaskRow";
 import { DurationCell, SkippedRow } from "./SkippedToday";
+import { DurationSlider } from "./DurationSlider";
+import { DurationStatus } from "./DurationStatus";
+import { RowExpanded } from "./RowExpanded";
+import { ChevronIcon } from "./RowIcons";
+import { isProtectedNative, setMode } from "../model/rowDraft";
+import { EXCLUSION_REASONS } from "../model/batchEligibility";
+import type { AssignedItem } from "../model/types";
 import "./drawer-groups.css";
 import "./drawer-rows.css";
 
@@ -99,15 +108,44 @@ function SourceChip({ source }: { source: string }) {
 
 /** Group 1: local plan membership, so the Add to plan switch is exact. The
     row also carries its own due text: a tier groups by date, so the date that
-    put the row there stays visible. */
-function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
+    put the row there stays visible.
+
+    Membership is the only thing that is "off" here: duration, the Mint
+    overlap grant and the expanded panel are all keyed by the item id and work
+    exactly as they do on a plan row, so the row carries the same slider, Mint
+    toggle and Expand chevron. Only the green confirm check is absent — a row
+    that is not in today's plan has nothing to complete. */
+function LocalRow({
+  row,
+  facts,
+  item,
+}: {
+  row: AssignmentRow;
+  facts: DrawerFacts;
+  /** The real input row, so every local adjustment is keyed the way the rest
+      of the app keys it. Absent only if the row left `inputs.assigned`. */
+  item?: AssignedItem;
+}) {
+  const { controller } = useApp();
   const s = useAppState();
   const due = dueLabel(facts.deadline, s.inputs?.validDate ?? "");
+  const expanded = item ? s.ui.expandedId === item.id : false;
+  const nameId = item ? rowId(item, "name") : undefined;
+  const expId = item ? rowId(item, "exp") : undefined;
+  const blocks = item ? effectiveBlocks(s, item.id) : 0;
+  const rowFacts = item ? rowFactsOf(s, item.id) : null;
+  // The same closed all-day path a plan row has: a protected Todoist native
+  // time keeps the leftmost notch off the track.
+  const allDayLock =
+    rowFacts && isProtectedNative(rowFacts) ? EXCLUSION_REASONS.protectedAllDay : null;
   return (
-    <li class="qrow trow trow--skipped trow--unassigned" data-identity={row.identity}>
+    <li
+      class={`qrow trow trow--skipped trow--unassigned${item ? " trow--dslider" : ""}${expanded ? " trow--open" : ""}`}
+      data-identity={row.identity}
+    >
       <div class="qrow__body">
         <span class="qrow__nameline">
-          <span class="qrow__name">{row.name}</span>
+          <span class="qrow__name" id={nameId}>{row.name}</span>
           {row.isNewArrival && <NewBadge />}
         </span>
         <span class="qrow__source">
@@ -119,8 +157,32 @@ function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
           )}
         </span>
       </div>
-      <DurationCell minutes={row.minutes} />
+      {item ? (
+        <span class="trow__dur trow__dur--slider">
+          <DurationSlider
+            idBase={rowId(item, "d")}
+            name={item.name}
+            blocks={blocks}
+            disabled={s.runtimeBusy}
+            allDayLocked={allDayLock !== null}
+            title={allDayLock ?? undefined}
+            status={<DurationStatus s={s} item={item} />}
+            onChange={(next) =>
+              controller.applyRowEdit(
+                item.id,
+                (d) =>
+                  // 0 is the All-day notch, exactly as on a plan row.
+                  next === 0 ? setMode(d, "allday") : { ...setMode(d, "time"), blocks: next },
+                { burst: true },
+              )
+            }
+          />
+        </span>
+      ) : (
+        <DurationCell minutes={row.minutes} />
+      )}
       <div class="trow__acts">
+        {item && <MintToggle item={item} s={s} />}
         <AssignSwitch
           id={row.id}
           name={row.name}
@@ -129,7 +191,31 @@ function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
           offLabel={ADD_TO_PLAN_LABEL}
           caption={ADD_TO_PLAN_LABEL}
         />
+        {item && (
+          <button
+            type="button"
+            class="trow__btn trow__btn--icon"
+            aria-label={expanded ? "Collapse" : "Expand"}
+            title={expanded ? "Collapse" : "Expand"}
+            aria-expanded={expanded}
+            aria-controls={expId}
+            onClick={() => controller.expandRow(expanded ? null : item.id)}
+          >
+            <ChevronIcon up={expanded} />
+          </button>
+        )}
       </div>
+      {item && expanded && (
+        <div
+          class="trow__exp"
+          id={expId}
+          role="group"
+          aria-labelledby={nameId}
+          data-slot="row-controls"
+        >
+          <RowExpanded item={item} s={s} />
+        </div>
+      )}
     </li>
   );
 }
@@ -350,6 +436,7 @@ function LocalGroups({
                           key={row.identity}
                           row={row}
                           facts={factsOf(row)}
+                          item={itemsById.get(row.id)}
                         />
                       ))}
                     </ul>
