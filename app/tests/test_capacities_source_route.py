@@ -893,15 +893,23 @@ class TestCapacitiesCommitAuthorization:
 
         self._assert_refused(response, vault, before, status=422, reason="is not selected")
 
-    def test_unacknowledged_warning_candidate_is_refused(self, client, vault, today):
+    def test_selected_warning_candidate_without_acknowledgement_is_admitted(
+        self, client, today
+    ):
+        """Owner decision 2026-10-29: review reasons no longer gate a SELECTED row.
+
+        The row still carries ``capacities_review_reasons``; the selection
+        record is the owner's confirmation, so the commit is admitted with
+        ``acknowledged: False`` stored.
+        """
         _seed_source(client)
         _seed_selections((_identity("keep"), 0), acknowledged=False)
         _index_assigned(today, _cap_row("keep", review_reasons=["rule_unknown"]))
-        before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
 
-        self._assert_refused(response, vault, before, status=422, reason="is not acknowledged")
+        assert response.status_code == 200, response.text
+        assert self._systems(response, "keep") == ["todoist"]
 
     def test_store_read_failure_fails_closed(self, client, vault, today):
         _seed_source(client)
@@ -965,9 +973,15 @@ class TestCapacitiesCommitAuthorization:
 
     # -- assignment basis (U4 rule-assigned admission) -----------------------
 
-    def test_rule_assigned_row_with_review_reasons_without_acknowledgement_is_refused(
+    def test_rule_assigned_row_with_review_reasons_and_no_selection_is_refused(
         self, client, vault, today
     ):
+        """Owner safety decision: a never-selected flagged row never commits.
+
+        A rule-basis row needs no selection record in general, but a row that
+        still carries review reasons needs the owner's confirmation, and only a
+        selection record supplies it. Acknowledging alone no longer admits it.
+        """
         _seed_source(client)
         _index_assigned(
             today,
@@ -978,8 +992,24 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         self._assert_refused(
-            response, vault, before, status=422, reason="is not acknowledged"
+            response, vault, before, status=422, reason="is not selected"
         )
+
+    def test_rule_assigned_row_with_review_reasons_and_a_selection_is_admitted(
+        self, client, today
+    ):
+        """A selection record confirms a flagged rule-basis row for commit."""
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0), acknowledged=False)
+        _index_assigned(
+            today,
+            _cap_row("keep", assigned=True, review_reasons=["rule_unknown"]),
+        )
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        assert response.status_code == 200, response.text
+        assert self._systems(response, "keep") == ["todoist"]
 
     def test_rule_assigned_row_excluded_since_indexing_is_refused(
         self, client, vault, today

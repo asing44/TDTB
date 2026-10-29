@@ -9,15 +9,17 @@
    - Selection is by STABLE IDENTITY, never by name. Only a canonical
      ``capacities:{space}:{structure}:{object}`` identity is ever selectable
      or sent; a malformed identity is refused client-side.
-   - Acknowledgement is REQUIRED for a candidate that carries review reasons:
-     selecting one without acknowledging is refused, and the save is refused
-     (fail-safe) rather than sending an unacknowledged selection.
+   - Review reasons are WARN-ONLY for planning (owner decision 2026-10-29): a
+     candidate that carries them stays visible and flagged, but it is
+     selectable without a prior acknowledgement. The ``acknowledged`` flag is
+     optional audit metadata, never a precondition.
    - A save with no loaded revision is refused ("unknown revision"), and a
      real 409 conflict keeps the local selection and reports both revisions.
-   - "Acknowledge all" acks every listed unacknowledged review candidate in
-     ONE selection request (same route, same body shape, same revision and 409
-     handling as the per-row save). It never names a non-review row, a
-     non-canonical identity, or an already-acknowledged row.
+   - "Okay to plan all" selects every listed unacknowledged review candidate
+     in ONE selection request (same route, same body shape, same revision and
+     409 handling as the per-row save), which promotes them into the plan. It
+     never names a non-review row, a non-canonical identity, or an
+     already-acknowledged row.
    - The intake diagnostic block is rendered truthfully (state, generation,
      coverage); an absent block is stated, never fabricated. */
 
@@ -73,7 +75,6 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
   const [saving, setSaving] = useState(false);
   const [ackBusy, setAckBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [blocked, setBlocked] = useState<string | null>(null);
 
   const load = async () => {
     setPhase("loading");
@@ -99,22 +100,16 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
 
   const needsAck = (candidate: CapacitiesIntakeCandidate) => candidate.reviewReasons.length > 0;
 
+  // Selecting a review-reason candidate needs no acknowledgement: the review
+  // notice is advisory for planning, and the flag is audit metadata only.
   const toggleSelect = (candidate: CapacitiesIntakeCandidate) => {
     const current = draft[candidate.identity] ?? { selected: false, acknowledged: false };
-    if (!current.selected && needsAck(candidate) && !current.acknowledged) {
-      setBlocked(candidate.identity);
-      return;
-    }
-    setBlocked(null);
     setDraft({ ...draft, [candidate.identity]: { ...current, selected: !current.selected } });
   };
 
   const toggleAck = (candidate: CapacitiesIntakeCandidate) => {
     const current = draft[candidate.identity] ?? { selected: false, acknowledged: false };
-    const acknowledged = !current.acknowledged;
-    const selected =
-      !acknowledged && needsAck(candidate) ? false : current.selected;
-    setDraft({ ...draft, [candidate.identity]: { selected, acknowledged } });
+    setDraft({ ...draft, [candidate.identity]: { ...current, acknowledged: !current.acknowledged } });
   };
 
   const save = async () => {
@@ -130,10 +125,6 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       const entry = draft[candidate.identity];
       if (!entry) continue;
       if (entry.selected) {
-        if (needsAck(candidate) && !entry.acknowledged) {
-          setError(`Acknowledge ${candidate.name || candidate.identity} before selecting it.`);
-          return;
-        }
         select.push({ identity: candidate.identity, acknowledge: entry.acknowledged });
       } else if (currentIds.has(candidate.identity)) {
         deselect.push(candidate.identity);
@@ -173,9 +164,10 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
     }
   };
 
-  // The one-click acknowledgement works over exactly these rows: review-reason
+  // The one-click control works over exactly these rows: review-reason
   // candidates the draft still shows unacknowledged, restricted to the
-  // canonical identities the route accepts.
+  // canonical identities the route accepts. It SELECTS them (promoting them
+  // into the plan) while stamping ``acknowledge: true`` as the audit flag.
   const unacknowledgedReviewRows = candidates.filter((candidate) => {
     if (!needsAck(candidate)) return false;
     if (!isCanonicalCapacitiesIdentity(candidate.identity)) return false;
@@ -183,9 +175,9 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
     return entry !== undefined && !entry.acknowledged;
   });
 
-  const acknowledgeAll = async () => {
+  const okayToPlanAll = async () => {
     if (!selections) {
-      setError("Selections are not loaded; reload before acknowledging.");
+      setError("Selections are not loaded; reload before saving.");
       return;
     }
     if (unacknowledgedReviewRows.length === 0) return;
@@ -194,7 +186,6 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
     setError(null);
     setNotice(null);
     setConflict(null);
-    setBlocked(null);
     try {
       const { selections: saved, refreshError } = await controller.saveCapacitiesSelections({
         expectedRevision: selections.revision,
@@ -242,7 +233,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
         <p class="capacities-settings__hint">
           These are Capacities objects the intake could not place on its own.
           Selecting one promotes it by stable identity; a candidate that carries
-          review reasons must be acknowledged first.
+          review reasons stays flagged, and selecting it is enough to plan it.
         </p>
 
         {intake ? (
@@ -314,12 +305,12 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                 <button
                   class="btn"
                   disabled={ackBusy || saving || selections === null}
-                  aria-label={`Acknowledge all ${unacknowledgedReviewRows.length} review rows`}
-                  onClick={() => void acknowledgeAll()}
+                  aria-label={`Okay to plan all ${unacknowledgedReviewRows.length} review rows`}
+                  onClick={() => void okayToPlanAll()}
                 >
                   {ackBusy
                     ? "Acknowledging…"
-                    : `Acknowledge all (${unacknowledgedReviewRows.length})`}
+                    : `Okay to plan all (${unacknowledgedReviewRows.length})`}
                 </button>
               )}
               <div class="capacities-object-list" role="group" aria-label="Unknown Capacities candidates">
@@ -359,11 +350,6 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                           <span>{entry.selected ? "Selected" : "Not selected"}</span>
                         </label>
                       </div>
-                      {blocked === candidate.identity && (
-                        <span class="field-error" role="alert">
-                          Acknowledge this candidate before selecting it.
-                        </span>
-                      )}
                     </div>
                   );
                 })}

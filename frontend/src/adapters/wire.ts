@@ -1613,6 +1613,17 @@ function isCalendarWarning(warning: string): boolean {
   return /calendar/i.test(warning) && !advisoryReminderOmission.test(warning);
 }
 
+/** The review notice for Capacities rows the intake could not fully evaluate
+    (an UNKNOWN rule/status/completion tri-state, e.g. after a status option is
+    deleted). Its rows stay visible and flagged, but since 2026-10-29 (owner
+    decision) review reasons are WARN-ONLY for planning: the notice no longer
+    degrades source health, blocks sequence/shadow/commit, or requires a prior
+    per-row acknowledgement to be selected. The exact emitted shape is
+    ``Capacities review — N unassigned candidate(s) not fully evaluated: …``; a
+    near miss still fails closed. */
+const advisoryCapacitiesReviewNotice =
+  /^Capacities review — \d+ unassigned candidate\(s\) not fully evaluated:/;
+
 /** Every warning that does NOT block commit or sequence. The list is explicit
     and closed: an unrecognised warning stays blocking, so a future server
     diagnostic fails closed rather than passing silently (KTD6). */
@@ -1621,6 +1632,7 @@ function isAdvisoryWarning(warning: string): boolean {
     advisoryReminderOmission.test(warning) ||
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
+    advisoryCapacitiesReviewNotice.test(warning) ||
     advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning)) ||
     isCalendarWarning(warning)
   );

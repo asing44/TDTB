@@ -1,10 +1,11 @@
 /* capacities-unknown-review.test.tsx — the unknown-candidate review surface.
 
-   Covers: required acknowledgement for a review-reason candidate, the merge
-   body carrying the stable canonical identity + acknowledgement + expected
-   revision, the server-digest refresh after a save (the promotion reaches the
-   store inputs, not just local UI state), a real 409 that preserves the local
-   selection, and refusal of a non-canonical identity. */
+   Covers: a review-reason candidate being selectable WITHOUT a prior
+   acknowledgement (owner decision 2026-10-29: review reasons are warn-only for
+   planning), the merge body carrying the stable canonical identity +
+   acknowledgement + expected revision, the server-digest refresh after a save
+   (the promotion reaches the store inputs, not just local UI state), a real 409
+   that preserves the local selection, and refusal of a non-canonical identity. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
@@ -33,18 +34,25 @@ async function openReview() {
 }
 
 describe("CapacitiesUnknownReview", () => {
-  it("requires acknowledgement before a review-reason candidate can be selected", async () => {
-    const { section } = await openReview();
+  it("selects a review-reason candidate without acknowledging it first", async () => {
+    const { h, section } = await openReview();
+    const save = vi.spyOn(h.controller, "saveCapacitiesSelections");
     const select = within(section).getByLabelText(`Select ${CANONICAL_ACK}`) as HTMLInputElement;
     const ack = within(section).getByLabelText(`Acknowledge ${CANONICAL_ACK}`) as HTMLInputElement;
 
-    fireEvent.click(select);
-    expect(select.checked).toBe(false);
-    expect(section.textContent).toContain("Acknowledge this candidate before selecting it.");
-
-    fireEvent.click(ack);
+    expect(ack.checked).toBe(false);
     fireEvent.click(select);
     expect(select.checked).toBe(true);
+    expect(section.textContent).not.toContain("Acknowledge this candidate before selecting it.");
+
+    fireEvent.click(within(section).getByRole("button", { name: "Save selections" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: 0,
+      select: [{ identity: CANONICAL_ACK, acknowledge: false }],
+      deselect: [],
+    });
   });
 
   it("sends the canonical identity + acknowledgement + revision and refreshes the server digest", async () => {

@@ -463,6 +463,43 @@ describe("generation-freshness warnings (KTD6 reclassification)", () => {
   });
 });
 
+describe("Capacities review notice (advisory, warn-only for planning)", () => {
+  const review =
+    "Capacities review — 2 unassigned candidate(s) not fully evaluated: " +
+    "obj-a (status_unknown); obj-b (rule_unknown). Rescan Capacities to evaluate " +
+    "them fully.";
+
+  it("treats the review notice as an advisory note with a details fix", () => {
+    expect(blockingWarnings([review])).toEqual([]);
+    expect(advisoryNotes([review])).toEqual([{ text: review, fix: "details" }]);
+    expect(sourceHealthOf([review])).toBe("ok");
+    expect(sourceHealthBySource([review])).toEqual({
+      todoist: "ok",
+      calendar: "ok",
+      capacities: "ok",
+    });
+  });
+
+  it("keeps a different unknown Capacities warning blocking", () => {
+    const unknown = "Capacities review could not be completed; needs Refresh.";
+    expect(sourceHealthOf([unknown])).toBe("degraded");
+    expect(advisoryNotes([unknown])).toEqual([]);
+  });
+
+  it("keeps only the unknown warning blocking in a mixed list", () => {
+    const unknown = "Capacities review could not be completed; needs Refresh.";
+    expect(blockingWarnings([review, unknown])).toEqual([unknown]);
+    expect(sourceHealthOf([review, unknown])).toBe("degraded");
+  });
+
+  it("does not match a near-miss review string without the exact shape", () => {
+    const nearMiss =
+      "Capacities review — unassigned candidate(s) not fully evaluated: obj-a";
+    expect(sourceHealthOf([nearMiss])).toBe("degraded");
+    expect(advisoryNotes([nearMiss])).toEqual([]);
+  });
+});
+
 describe("Assigned On declaration diagnostics (advisory, OQ-P4)", () => {
   const unknownProperty =
     "ignored Capacities Assigned On declaration for structure 'Task': " +

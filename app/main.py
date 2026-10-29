@@ -663,17 +663,21 @@ def _capacities_commit_refusals(
 ) -> list[str]:
     """Commit-time admission of the authorized Capacities rows, one reason each.
 
-    A row is admitted only when its index entry is complete, its review reasons
-    (if any) were acknowledged, and no hard exclusion has caught it since
-    indexing. The assignment basis is read ONLY from the server index entry,
-    never from the browser submission: a ``capacities_assignment_basis`` of
-    ``"rule"`` marks a row the server assigned from an active stored rule, and
-    such a row needs no selection record. A ``"selection"`` basis, or a LEGACY
-    index row with no marker at all, still requires the identity to be selected
-    in the CURRENT selection store (fail closed). The selection store and
-    tag-exclusion policy are re-read here, never trusted from the index. A
-    failed read raises 503 and admits nothing. Todoist and note-path rows never
-    reach this function.
+    A row is admitted only when its index entry is complete and no hard
+    exclusion has caught it since indexing. Review reasons are warn-only for
+    PLANNING (owner decision 2026-10-29): they no longer refuse a SELECTED row,
+    and an acknowledgement is never consulted — the selection record itself is
+    the owner's confirmation. The assignment basis is read ONLY from the server
+    index entry, never from the browser submission: a ``capacities_assignment_basis``
+    of ``"rule"`` marks a row the server assigned from an active stored rule,
+    and such a row needs no selection record. A ``"selection"`` basis, or a
+    LEGACY index row with no marker at all, still requires the identity to be
+    selected in the CURRENT selection store (fail closed). Safety boundary: a
+    row that still carries review reasons is NEVER auto-admitted by a rule — it
+    must also be selected, so a flagged row that was never selected never
+    commits. The selection store and tag-exclusion policy are re-read here,
+    never trusted from the index. A failed read raises 503 and admits nothing.
+    Todoist and note-path rows never reach this function.
     """
     candidates = [
         candidate for candidate, _submitted in matches
@@ -724,22 +728,19 @@ def _capacities_commit_refusals(
         if candidate.get("identity") in excluded:
             refusals.append(f"{name!r} is excluded since it was indexed")
         elif basis == "rule":
-            # Rule/source-assigned: no selection record is required. Review
-            # reasons still need an acknowledging selection record.
-            if candidate.get("capacities_review_reasons") and not (
-                record is not None and record.acknowledged
-            ):
+            # Rule/source-assigned: no selection record is required, EXCEPT for
+            # a row that still carries review reasons. Review reasons are
+            # warn-only for planning, but a flagged row that was never selected
+            # must never be auto-admitted by a rule — only a selection record
+            # (the owner's confirmation) admits it.
+            if candidate.get("capacities_review_reasons") and record is None:
                 refusals.append(
-                    f"{name!r} is not acknowledged (it carries review reasons)"
+                    f"{name!r} is not selected (it carries review reasons)"
                 )
         elif record is None:
             refusals.append(
                 f"{name!r} is not selected (never selected, or withdrawn "
                 "since it was indexed)"
-            )
-        elif candidate.get("capacities_review_reasons") and not record.acknowledged:
-            refusals.append(
-                f"{name!r} is not acknowledged (it carries review reasons)"
             )
     return refusals
 
@@ -4460,8 +4461,10 @@ def create_app() -> FastAPI:
             structure.structure_id for structure in source.structures
         }
 
-        # Same order as the resolver: excluded, type_disabled, not_cached, then
-        # the acknowledgement that a review-reason candidate requires.
+        # Same order as the resolver: excluded, type_disabled, then not_cached.
+        # Review reasons are warn-only for planning (owner decision 2026-10-29):
+        # a flagged row is selectable without a prior acknowledgement, and the
+        # stored ``acknowledged`` flag is audit metadata only.
         for identity, acknowledge in selected:
             if identity in hard_excluded:
                 raise _capacities_selection_rejection(
@@ -4480,12 +4483,6 @@ def create_app() -> FastAPI:
                     409, "not_cached", identity,
                     "Capacities selection is not a current cached candidate; "
                     "Refresh may be required.",
-                )
-            if row.get("capacities_review_reasons") and not acknowledge:
-                raise _capacities_selection_rejection(
-                    409, "acknowledgement_required", identity,
-                    "Capacities selection carries review reasons; "
-                    "acknowledge it to select it.",
                 )
 
         # Merge over the current record. Removals run first, then selections, so

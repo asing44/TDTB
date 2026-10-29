@@ -1,4 +1,4 @@
-/* capacities-unknown-ack-all.test.tsx — the ONE "Acknowledge all" control in
+/* capacities-unknown-ack-all.test.tsx — the ONE "Okay to plan all" control in
    the unknown-candidate review surface.
 
    Covers: no control below two unacknowledged review rows, the count in the
@@ -64,18 +64,18 @@ async function openReview(candidates: CapacitiesIntakeCandidate[]) {
 
 function ackAllButton(section: HTMLElement, count: number): HTMLButtonElement {
   return within(section).getByRole("button", {
-    name: `Acknowledge all ${count} review rows`,
+    name: `Okay to plan all ${count} review rows`,
   }) as HTMLButtonElement;
 }
 
-describe("Capacities unknown review — acknowledge all", () => {
+describe("Capacities unknown review — okay to plan all", () => {
   it("offers no control with zero or one unacknowledged review rows", async () => {
     const none = await openReview([PLAIN]);
-    expect(within(none.section).queryByText(/Acknowledge all/)).toBeNull();
+    expect(within(none.section).queryByText(/Okay to plan all/)).toBeNull();
     cleanup();
 
     const one = await openReview([REVIEW_A, PLAIN]);
-    expect(within(one.section).queryByText(/Acknowledge all/)).toBeNull();
+    expect(within(one.section).queryByText(/Okay to plan all/)).toBeNull();
   });
 
   it("counts only unacknowledged review rows and acknowledges them in ONE request", async () => {
@@ -86,7 +86,7 @@ describe("Capacities unknown review — acknowledge all", () => {
     const save = vi.spyOn(h.controller, "saveCapacitiesSelections");
 
     const button = ackAllButton(section, 2);
-    expect(button.textContent).toContain("Acknowledge all (2)");
+    expect(button.textContent).toContain("Okay to plan all (2)");
     expect(button.disabled).toBe(false);
 
     fireEvent.click(button);
@@ -106,7 +106,7 @@ describe("Capacities unknown review — acknowledge all", () => {
     await waitFor(() =>
       expect(within(section).getByText(/Acknowledged 2 review rows/)).toBeTruthy(),
     );
-    expect(within(section).queryByText(/Acknowledge all/)).toBeNull();
+    expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
     expect(
       (within(section).getByLabelText(`Acknowledge ${A}`) as HTMLInputElement).checked,
     ).toBe(true);
@@ -218,7 +218,7 @@ describe("Capacities unknown review — acknowledge all", () => {
     await waitFor(() =>
       expect(within(section).getByText(/Acknowledged 2 review rows/)).toBeTruthy(),
     );
-    expect(within(section).queryByText(/Acknowledge all/)).toBeNull();
+    expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
   });
 
   it("reports one short inline error and keeps the rows usable when the batch fails", async () => {

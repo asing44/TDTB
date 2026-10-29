@@ -774,16 +774,24 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == _ident("obj-a")
         assert not cs.selections_path().exists()
 
-    def test_review_candidate_without_acknowledgement_is_rejected(self, client):
+    def test_review_candidate_without_acknowledgement_is_accepted_and_stored(self, client):
+        """Owner decision 2026-10-29: review reasons are warn-only for planning.
+
+        The row stays visible and flagged, but a prior acknowledgement is not a
+        precondition for selecting it. The stored record keeps
+        ``acknowledged: False`` as an audit flag and the row is promoted like
+        any other selection.
+        """
         _ready(STANDARD)
         identity = _ident("obj-unknown", CUSTOM)
 
         response = _select(client, select=[(identity, False)])
 
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "acknowledgement_required"
-        assert response.json()["detail"]["identity"] == identity
-        assert not cs.selections_path().exists()
+        assert response.status_code == 200, response.text
+        assert response.json()["selections"] == [
+            {"identity": identity, "acknowledged": False, "rules_revision": 0},
+        ]
+        assert _stored()[identity].acknowledged is False
 
     def test_review_candidate_with_acknowledgement_is_stored(self, client):
         _ready(STANDARD)
