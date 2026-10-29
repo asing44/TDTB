@@ -295,6 +295,9 @@ export interface AssignedItem {
   projectId?: string | null;
   projectName?: string | null;
   projectColor?: string | null;
+  /** Todoist label name -> its Todoist colour NAME (null when uncoloured).
+      Absent on payloads that predate it. */
+  labelColors?: Record<string, string | null>;
   /** Server review-reason keys for a Capacities row that still needs a look
       (warn-only, owner decision 2026-10-29): the row plans and commits
       normally, and the reason list only drives the row's "Needs a look" chip.

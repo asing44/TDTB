@@ -17,14 +17,19 @@ import { makeHarness, type Harness } from "./test-harness";
 import type { AssignedItem } from "../model/types";
 import type { AssignmentRow } from "../store/store";
 import {
+  CAPACITIES_SLUGS,
   TODOIST_COLORS,
+  capacitiesColorClass,
   capacitiesHue,
+  capacitiesSlug,
+  labelChipClass,
   originChipSpec,
 } from "./sourceChip";
 
 afterEach(cleanup);
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+const tokensCss = readFileSync(resolve(process.cwd(), "src/origin-tokens.css"), "utf8");
 const drawerCss = readFileSync(resolve(process.cwd(), "src/ui/drawer-groups.css"), "utf8");
 
 const PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e";
@@ -79,6 +84,22 @@ describe("projectAssigned carries the origin fields", () => {
     expect(blank.projectColor ?? null).toBeNull();
   });
 
+  it("projects label colours as lowercased names, null for blank or non-string", () => {
+    const row = projectAssigned({
+      name: "T",
+      source: "todoist",
+      labels: ["Hour", "Habits", "Odd"],
+      label_colors: { Hour: "Sky_Blue", Habits: null, Odd: "  ", Num: 4 },
+    });
+    expect(row.labelColors).toEqual({ Hour: "sky_blue", Habits: null, Odd: null, Num: null });
+  });
+
+  it("defaults label colours to {} when missing or malformed", () => {
+    expect(projectAssigned({ name: "T", source: "todoist" }).labelColors).toEqual({});
+    expect(projectAssigned({ name: "T", source: "todoist", label_colors: ["x"] }).labelColors).toEqual({});
+    expect(projectAssigned({ name: "T", source: "capacities", label_colors: { a: "red" } }).labelColors).toEqual({});
+  });
+
   it("keeps the Capacities structure id the wire sends", () => {
     const row = projectAssigned({
       name: "Obj",
@@ -116,11 +137,10 @@ describe("originChipSpec", () => {
     const row = item({ source: "capacities", types: [PROJECT_STRUCTURE] });
     const spec = originChipSpec(row, { [PROJECT_STRUCTURE]: "Project" });
     expect(spec?.label).toBe("Project");
-    expect(spec?.className).toContain(`origin-chip--cap-h${capacitiesHue("Project")}`);
-    // Case-insensitive, deterministic, and distinct across the named types.
-    expect(capacitiesHue("PROJECT")).toBe(capacitiesHue("project"));
-    const named = ["Task", "Project", "Event", "Continual", "Press", "Purchase", "Print", "Horticos"];
-    expect(new Set(named.map(capacitiesHue)).size).toBe(named.length);
+    expect(spec?.className).toContain("origin-chip--cap-project");
+    // Case-insensitive named slug; unknown titles hash onto the eight fallback hues.
+    expect(capacitiesColorClass("PROJECT")).toBe("origin-chip--cap-project");
+    expect(capacitiesColorClass("Gizmo")).toBe(`origin-chip--cap-h${capacitiesHue("Gizmo")}`);
     const unknown = capacitiesHue("Gizmo");
     expect(unknown).toBeGreaterThanOrEqual(1);
     expect(unknown).toBeLessThanOrEqual(8);
@@ -135,6 +155,57 @@ describe("originChipSpec", () => {
 
   it("leaves calendar rows to their current label", () => {
     expect(originChipSpec(item({ source: "calendar" }), {})).toBeNull();
+  });
+});
+
+describe("Capacities title to slug", () => {
+  it("lowercases, dashes spaces and matches singular and plural alike", () => {
+    expect(capacitiesSlug("Research Note")).toBe("research-note");
+    expect(capacitiesSlug("Horticos")).toBe("hortico");
+    expect(capacitiesSlug("Presses")).toBe("press");
+    expect(capacitiesSlug("Press")).toBe("press");
+    expect(capacitiesSlug("Purchases")).toBe("purchase");
+    for (const [plural, slug] of [["Prints", "print"], ["Projects", "project"], ["Continuals", "continual"],
+      ["Events", "event"], ["Tasks", "task"], ["Atomic Notes", "atomic-note"]]) {
+      expect(capacitiesSlug(plural)).toBe(slug);
+    }
+  });
+
+  it("gives every named type its own colour class and unknowns a hash hue", () => {
+    expect(capacitiesColorClass("Horticos")).toBe("origin-chip--cap-hortico");
+    expect(capacitiesColorClass("Presses")).toBe("origin-chip--cap-press");
+    expect(capacitiesColorClass("Atomic Note")).toBe("origin-chip--cap-atomic-note");
+    expect(capacitiesColorClass("Zzz Thing")).toMatch(/^origin-chip--cap-h[1-8]$/);
+  });
+});
+
+describe("label chip class", () => {
+  it("maps a known Todoist colour name to a label-chip class, else null", () => {
+    expect(labelChipClass("sky_blue")).toBe("label-chip label-chip--td-sky_blue");
+    expect(labelChipClass("Berry_Red")).toBe("label-chip label-chip--td-berry_red");
+    expect(labelChipClass("chartreuse")).toBeNull();
+    expect(labelChipClass(null)).toBeNull();
+    expect(labelChipClass(undefined)).toBeNull();
+  });
+
+  it("colours a row's label chips from labelColors and leaves others plain", () => {
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.assigned.push(
+      item({
+        id: "Lab row",
+        name: "Lab row",
+        labels: ["Hour", "Habits", "Mystery"],
+        labelColors: { Hour: "sky_blue", Habits: null, Mystery: "chartreuse" },
+      }),
+    );
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: { ...h.scenario.ledger } });
+    const { container } = h.ui(<Queue />);
+    const tags = Array.from(rowNamed(container, "Lab row").querySelectorAll<HTMLElement>(".qrow__tag"));
+    expect(tags.map((t) => t.textContent)).toEqual(["Hour", "Habits", "Mystery"]);
+    expect(tags[0].classList.contains("label-chip--td-sky_blue")).toBe(true);
+    expect(tags[1].classList.contains("label-chip")).toBe(false);
+    expect(tags[2].classList.contains("label-chip")).toBe(false);
   });
 });
 
@@ -172,7 +243,7 @@ describe("rendered rows wear the origin chip", () => {
     await waitFor(() => {
       const chip = rowNamed(container, "Cap project").querySelector<HTMLElement>(".origin-chip");
       expect(chip?.textContent).toBe("Project");
-      expect(chip?.classList.contains(`origin-chip--cap-h${capacitiesHue("Project")}`)).toBe(true);
+      expect(chip?.classList.contains("origin-chip--cap-project")).toBe(true);
     });
   });
 });
@@ -237,39 +308,50 @@ function rowNamedPlan(container: Element, name: string): HTMLElement {
   return rowNamed(container, name);
 }
 
-describe("Todoist colour tokens", () => {
-  const start = appCss.indexOf("/* origin-chip tokens */");
-  const section = start >= 0 ? appCss.slice(start) : "";
-  const blocks = (selector: string): string => {
-    const m = section.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`));
-    return m ? m[1] : "";
-  };
-  const light = blocks(":root");
-  const mediaDark = (section.match(/@media \(prefers-color-scheme: dark\) \{\s*:root \{([^}]*)\}/) ?? [])[1] ?? "";
-  const forcedDark = blocks(':root\\[data-theme="dark"\\]');
+/** The four token layouts in origin-tokens.css: base, system dark, forced
+    light, forced dark. */
+const tokenBlocks = (() => {
+  const light = (tokensCss.match(/^:root \{([^}]*)\}/m) ?? [])[1] ?? "";
+  const mediaDark = (tokensCss.match(/@media \(prefers-color-scheme: dark\) \{\s*:root \{([^}]*)\}/) ?? [])[1] ?? "";
+  const forcedLight = (tokensCss.match(/:root\[data-theme="light"\] \{([^}]*)\}/) ?? [])[1] ?? "";
+  const forcedDark = (tokensCss.match(/:root\[data-theme="dark"\] \{([^}]*)\}/) ?? [])[1] ?? "";
+  return { light, mediaDark, forcedLight, forcedDark };
+})();
 
+describe("chip colour tokens", () => {
   it("lists the 20 Todoist colour names", () => {
     expect(TODOIST_COLORS).toHaveLength(20);
   });
 
-  it("defines every name in the light and both dark theme blocks", () => {
-    for (const name of TODOIST_COLORS) {
-      const token = `--c-td-${name.replace(/_/g, "-")}:`;
-      expect(light, `light ${name}`).toContain(token);
-      expect(mediaDark, `media dark ${name}`).toContain(token);
-      expect(forcedDark, `forced dark ${name}`).toContain(token);
+  it("defines every Todoist name, hash hue and Capacities slug in all four blocks", () => {
+    const names = [
+      ...TODOIST_COLORS.map((n) => `--c-td-${n.replace(/_/g, "-")}:`),
+      ...Array.from({ length: 8 }, (_, i) => `--c-cap-${i + 1}:`),
+      ...CAPACITIES_SLUGS.map((n) => `--c-cap-${n}:`),
+    ];
+    for (const [label, body] of Object.entries(tokenBlocks)) {
+      for (const token of names) expect(body, `${label} ${token}`).toContain(token);
     }
-    for (let n = 1; n <= 8; n++) {
-      for (const [label, body] of [["light", light], ["media", mediaDark], ["dark", forcedDark]]) {
-        expect(body, `${label} cap ${n}`).toContain(`--c-cap-${n}:`);
-      }
+  });
+
+  it("has a colour class for every token and for each Capacities slug", () => {
+    for (const slug of CAPACITIES_SLUGS) {
+      expect(tokensCss).toContain(`.origin-chip--cap-${slug} {`);
     }
+    for (const n of TODOIST_COLORS) {
+      expect(tokensCss).toContain(`.origin-chip--td-${n} {`);
+      expect(tokensCss).toContain(`.label-chip--td-${n} {`);
+    }
+  });
+
+  it("is no longer duplicated in app.css", () => {
+    expect(appCss).not.toContain("--c-td-");
+    expect(appCss).not.toContain("--c-cap-");
+    expect(appCss).not.toMatch(/\.origin-chip--(td|cap)-/);
   });
 });
 
 describe("origin chip contrast and hex discipline", () => {
-  const start = appCss.indexOf("/* origin-chip tokens */");
-  const section = appCss.slice(start);
   const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
   const mix = (a: string, b: string, pct: number) =>
     rgb(a).map((x, i) => x * (pct / 100) + rgb(b)[i] * (1 - pct / 100));
@@ -285,15 +367,17 @@ describe("origin chip contrast and hex discipline", () => {
     return (hi + 0.05) / (lo + 0.05);
   };
   const themes = [
-    { name: "light", body: /:root \{([^}]*)\}/, surface: "#fdfcf9", text: "#2a2a27" },
-    { name: "dark", body: /:root\[data-theme="dark"\] \{([^}]*)\}/, surface: "#191917", text: "#e8e6e0" },
+    { name: "light", body: tokenBlocks.light, surface: "#fdfcf9", text: "#2a2a27" },
+    { name: "forced light", body: tokenBlocks.forcedLight, surface: "#fdfcf9", text: "#2a2a27" },
+    { name: "dark", body: tokenBlocks.forcedDark, surface: "#191917", text: "#e8e6e0" },
+    { name: "system dark", body: tokenBlocks.mediaDark, surface: "#191917", text: "#e8e6e0" },
   ];
+  const expected = 20 + 8 + CAPACITIES_SLUGS.length;
 
   for (const t of themes) {
     it(`keeps chip ink at 4.5:1 on its tint in the ${t.name} theme`, () => {
-      const body = section.match(t.body)![1];
-      const tokens = [...body.matchAll(/--c-(?:td|cap)-[\w-]+:\s*(#[0-9a-f]{6})/g)];
-      expect(tokens.length).toBe(28);
+      const tokens = [...t.body.matchAll(/--c-(?:td|cap)-[\w-]+:\s*(#[0-9a-f]{6})/g)];
+      expect(tokens.length).toBe(expected);
       for (const [, hex] of tokens) {
         const bg = mix(hex, t.surface, 14);
         const ink = mix(hex, t.text, 40);
@@ -303,8 +387,10 @@ describe("origin chip contrast and hex discipline", () => {
   }
 
   it("uses hex only inside the token blocks, never in the chip rules", () => {
-    const rules = section.slice(section.indexOf(".origin-chip[data-origin]"));
+    const rules = tokensCss.slice(tokensCss.indexOf("/* Colour classes"));
     expect(rules).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    const base = appCss.slice(appCss.indexOf(".origin-chip[data-origin]"));
+    expect(base).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });
 
@@ -316,6 +402,14 @@ describe("origin chip colour specificity", () => {
     const body = css.slice(start, css.indexOf("}", start));
     // A (0,2,0) base rule declaring --chip-c would beat every
     // .origin-chip--td-* / --cap-h* class (0,1,0) and paint every chip grey.
+    expect(body).not.toMatch(/--chip-c\s*:/);
+    expect(body).toMatch(/var\(--chip-c,\s*var\(--t-muted\)\)/);
+  });
+
+  it("the label-chip base rule does not set --chip-c either", () => {
+    const start = tokensCss.indexOf(".qrow__tag.label-chip {");
+    expect(start).toBeGreaterThan(-1);
+    const body = tokensCss.slice(start, tokensCss.indexOf("}", start));
     expect(body).not.toMatch(/--chip-c\s*:/);
     expect(body).toMatch(/var\(--chip-c,\s*var\(--t-muted\)\)/);
   });
