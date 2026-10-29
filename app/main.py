@@ -6972,12 +6972,29 @@ def create_app() -> FastAPI:
                             f"{row_id!r}: start {submitted_start} does not match "
                             f"server anchored projection {server_start}")
                     continue
-                server_end = (_hhmm2(spec.get("End")) or _hhmm2(spec.get("end")))
-                if server_end is None:
-                    mins = time_engine.duration_minutes(spec.get("Duration"))
-                    if mins and server_start is not None:
-                        total = (int(server_start[:2]) * 60 + int(server_start[3:])) + mins
-                        server_end = f"{total // 60:02d}:{total % 60:02d}"
+                # The expected end is the span the sequence injector
+                # produces (``sequence._anchored_row_span``), not the spec's
+                # raw End: a ``Type: window`` block's Start..End is a floating
+                # window, so its row is START + Duration footprint and the
+                # window End would refuse the row the server itself injected.
+                # A spec with only End (or only Duration) keeps that bound.
+                expected_span = planning.sequence._anchored_row_span(spec)
+                if (expected_span is not None
+                        and expected_span[1] > expected_span[0]):
+                    server_end = planning.sequence._minutes_to_hhmm(
+                        expected_span[1])
+                else:
+                    # No configured footprint (the injector would skip it), so
+                    # keep the legacy End-first projection instead of binding
+                    # the row to a zero-length span.
+                    server_end = (_hhmm2(spec.get("End"))
+                                  or _hhmm2(spec.get("end")))
+                    if server_end is None:
+                        mins = time_engine.duration_minutes(spec.get("Duration"))
+                        if mins and server_start is not None:
+                            total = (int(server_start[:2]) * 60
+                                     + int(server_start[3:])) + mins
+                            server_end = f"{total // 60:02d}:{total % 60:02d}"
                 if server_end is not None and submitted_end != server_end:
                     if drift_note is not None:
                         day_setup_drift.append(drift_note)

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
+import config_reader  # noqa: E402
 import runstate  # noqa: E402
 import commit  # noqa: E402
 import commit_run  # noqa: E402
@@ -908,14 +909,18 @@ class TestExactSequenceAuthorization:
         self, client, vault, monkeypatch
     ):
         """A server-injected overlap_allowed anchored row echoed with
-        ``backdrop: true`` and its server-matching span previews OK."""
+        ``backdrop: true`` and its server-matching span previews OK.
+
+        Live is a ``window`` block, so the injector's row is the window START
+        plus its Duration footprint (12:00-12:30, see
+        ``sequence._anchored_row_span``), never START..window-End."""
         monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
         self._write_overlap_anchored_vault_config(vault)
         seq = {"sequence": [
-            {"id": "Live", "start": "12:00", "end": "20:00",
+            {"id": "Live", "start": "12:00", "end": "12:30",
              "zone": "any", "backdrop": True},
         ]}
         r = client.post(
@@ -927,13 +932,18 @@ class TestExactSequenceAuthorization:
     def test_overlap_allowed_anchor_backdrop_forged_timing_is_422(
         self, client, vault, monkeypatch
     ):
-        """The backdrop widening does not waive exact anchored timing."""
+        """The backdrop widening does not waive exact anchored timing.
+
+        The live span is the injected footprint 12:00-12:30, so the window
+        END (20:00) is forged timing exactly like a shifted start or a
+        shortened row."""
         monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
         self._write_overlap_anchored_vault_config(vault)
-        for start, end in (("11:00", "20:00"), ("12:00", "19:00")):
+        for start, end in (("11:00", "20:00"), ("12:00", "19:00"),
+                           ("12:00", "13:00"), ("12:00", "20:00")):
             seq = {"sequence": [
                 {"id": "Live", "start": start, "end": end,
                  "zone": "any", "backdrop": True},
@@ -944,6 +954,7 @@ class TestExactSequenceAuthorization:
             )
             assert r.status_code == 422, r.json()
             assert "does not match" in r.json()["detail"]
+            assert "forged fixed-lane timing/backdrop" in r.json()["detail"]
 
     def test_backdrop_on_non_overlap_anchored_row_is_422(
         self, client, vault, monkeypatch
@@ -1066,6 +1077,107 @@ class TestExactSequenceAuthorization:
         # Forged types=["adventure"] would route PHEP; sanitized digest must
         # fall back to server config (no presets) -> Inbox.
         assert rows and all(m["routing"] == "Inbox" for m in rows)
+
+
+class TestAnchoredSpanProjection:
+    """The commit boundary must expect the SAME anchored span the sequence
+    injector produces (``sequence._anchored_row_span``). A ``window`` block's
+    End is a floating window bound, not the row's end: its row is START plus
+    its Duration footprint. The two sides disagreed (owner report
+    2026-10-29): 'Live' (window 12:00 PM-8:00 PM, 30m) was injected as
+    12:00-12:30 and then refused for 'end 12:30 does not match server
+    anchored projection 20:00'. Re-sequencing could never satisfy both."""
+
+    CONFIG = (
+        "## Defaults\n"
+        "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+        "## Anchored Lifestyle Blocks\n"
+        "| Block | Type | Start | End | Duration | Days | overlap_allowed |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| Live | window | 12:00 PM | 8:00 PM | 30m | daily | yes |\n"
+        "| Dinner | window | 6:00 PM | 8:30 PM | — | daily | no |\n"
+        "| Press | hard | 7:00 AM | — | 90m | daily | no |\n\n"
+        "## Template Blocks\n"
+        "### Trinoor Hours\n"
+        "| Slot | Start | End |\n|---|---|---|\n"
+        "| Morning | 8:30 AM | 12:30 PM |\n"
+    )
+
+    # Before every anchor's own span, so nothing is filtered as elapsed.
+    ANCHOR = "06:00"
+
+    def _install(self, vault: Path) -> None:
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        write_config_note(config_path, self.CONFIG, encoding="utf-8")
+
+    def _injected(self) -> dict[str, dict]:
+        """Exactly the rows ``populate_remaining_anchors`` injects for this
+        config — what a freshly sequenced proposal actually carries."""
+        result = config_reader.read_config()
+        specs = shadow._anchored_specs(result.config.sections)
+        proposal: dict = {"sequence": []}
+        main_mod.sequence.populate_remaining_anchors(
+            proposal, list(specs.values()),
+            {"anchor": self.ANCHOR, "effective_eod": "23:59"},
+        )
+        return {row["id"]: dict(row) for row in proposal["sequence"]}
+
+    def _commit(self, client, rows):
+        return client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json={"digest": {"assigned": []},
+                  "sequence": {"sequence": rows}, "config": {}},
+        )
+
+    @pytest.fixture
+    def live_rows(self, client, vault, monkeypatch):
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
+            "todoist_tasks": [], "calendar_events": [],
+            "vault_frontmatter": {}, "daily_note_text": None,
+        })
+        self._install(vault)
+        return self._injected()
+
+    def test_window_anchor_commits_at_injected_footprint(
+            self, client, live_rows):
+        """The row the injector just produced (12:00-12:30) commits verbatim."""
+        row = live_rows["Live"]
+        assert (row["start"], row["end"]) == ("12:00", "12:30")
+        assert row.get("backdrop") is True
+        r = self._commit(client, [row])
+        assert r.status_code == 200, r.json()
+
+    def test_window_anchor_forged_end_is_422(self, client, live_rows):
+        """A row retimed to another end (the window End included) is forged."""
+        injected = live_rows["Live"]
+        for end in ("13:00", "20:00"):
+            r = self._commit(client, [dict(injected, end=end)])
+            assert r.status_code == 422, r.json()
+            detail = r.json()["detail"]
+            assert "forged fixed-lane timing/backdrop" in detail
+            assert "server anchored projection 12:30" in detail
+            assert "Nothing was written" in detail
+
+    def test_end_only_window_anchor_keeps_end_projection(
+            self, client, live_rows):
+        """A window spec with no Duration still projects its configured End."""
+        row = live_rows["Dinner"]
+        assert (row["start"], row["end"]) == ("18:00", "20:30")
+        assert self._commit(client, [row]).status_code == 200
+        r = self._commit(client, [dict(row, end="19:00")])
+        assert r.status_code == 422, r.json()
+        assert "server anchored projection 20:30" in r.json()["detail"]
+
+    def test_duration_only_anchor_keeps_start_plus_duration_projection(
+            self, client, live_rows):
+        """A duration-only spec projects START + Duration on both sides."""
+        row = live_rows["Press"]
+        assert (row["start"], row["end"]) == ("07:00", "08:30")
+        assert self._commit(client, [row]).status_code == 200
+        r = self._commit(client, [dict(row, end="08:00")])
+        assert r.status_code == 422, r.json()
+        assert "server anchored projection 08:30" in r.json()["detail"]
 
 
 class TestPlacementPastSurvivesInManifest:
