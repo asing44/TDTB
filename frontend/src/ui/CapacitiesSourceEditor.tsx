@@ -439,7 +439,7 @@ function StructureRow({
           ariaLabel={`“Assigned to me” date for ${rowRef}`}
           value={row.assignedOnProperty ?? null}
           placeholder="unset"
-          hint="A date on or before today marks the item assigned. Takes precedence over legacy assignment. A declaration under Connections → Capacities structures wins if both are set."
+          hint="A date on or before today marks the item assigned. Takes precedence over legacy assignment. The “Assigned to me” settings in Repair connections win if both are set."
           choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, assignedOnProperty: next }))
