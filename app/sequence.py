@@ -915,8 +915,8 @@ _TAIL_END_MIN = 23 * 60 + 59  # 23:59 — the last representable same-day minute
 
 # G16 overflow park (user decision 2026-10-15): overflow-tail rows are parked
 # at this same-day time regardless of the current time or the anchor, packed
-# consecutively. Single source of truth — change this one line to re-time the
-# park.
+# consecutively. Rows that fit NO free gap park here too (2026-10-29). Single
+# source of truth — change this one line to re-time the park.
 OVERFLOW_PARK_TIME = "17:00"
 
 
@@ -1022,7 +1022,9 @@ def reseat_overflow_tail_rows(
     GAPS that begin at/after ``OVERFLOW_PARK_TIME`` (17:00) and skip every
     anchored block span plus every row the day already holds. The park ignores
     the anchor when choosing its first gap — the user wants 17:00 even when
-    that is before 'now' — but never shares a minute with an anchor.
+    that is before 'now' — but never shares a minute with an anchor. (A row
+    that fits no free gap is the sole exception; see the 2026-10-29 change
+    below.)
 
     REVERSAL (2026-10-16, GitHub asing44/TDTB#15). The pre-2026-10 park packed
     straight from 17:00 and was exempt from anchored-block overlap, so an
@@ -1035,11 +1037,27 @@ def reseat_overflow_tail_rows(
     anchor. Mint-wall and calendar-wall handling is unchanged; Mint per-row
     permeability is a later issue (#18).
 
-    A row that fits no free gap before 23:59 keeps its at/after-EOD placement
-    — the same-day past-end-of-day marker — and reports ``overflow_past_eod``
-    instead. It is never dropped (never-bump). That marker keeps ``start ==
-    end`` only for a tail row this pass could not fit, mirroring judgment.py's
-    narrow overflow-tail relaxation.
+    A row is never dropped (never-bump). The pathological case — even the
+    5:00 PM stack has no same-day room left — keeps the incoming at/after-EOD
+    placement, the same-day past-end-of-day marker (``start == end``, mirroring
+    judgment.py's narrow overflow-tail relaxation), and reports
+    ``overflow_past_eod``.
+
+    CHANGE (2026-10-29, owner request). That marker stays at whatever the model
+    emitted at/after the effective EOD (typically ``23:59``-``23:59``, its
+    midnight overflow marker), so review and the commit due string
+    (``commit._due_string`` → "today at HH:MM") presented an unplaceable row at
+    a midnight-ish time instead of a usable one. A row that fits NO free gap is
+    now parked at ``OVERFLOW_PARK_TIME`` (17:00) anyway: stacked after any
+    earlier unplaceable row, in original order, at full duration, and allowed
+    to share time with anchors/Mint/rows already there — a row with no free gap
+    has no overlap-free home, and 5:00 PM is legible where a past-EOD marker is
+    not. This lifts the no-overlap rule ONLY for rows that fit nowhere; rows
+    that DO fit a free gap keep parking into gaps with anchors respected. The
+    ``overflow_past_eod`` warning stays attached so the user still sees the row
+    did not truly fit. When even the 5:00 PM stack has no same-day room left
+    (pathological overcapacity), the row keeps its incoming marker and the
+    warning, as before.
 
     The proposal's sequence is re-sorted chronologically (stable) afterwards
     so downstream ordering holds. Mutates ``proposal`` rows and any matching
@@ -1105,11 +1123,16 @@ def reseat_overflow_tail_rows(
 
     reseated: list[dict[str, str]] = []
     cursor = park_min
+    # Independent stack for rows that fit NO free gap: they park at 17:00 and
+    # advance by their own full duration, ignoring obstacles, so several of
+    # them land consecutively in original order (owner request 2026-10-29).
+    spill_cursor = park_min
     for row, row_id, duration, start, end in candidates:
         new_start = _free_start(cursor, duration)
         new_end = new_start + duration
-        if new_end > _TAIL_END_MIN:
-            # No free gap before the last representable minute: leave the row
+        spilled = new_end > _TAIL_END_MIN
+        if spilled and spill_cursor + duration > _TAIL_END_MIN:
+            # Even the 5:00 PM stack has no same-day room left: leave the row
             # at/after the effective EOD (its same-day past-end-of-day marker)
             # and flag it softly. Never dropped.
             reseated.append({
@@ -1117,13 +1140,19 @@ def reseat_overflow_tail_rows(
                 "rule": "overflow_past_eod",
                 "detail": (
                     f"{row_id!r} exceeds the day's capacity — no free gap "
-                    f"before 23:59; left at {start}-{end} past end of day — "
+                    f"before 23:59 and no room left at the 5:00 PM park; "
+                    f"left at {start}-{end} past end of day — "
                     "defer or drop it"
                 ),
                 "start": start,
                 "end": end,
             })
             continue
+        if spilled:
+            # Park at 5:00 PM regardless of 'now' and regardless of what the
+            # row then overlaps: it fits nowhere else.
+            new_start, new_end = spill_cursor, spill_cursor + duration
+            spill_cursor = new_end
         new_start_str = _minutes_to_hhmm(new_start)
         new_end_str = _minutes_to_hhmm(new_end)
         old_interval = {"start": start, "end": end}
@@ -1132,6 +1161,20 @@ def reseat_overflow_tail_rows(
             grants, row_id, old_interval,
             {"start": new_start_str, "end": new_end_str},
         )
+        if spilled:
+            reseated.append({
+                "id": row_id,
+                "rule": "overflow_past_eod",
+                "detail": (
+                    f"{row_id!r} exceeds the day's capacity — no free gap "
+                    f"before 23:59, parked at 5:00 PM "
+                    f"({new_start_str}-{new_end_str}) but still past end of "
+                    "day — defer or drop it"
+                ),
+                "start": new_start_str,
+                "end": new_end_str,
+            })
+            continue
         cursor = new_end
         reseated.append({
             "id": row_id,

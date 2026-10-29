@@ -140,10 +140,12 @@ class TestReseatRule:
     def test_parking_spill_goes_past_eod(self):
         # 15 one-block overflow rows cannot all pack before 23:59. The first
         # 13 fill the free gaps (17:00-23:30, full duration, packed in
-        # order); the remaining two keep their same-day past-end-of-day
-        # marker (23:59-23:59) with a visible soft overflow_past_eod warning
-        # and stay in the sequence (never-bump). This replaces the pre
-        # 2026-10-16 clamping that piled the trailing rows on 23:59 — see
+        # order); the remaining two fit nowhere, so (owner request 2026-10-29)
+        # they park at 17:00 anyway — stacked consecutively at full duration,
+        # overlapping whatever already sits there — while keeping the visible
+        # soft overflow_past_eod warning and staying in the sequence
+        # (never-bump). Before that they kept their 23:59-23:59 past-EOD
+        # marker, which read as a midnight "today at" time; see
         # asing44/TDTB#15 and app/tests/test_overflow_anchors.py.
         ids = [f"O{i}" for i in range(15)]
         proposal = {"sequence": [_row(i, "23:59", "23:59") for i in ids]}
@@ -161,9 +163,13 @@ class TestReseatRule:
                 by_id[item_id]["end"][3:])
             assert (start_min, end_min) == (17 * 60 + 30 * offset,
                                             17 * 60 + 30 * (offset + 1))
-        for item_id in spilled:
-            assert (by_id[item_id]["start"], by_id[item_id]["end"]) == (
-                "23:59", "23:59")
+        for offset, item_id in enumerate(spilled):
+            start_min = int(by_id[item_id]["start"][:2]) * 60 + int(
+                by_id[item_id]["start"][3:])
+            end_min = int(by_id[item_id]["end"][:2]) * 60 + int(
+                by_id[item_id]["end"][3:])
+            assert (start_min, end_min) == (17 * 60 + 30 * offset,
+                                            17 * 60 + 30 * (offset + 1))
         assert {w["id"] for w in _warnings_by_rule(result, "overflow_past_eod")} \
             == set(spilled)
         assert len(_warnings_by_rule(result, "overflow_reseated")) == len(placed)
