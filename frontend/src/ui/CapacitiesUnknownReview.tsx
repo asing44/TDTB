@@ -14,6 +14,10 @@
      (fail-safe) rather than sending an unacknowledged selection.
    - A save with no loaded revision is refused ("unknown revision"), and a
      real 409 conflict keeps the local selection and reports both revisions.
+   - "Acknowledge all" acks every listed unacknowledged review candidate in
+     ONE selection request (same route, same body shape, same revision and 409
+     handling as the per-row save). It never names a non-review row, a
+     non-canonical identity, or an already-acknowledged row.
    - The intake diagnostic block is rendered truthfully (state, generation,
      coverage); an absent block is stated, never fabricated. */
 
@@ -67,6 +71,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ expectedRevision: number; currentRevision: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [ackBusy, setAckBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
 
@@ -168,6 +173,57 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
     }
   };
 
+  // The one-click acknowledgement works over exactly these rows: review-reason
+  // candidates the draft still shows unacknowledged, restricted to the
+  // canonical identities the route accepts.
+  const unacknowledgedReviewRows = candidates.filter((candidate) => {
+    if (!needsAck(candidate)) return false;
+    if (!isCanonicalCapacitiesIdentity(candidate.identity)) return false;
+    const entry = draft[candidate.identity];
+    return entry !== undefined && !entry.acknowledged;
+  });
+
+  const acknowledgeAll = async () => {
+    if (!selections) {
+      setError("Selections are not loaded; reload before acknowledging.");
+      return;
+    }
+    if (unacknowledgedReviewRows.length === 0) return;
+    const count = unacknowledgedReviewRows.length;
+    setAckBusy(true);
+    setError(null);
+    setNotice(null);
+    setConflict(null);
+    setBlocked(null);
+    try {
+      const { selections: saved, refreshError } = await controller.saveCapacitiesSelections({
+        expectedRevision: selections.revision,
+        select: unacknowledgedReviewRows.map((candidate) => ({
+          identity: candidate.identity,
+          acknowledge: true,
+        })),
+        deselect: [],
+      });
+      setSelections(saved);
+      setDraft(initDraft(saved, candidates));
+      setNotice(
+        refreshError
+          ? `Acknowledged ${count} review rows; planning refresh failed: ${refreshError}`
+          : `Acknowledged ${count} review rows; plan inputs refreshed.`,
+      );
+      setPhase("ready");
+    } catch (e) {
+      const asConflict = capacitiesSelectionsConflictOf(e);
+      if (asConflict) {
+        setConflict(asConflict);
+      } else {
+        setError(messageOf(e));
+      }
+    } finally {
+      setAckBusy(false);
+    }
+  };
+
   const unconfigured = selections?.spaceId === null || (intake !== undefined && intake.state === "not_configured");
 
   return (
@@ -253,6 +309,19 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
             {candidates.length === 0 ? (
               <p class="capacities-settings__empty">No unknown candidates are waiting for review.</p>
             ) : (
+              <>
+              {unacknowledgedReviewRows.length >= 2 && (
+                <button
+                  class="btn"
+                  disabled={ackBusy || saving || selections === null}
+                  aria-label={`Acknowledge all ${unacknowledgedReviewRows.length} review rows`}
+                  onClick={() => void acknowledgeAll()}
+                >
+                  {ackBusy
+                    ? "Acknowledging…"
+                    : `Acknowledge all (${unacknowledgedReviewRows.length})`}
+                </button>
+              )}
               <div class="capacities-object-list" role="group" aria-label="Unknown Capacities candidates">
                 {candidates.map((candidate) => {
                   const entry = draft[candidate.identity] ?? { selected: false, acknowledged: false };
@@ -299,12 +368,13 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                   );
                 })}
               </div>
+              </>
             )}
 
             <div class="editor__actions setup__actions">
               <button
                 class="btn btn--primary"
-                disabled={saving || selections === null}
+                disabled={saving || ackBusy || selections === null}
                 onClick={() => void save()}
               >
                 {saving ? "Saving…" : "Save selections"}
