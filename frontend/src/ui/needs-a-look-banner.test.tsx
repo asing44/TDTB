@@ -146,7 +146,7 @@ describe("NeedsALookBanner — visibility and count", () => {
       deselect: [],
     });
     await stage(h, [FLAG_A, FLAG_B, FLAG_C, PLAIN]);
-    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     const rendered = h.ui(
       <>
         <NeedsALookBanner />
