@@ -57,6 +57,8 @@
 /* Panel rhythm: one gap scale, no stacked margins. These beat the shared
    drawer rules by specificity, so the drawer itself is unchanged. */
 .settings-hub__panel .setup-section { margin: 0; padding: var(--hub-pad); }
+/* Sibling cards that are not inside a grid (tag list + hidden tasks) still need a gap. */
+.settings-hub__panel .setup-section + .setup-section { margin-top: var(--hub-gap); }
 .settings-hub__panel .setup-section__head { margin-bottom: var(--hub-gap); padding-bottom: 6px; }
 .settings-hub__panel .setup-section__body { display: grid; gap: var(--hub-gap); }
 .settings-hub__panel .setup-section__body > *,
