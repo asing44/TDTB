@@ -1,12 +1,13 @@
 /* sourceChip.tsx — the ONE origin chip a queue / plan / drawer row wears.
 
    Todoist rows show their PROJECT NAME in that project's real Todoist colour;
-   Capacities rows show their OBJECT TYPE in a fixed hue per type (Capacities
-   exposes no colour through its API). Calendar and unknown sources keep their
+   Capacities rows show their OBJECT TYPE in the owner's
+   Capacities type colour (a named token per type; unknown types hash onto
+   eight fallback hues). Calendar and unknown sources keep their
    current plain label, so `originChipSpec` returns null for them.
 
    Colours are tokens, never inline hex: each class only selects a custom
-   property (`--c-td-*`, `--c-cap-*` in app.css, light and dark) and the shared
+   property (`--c-td-*`, `--c-cap-*` in origin-tokens.css, light and dark) and the shared
    `.origin-chip` rule derives tint, border and ink from it. A missing or
    unrecognised colour reads as the neutral grey chip. */
 
@@ -39,30 +40,49 @@ export const TODOIST_COLORS = [
 
 const KNOWN_COLORS: ReadonlySet<string> = new Set(TODOIST_COLORS);
 
-/** Fixed hue slot (1-8) per Capacities object type, keyed by lowercased title. */
-const CAPACITIES_HUES: Record<string, number> = {
-  task: 1,
-  project: 2,
-  event: 3,
-  continual: 4,
-  press: 5,
-  purchase: 6,
-  print: 7,
-  horticos: 8,
-};
+/** Capacities object types that have a named colour token
+    (`--c-cap-<slug>` in origin-tokens.css). Keep in step with that file. */
+export const CAPACITIES_SLUGS = [
+  "task", "event", "day", "week", "month", "project", "print", "press", "continual",
+  "adventure", "trip", "review", "meeting", "birthday", "hortico", "place", "purchase",
+  "peep", "entity", "read", "film", "research-note", "atomic-note", "definition",
+  "fleeting", "recipe", "area", "weblink", "page", "whiteboard", "tag", "query",
+] as const;
+
+const KNOWN_SLUGS: ReadonlySet<string> = new Set(CAPACITIES_SLUGS);
 
 /** The untitled-structure placeholder `kindLabel` returns. */
 const PLACEHOLDER_KIND = "Capacities item";
 
-/** Hue slot 1-8 for a Capacities type title: the named map first, else a
-    deterministic hash onto the same eight slots. */
+/** Lowercased, dash-separated, singular slug for a Capacities type title, so
+    "Horticos" and "Hortico", "Presses" and "Press" resolve to one token. */
+export function capacitiesSlug(title: string): string {
+  const base = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (/sses$/.test(base)) return base.slice(0, -2);
+  if (/s$/.test(base) && !/ss$/.test(base)) return base.slice(0, -1);
+  return base;
+}
+
+/** Hash fallback slot 1-8 for a title with no named token. */
 export function capacitiesHue(title: string): number {
   const key = title.trim().toLowerCase();
-  const named = CAPACITIES_HUES[key];
-  if (named) return named;
   let hash = 5381;
   for (let i = 0; i < key.length; i++) hash = (hash * 33 + key.charCodeAt(i)) >>> 0;
   return (hash % 8) + 1;
+}
+
+/** Colour class for a Capacities type title: its named slug token, else the
+    deterministic hash hue. */
+export function capacitiesColorClass(title: string): string {
+  const slug = capacitiesSlug(title);
+  return KNOWN_SLUGS.has(slug) ? `origin-chip--cap-${slug}` : `origin-chip--cap-h${capacitiesHue(title)}`;
+}
+
+/** Class for a Todoist label chip with a real Todoist colour name, or null
+    (unknown/missing colour keeps the plain tag styling). */
+export function labelChipClass(colorName: string | null | undefined): string | null {
+  const name = (colorName ?? "").trim().toLowerCase();
+  return KNOWN_COLORS.has(name) ? `label-chip label-chip--td-${name}` : null;
 }
 
 export interface OriginChipSpec {
@@ -104,7 +124,7 @@ export function chipSpecFor(parts: {
   if (parts.source === "capacities") {
     const label = (parts.kind ?? "").trim() || PLACEHOLDER_KIND;
     const hue =
-      label === PLACEHOLDER_KIND ? "origin-chip--cap-unknown" : `origin-chip--cap-h${capacitiesHue(label)}`;
+      label === PLACEHOLDER_KIND ? "origin-chip--cap-unknown" : capacitiesColorClass(label);
     return { label, title: label, className: `origin-chip ${hue}`, origin: "capacities" };
   }
   return null;

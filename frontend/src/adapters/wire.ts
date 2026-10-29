@@ -1223,6 +1223,17 @@ function nonBlank(value: unknown, allowNumber = false): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Todoist label name -> colour NAME (lowercased) or null. Blank or
+    non-string colours are null; a missing/odd map is {}. */
+function labelColorsOf(value: unknown): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [name, color] of Object.entries(value as Record<string, unknown>)) {
+    out[name] = nonBlank(color)?.toLowerCase() ?? null;
+  }
+  return out;
+}
+
 export function projectAssigned(row: Wire): AssignedItem {
   const source =
     row.source === "todoist"
@@ -1289,6 +1300,7 @@ export function projectAssigned(row: Wire): AssignedItem {
     projectName: source === "todoist" ? nonBlank(row.project_name) : null,
     projectColor:
       source === "todoist" ? (nonBlank(row.project_color)?.toLowerCase() ?? null) : null,
+    labelColors: source === "todoist" ? labelColorsOf(row.label_colors) : {},
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],

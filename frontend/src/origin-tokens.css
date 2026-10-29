@@ -1,0 +1,539 @@
+/* origin-tokens.css — the SINGLE place to change chip colours.
+
+   Every provenance chip (the origin chip on a queue/plan/drawer row, and the
+   Todoist label chips on a row) takes its colour from a custom property
+   defined here, in light AND dark:
+
+   - --c-td-<name>   the 20 Todoist palette names (underscores become dashes:
+                     berry_red -> --c-td-berry-red). Used by the project
+                     origin chip (.origin-chip--td-<name>) and by label chips
+                     (.label-chip--td-<name>).
+   - --c-cap-<slug>  one per Capacities object type, slug = lowercased title
+                     with spaces as dashes, singular (Horticos -> hortico,
+                     Presses -> press). Chip class: .origin-chip--cap-<slug>.
+   - --c-cap-1..8    hash fallback hues for a type with no named token.
+
+   To recolour a chip, edit that ONE property in all three blocks below (system
+   dark, forced light, forced dark share the layout of tokens.css). Contrast is
+   pinned by origin-chip.test.tsx (ink >= 4.5:1 on its tint).
+
+   Specificity rule: the colour classes ONLY set --chip-c. The shared base rule
+   (.origin-chip[data-origin] in app.css, .label-chip in this file) must never
+   declare --chip-c, or it out-specifies the classes and paints every chip
+   grey. See docs/ui-standards.md. */
+
+:root {
+--c-td-berry-red: #b8255f;
+  --c-td-red: #db4035;
+  --c-td-orange: #ff9933;
+  --c-td-yellow: #fad000;
+  --c-td-olive-green: #afb83b;
+  --c-td-lime-green: #7ecc49;
+  --c-td-green: #299438;
+  --c-td-mint-green: #6accbc;
+  --c-td-teal: #158fad;
+  --c-td-sky-blue: #14aaf5;
+  --c-td-light-blue: #96c3eb;
+  --c-td-blue: #4073ff;
+  --c-td-grape: #884dff;
+  --c-td-violet: #af38eb;
+  --c-td-lavender: #eb96eb;
+  --c-td-magenta: #e05194;
+  --c-td-salmon: #ff8d85;
+  --c-td-charcoal: #808080;
+  --c-td-grey: #b8b8b8;
+  --c-td-taupe: #ccac93;
+  --c-cap-1: #4f7fd9;
+  --c-cap-2: #8b5cf6;
+  --c-cap-3: #0891b2;
+  --c-cap-4: #16a34a;
+  --c-cap-5: #d97706;
+  --c-cap-6: #db2777;
+  --c-cap-7: #64748b;
+  --c-cap-8: #65a30d;
+  --c-cap-task: #dc2626;
+  --c-cap-event: #3b78e0;
+  --c-cap-day: #3b78e0;
+  --c-cap-week: #3b78e0;
+  --c-cap-month: #3b78e0;
+  --c-cap-project: #7c3aed;
+  --c-cap-print: #a63fd1;
+  --c-cap-press: #d1349e;
+  --c-cap-continual: #9333ea;
+  --c-cap-adventure: #8b5cf6;
+  --c-cap-trip: #8b5cf6;
+  --c-cap-review: #5b73a8;
+  --c-cap-meeting: #5b5fdb;
+  --c-cap-birthday: #2f7fd6;
+  --c-cap-hortico: #5fae1f;
+  --c-cap-place: #84a60f;
+  --c-cap-purchase: #d99a06;
+  --c-cap-peep: #22a05a;
+  --c-cap-entity: #14a37a;
+  --c-cap-read: #109b84;
+  --c-cap-film: #109b84;
+  --c-cap-research-note: #109b84;
+  --c-cap-atomic-note: #109b84;
+  --c-cap-definition: #109b84;
+  --c-cap-fleeting: #0e90b0;
+  --c-cap-recipe: #e0508a;
+  --c-cap-area: #7a7f87;
+  --c-cap-weblink: #0f9aa8;
+  --c-cap-page: #3aa04a;
+  --c-cap-whiteboard: #858a92;
+  --c-cap-tag: #858a92;
+  --c-cap-query: #858a92;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-td-berry-red: #cd668f;
+    --c-td-red: #e67972;
+    --c-td-orange: #ffb870;
+    --c-td-yellow: #fcde4c;
+    --c-td-olive-green: #c7cd76;
+    --c-td-lime-green: #a5db80;
+    --c-td-green: #69b474;
+    --c-td-mint-green: #97dbd0;
+    --c-td-teal: #5bb1c6;
+    --c-td-sky-blue: #5ac4f8;
+    --c-td-light-blue: #b6d5f1;
+    --c-td-blue: #799dff;
+    --c-td-grape: #ac82ff;
+    --c-td-violet: #c774f1;
+    --c-td-lavender: #f1b6f1;
+    --c-td-magenta: #e985b4;
+    --c-td-salmon: #ffafaa;
+    --c-td-charcoal: #a6a6a6;
+    --c-td-grey: #cdcdcd;
+    --c-td-taupe: #dbc5b3;
+    --c-cap-1: #84a5e4;
+    --c-cap-2: #ae8df9;
+    --c-cap-3: #52b2c9;
+    --c-cap-4: #5cbf80;
+    --c-cap-5: #e4a051;
+    --c-cap-6: #e668a0;
+    --c-cap-7: #929eae;
+    --c-cap-8: #93bf56;
+    --c-cap-task: #e66767;
+    --c-cap-event: #76a0e9;
+    --c-cap-day: #76a0e9;
+    --c-cap-week: #76a0e9;
+    --c-cap-month: #76a0e9;
+    --c-cap-project: #a375f2;
+    --c-cap-print: #c179df;
+    --c-cap-press: #df71bb;
+    --c-cap-continual: #b370f0;
+    --c-cap-adventure: #ae8df9;
+    --c-cap-trip: #ae8df9;
+    --c-cap-review: #8c9dc2;
+    --c-cap-meeting: #8c8fe6;
+    --c-cap-birthday: #6da5e2;
+    --c-cap-hortico: #8fc662;
+    --c-cap-place: #a9c157;
+    --c-cap-purchase: #e4b851;
+    --c-cap-peep: #64bc8c;
+    --c-cap-entity: #5abfa2;
+    --c-cap-read: #58b9a9;
+    --c-cap-film: #58b9a9;
+    --c-cap-research-note: #58b9a9;
+    --c-cap-atomic-note: #58b9a9;
+    --c-cap-definition: #58b9a9;
+    --c-cap-fleeting: #56b1c8;
+    --c-cap-recipe: #e984ad;
+    --c-cap-area: #a2a5ab;
+    --c-cap-weblink: #57b8c2;
+    --c-cap-page: #75bc80;
+    --c-cap-whiteboard: #aaadb3;
+    --c-cap-tag: #aaadb3;
+    --c-cap-query: #aaadb3;
+  }
+}
+
+:root[data-theme="light"] {
+--c-td-berry-red: #b8255f;
+  --c-td-red: #db4035;
+  --c-td-orange: #ff9933;
+  --c-td-yellow: #fad000;
+  --c-td-olive-green: #afb83b;
+  --c-td-lime-green: #7ecc49;
+  --c-td-green: #299438;
+  --c-td-mint-green: #6accbc;
+  --c-td-teal: #158fad;
+  --c-td-sky-blue: #14aaf5;
+  --c-td-light-blue: #96c3eb;
+  --c-td-blue: #4073ff;
+  --c-td-grape: #884dff;
+  --c-td-violet: #af38eb;
+  --c-td-lavender: #eb96eb;
+  --c-td-magenta: #e05194;
+  --c-td-salmon: #ff8d85;
+  --c-td-charcoal: #808080;
+  --c-td-grey: #b8b8b8;
+  --c-td-taupe: #ccac93;
+  --c-cap-1: #4f7fd9;
+  --c-cap-2: #8b5cf6;
+  --c-cap-3: #0891b2;
+  --c-cap-4: #16a34a;
+  --c-cap-5: #d97706;
+  --c-cap-6: #db2777;
+  --c-cap-7: #64748b;
+  --c-cap-8: #65a30d;
+  --c-cap-task: #dc2626;
+  --c-cap-event: #3b78e0;
+  --c-cap-day: #3b78e0;
+  --c-cap-week: #3b78e0;
+  --c-cap-month: #3b78e0;
+  --c-cap-project: #7c3aed;
+  --c-cap-print: #a63fd1;
+  --c-cap-press: #d1349e;
+  --c-cap-continual: #9333ea;
+  --c-cap-adventure: #8b5cf6;
+  --c-cap-trip: #8b5cf6;
+  --c-cap-review: #5b73a8;
+  --c-cap-meeting: #5b5fdb;
+  --c-cap-birthday: #2f7fd6;
+  --c-cap-hortico: #5fae1f;
+  --c-cap-place: #84a60f;
+  --c-cap-purchase: #d99a06;
+  --c-cap-peep: #22a05a;
+  --c-cap-entity: #14a37a;
+  --c-cap-read: #109b84;
+  --c-cap-film: #109b84;
+  --c-cap-research-note: #109b84;
+  --c-cap-atomic-note: #109b84;
+  --c-cap-definition: #109b84;
+  --c-cap-fleeting: #0e90b0;
+  --c-cap-recipe: #e0508a;
+  --c-cap-area: #7a7f87;
+  --c-cap-weblink: #0f9aa8;
+  --c-cap-page: #3aa04a;
+  --c-cap-whiteboard: #858a92;
+  --c-cap-tag: #858a92;
+  --c-cap-query: #858a92;
+}
+
+:root[data-theme="dark"] {
+  --c-td-berry-red: #cd668f;
+  --c-td-red: #e67972;
+  --c-td-orange: #ffb870;
+  --c-td-yellow: #fcde4c;
+  --c-td-olive-green: #c7cd76;
+  --c-td-lime-green: #a5db80;
+  --c-td-green: #69b474;
+  --c-td-mint-green: #97dbd0;
+  --c-td-teal: #5bb1c6;
+  --c-td-sky-blue: #5ac4f8;
+  --c-td-light-blue: #b6d5f1;
+  --c-td-blue: #799dff;
+  --c-td-grape: #ac82ff;
+  --c-td-violet: #c774f1;
+  --c-td-lavender: #f1b6f1;
+  --c-td-magenta: #e985b4;
+  --c-td-salmon: #ffafaa;
+  --c-td-charcoal: #a6a6a6;
+  --c-td-grey: #cdcdcd;
+  --c-td-taupe: #dbc5b3;
+  --c-cap-1: #84a5e4;
+  --c-cap-2: #ae8df9;
+  --c-cap-3: #52b2c9;
+  --c-cap-4: #5cbf80;
+  --c-cap-5: #e4a051;
+  --c-cap-6: #e668a0;
+  --c-cap-7: #929eae;
+  --c-cap-8: #93bf56;
+  --c-cap-task: #e66767;
+  --c-cap-event: #76a0e9;
+  --c-cap-day: #76a0e9;
+  --c-cap-week: #76a0e9;
+  --c-cap-month: #76a0e9;
+  --c-cap-project: #a375f2;
+  --c-cap-print: #c179df;
+  --c-cap-press: #df71bb;
+  --c-cap-continual: #b370f0;
+  --c-cap-adventure: #ae8df9;
+  --c-cap-trip: #ae8df9;
+  --c-cap-review: #8c9dc2;
+  --c-cap-meeting: #8c8fe6;
+  --c-cap-birthday: #6da5e2;
+  --c-cap-hortico: #8fc662;
+  --c-cap-place: #a9c157;
+  --c-cap-purchase: #e4b851;
+  --c-cap-peep: #64bc8c;
+  --c-cap-entity: #5abfa2;
+  --c-cap-read: #58b9a9;
+  --c-cap-film: #58b9a9;
+  --c-cap-research-note: #58b9a9;
+  --c-cap-atomic-note: #58b9a9;
+  --c-cap-definition: #58b9a9;
+  --c-cap-fleeting: #56b1c8;
+  --c-cap-recipe: #e984ad;
+  --c-cap-area: #a2a5ab;
+  --c-cap-weblink: #57b8c2;
+  --c-cap-page: #75bc80;
+  --c-cap-whiteboard: #aaadb3;
+  --c-cap-tag: #aaadb3;
+  --c-cap-query: #aaadb3;
+}
+
+/* Colour classes: each only selects the custom property via --chip-c. */
+.origin-chip--neutral {
+  --chip-c: var(--t-muted);
+}
+.origin-chip--td-source {
+  --chip-c: var(--c-tasks);
+}
+.origin-chip--cap-unknown {
+  --chip-c: var(--c-projects);
+}
+.origin-chip--td-berry_red {
+  --chip-c: var(--c-td-berry-red);
+}
+.origin-chip--td-red {
+  --chip-c: var(--c-td-red);
+}
+.origin-chip--td-orange {
+  --chip-c: var(--c-td-orange);
+}
+.origin-chip--td-yellow {
+  --chip-c: var(--c-td-yellow);
+}
+.origin-chip--td-olive_green {
+  --chip-c: var(--c-td-olive-green);
+}
+.origin-chip--td-lime_green {
+  --chip-c: var(--c-td-lime-green);
+}
+.origin-chip--td-green {
+  --chip-c: var(--c-td-green);
+}
+.origin-chip--td-mint_green {
+  --chip-c: var(--c-td-mint-green);
+}
+.origin-chip--td-teal {
+  --chip-c: var(--c-td-teal);
+}
+.origin-chip--td-sky_blue {
+  --chip-c: var(--c-td-sky-blue);
+}
+.origin-chip--td-light_blue {
+  --chip-c: var(--c-td-light-blue);
+}
+.origin-chip--td-blue {
+  --chip-c: var(--c-td-blue);
+}
+.origin-chip--td-grape {
+  --chip-c: var(--c-td-grape);
+}
+.origin-chip--td-violet {
+  --chip-c: var(--c-td-violet);
+}
+.origin-chip--td-lavender {
+  --chip-c: var(--c-td-lavender);
+}
+.origin-chip--td-magenta {
+  --chip-c: var(--c-td-magenta);
+}
+.origin-chip--td-salmon {
+  --chip-c: var(--c-td-salmon);
+}
+.origin-chip--td-charcoal {
+  --chip-c: var(--c-td-charcoal);
+}
+.origin-chip--td-grey {
+  --chip-c: var(--c-td-grey);
+}
+.origin-chip--td-taupe {
+  --chip-c: var(--c-td-taupe);
+}
+.origin-chip--cap-h1 {
+  --chip-c: var(--c-cap-1);
+}
+.origin-chip--cap-h2 {
+  --chip-c: var(--c-cap-2);
+}
+.origin-chip--cap-h3 {
+  --chip-c: var(--c-cap-3);
+}
+.origin-chip--cap-h4 {
+  --chip-c: var(--c-cap-4);
+}
+.origin-chip--cap-h5 {
+  --chip-c: var(--c-cap-5);
+}
+.origin-chip--cap-h6 {
+  --chip-c: var(--c-cap-6);
+}
+.origin-chip--cap-h7 {
+  --chip-c: var(--c-cap-7);
+}
+.origin-chip--cap-h8 {
+  --chip-c: var(--c-cap-8);
+}
+.origin-chip--cap-task {
+  --chip-c: var(--c-cap-task);
+}
+.origin-chip--cap-event {
+  --chip-c: var(--c-cap-event);
+}
+.origin-chip--cap-day {
+  --chip-c: var(--c-cap-day);
+}
+.origin-chip--cap-week {
+  --chip-c: var(--c-cap-week);
+}
+.origin-chip--cap-month {
+  --chip-c: var(--c-cap-month);
+}
+.origin-chip--cap-project {
+  --chip-c: var(--c-cap-project);
+}
+.origin-chip--cap-print {
+  --chip-c: var(--c-cap-print);
+}
+.origin-chip--cap-press {
+  --chip-c: var(--c-cap-press);
+}
+.origin-chip--cap-continual {
+  --chip-c: var(--c-cap-continual);
+}
+.origin-chip--cap-adventure {
+  --chip-c: var(--c-cap-adventure);
+}
+.origin-chip--cap-trip {
+  --chip-c: var(--c-cap-trip);
+}
+.origin-chip--cap-review {
+  --chip-c: var(--c-cap-review);
+}
+.origin-chip--cap-meeting {
+  --chip-c: var(--c-cap-meeting);
+}
+.origin-chip--cap-birthday {
+  --chip-c: var(--c-cap-birthday);
+}
+.origin-chip--cap-hortico {
+  --chip-c: var(--c-cap-hortico);
+}
+.origin-chip--cap-place {
+  --chip-c: var(--c-cap-place);
+}
+.origin-chip--cap-purchase {
+  --chip-c: var(--c-cap-purchase);
+}
+.origin-chip--cap-peep {
+  --chip-c: var(--c-cap-peep);
+}
+.origin-chip--cap-entity {
+  --chip-c: var(--c-cap-entity);
+}
+.origin-chip--cap-read {
+  --chip-c: var(--c-cap-read);
+}
+.origin-chip--cap-film {
+  --chip-c: var(--c-cap-film);
+}
+.origin-chip--cap-research-note {
+  --chip-c: var(--c-cap-research-note);
+}
+.origin-chip--cap-atomic-note {
+  --chip-c: var(--c-cap-atomic-note);
+}
+.origin-chip--cap-definition {
+  --chip-c: var(--c-cap-definition);
+}
+.origin-chip--cap-fleeting {
+  --chip-c: var(--c-cap-fleeting);
+}
+.origin-chip--cap-recipe {
+  --chip-c: var(--c-cap-recipe);
+}
+.origin-chip--cap-area {
+  --chip-c: var(--c-cap-area);
+}
+.origin-chip--cap-weblink {
+  --chip-c: var(--c-cap-weblink);
+}
+.origin-chip--cap-page {
+  --chip-c: var(--c-cap-page);
+}
+.origin-chip--cap-whiteboard {
+  --chip-c: var(--c-cap-whiteboard);
+}
+.origin-chip--cap-tag {
+  --chip-c: var(--c-cap-tag);
+}
+.origin-chip--cap-query {
+  --chip-c: var(--c-cap-query);
+}
+
+/* Todoist label chips (a row's labels that carry a real Todoist colour).
+   Same tint/border/ink recipe as the origin chip at the tag-chip size; the
+   base rule below must not declare --chip-c. */
+.qrow__tag.label-chip {
+  border-color: color-mix(in srgb, var(--chip-c, var(--t-muted)) 55%, transparent);
+  background: color-mix(in srgb, var(--chip-c, var(--t-muted)) 14%, var(--t-surface));
+  color: color-mix(in srgb, var(--chip-c, var(--t-muted)) 40%, var(--t-text));
+  font-size: 11px;
+  font-weight: 600;
+}
+.label-chip--td-berry_red {
+  --chip-c: var(--c-td-berry-red);
+}
+.label-chip--td-red {
+  --chip-c: var(--c-td-red);
+}
+.label-chip--td-orange {
+  --chip-c: var(--c-td-orange);
+}
+.label-chip--td-yellow {
+  --chip-c: var(--c-td-yellow);
+}
+.label-chip--td-olive_green {
+  --chip-c: var(--c-td-olive-green);
+}
+.label-chip--td-lime_green {
+  --chip-c: var(--c-td-lime-green);
+}
+.label-chip--td-green {
+  --chip-c: var(--c-td-green);
+}
+.label-chip--td-mint_green {
+  --chip-c: var(--c-td-mint-green);
+}
+.label-chip--td-teal {
+  --chip-c: var(--c-td-teal);
+}
+.label-chip--td-sky_blue {
+  --chip-c: var(--c-td-sky-blue);
+}
+.label-chip--td-light_blue {
+  --chip-c: var(--c-td-light-blue);
+}
+.label-chip--td-blue {
+  --chip-c: var(--c-td-blue);
+}
+.label-chip--td-grape {
+  --chip-c: var(--c-td-grape);
+}
+.label-chip--td-violet {
+  --chip-c: var(--c-td-violet);
+}
+.label-chip--td-lavender {
+  --chip-c: var(--c-td-lavender);
+}
+.label-chip--td-magenta {
+  --chip-c: var(--c-td-magenta);
+}
+.label-chip--td-salmon {
+  --chip-c: var(--c-td-salmon);
+}
+.label-chip--td-charcoal {
+  --chip-c: var(--c-td-charcoal);
+}
+.label-chip--td-grey {
+  --chip-c: var(--c-td-grey);
+}
+.label-chip--td-taupe {
+  --chip-c: var(--c-td-taupe);
+}

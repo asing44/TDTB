@@ -6,6 +6,7 @@
 import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import "./tokens.css";
+import "./origin-tokens.css";
 import "./app.css";
 import { App, THEME_KEY } from "./ui/App";
 import { Ctx } from "./ui/context";

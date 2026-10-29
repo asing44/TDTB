@@ -25,6 +25,7 @@ import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import type { HierarchyRow } from "../model/allocatorView";
 import { blocksLabel, display12h } from "../model/time";
 import { rowTags, sourceContext } from "../model/sourceContext";
+import { labelChipClass } from "./sourceChip";
 import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
@@ -360,9 +361,12 @@ export function TaskRow({
               class="qrow__tags"
               aria-label={`Tags: ${[...tags.visible, ...tags.rest].join(", ")}`}
             >
-              {tags.visible.map((t) => (
-                <li key={t} class="qrow__tag">{t}</li>
-              ))}
+              {tags.visible.map((t) => {
+                const colored = labelChipClass(item.labelColors?.[t]);
+                return (
+                  <li key={t} class={colored ? `qrow__tag ${colored}` : "qrow__tag"}>{t}</li>
+                );
+              })}
               {tags.rest.length > 0 && (
                 <li class="qrow__tag qrow__tag--more" title={tags.rest.join(", ")}>
                   +{tags.rest.length}
