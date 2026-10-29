@@ -89,7 +89,9 @@ describe("rendered rows carry the clearer labels", () => {
     expect(chips.length).toBeGreaterThan(0);
     const labels = chips.map((c) => c.textContent);
     expect(labels).toContain("Todoist");
-    expect(labels).toContain("Capacities");
+    // A Capacities row's chip names its object type; an untitled structure
+    // reads the placeholder rather than the bare source.
+    expect(labels).toContain("Capacities item");
     expect(labels).not.toContain("Other");
     // A todoist row carries the source chip but no redundant KIND chip.
     const todoistRow = rowNamed(container, "Review AWS module 4");
@@ -147,12 +149,12 @@ describe("rendered rows carry the clearer labels", () => {
     });
     const { container } = h.ui(<Queue />);
     await waitFor(() => {
-      expect(rowNamed(container, "Cap project").querySelector(".qrow__type")?.textContent).toBe(
+      expect(rowNamed(container, "Cap project").querySelector(".origin-chip")?.textContent).toBe(
         "Project",
       );
     });
     const unknown = rowNamed(container, "Cap unknown");
-    expect(unknown.querySelector(".qrow__type")?.textContent).toBe("Capacities item");
+    expect(unknown.querySelector(".origin-chip")?.textContent).toBe("Capacities item");
     expect(unknown.textContent).not.toMatch(/RootTask/);
   });
 

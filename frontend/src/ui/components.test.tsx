@@ -1114,12 +1114,15 @@ describe("T25 recurring duration shaping", () => {
       const chip = el.querySelector(".qrow__src");
       expect(chip).toBeTruthy();
       expect((chip as HTMLElement).textContent).toMatch(
-        /^(Todoist|Capacities|Calendar)$/,
+        /^(Todoist|Capacities item|Calendar)$/,
       );
     }
     // The source itself is still named on the line.
     expect(rows.map((el) => el.textContent).join(" ")).toMatch(/Todoist|Capacities/);
-    const kinds = rows.map((el) => el.querySelector(".qrow__type")?.textContent);
+    // The object type now IS the Capacities chip (the old KIND chip folded in).
+    const kinds = rows.map((el) =>
+      el.querySelector('.origin-chip[data-origin="capacities"]')?.textContent,
+    );
     expect(new Set(kinds.filter(Boolean)).size).toBeGreaterThan(0);
   });
 

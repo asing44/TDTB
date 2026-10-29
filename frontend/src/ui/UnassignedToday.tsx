@@ -45,10 +45,12 @@ import { useApp, useAppState } from "./context";
 import {
   drawerTierGroups,
   type DrawerFacts,
+  type DrawerSourceGroup,
   type DrawerTierGroup,
 } from "../model/drawerGroups";
 import { dueLabel } from "../model/urgency";
 import { kindLabel } from "./TaskRow";
+import { OriginChip, chipSpecFor, originChipSpec, type OriginChipSpec } from "./sourceChip";
 import {
   assignmentRows,
   effectiveBlocks,
@@ -94,8 +96,11 @@ function NewBadge() {
   );
 }
 
-function SourceChip({ source }: { source: string }) {
+function SourceChip({ source, spec }: { source: string; spec?: OriginChipSpec | null }) {
   const key = sourceKey(source);
+  if (spec) return <OriginChip spec={spec} source={key} />;
+  const bare = chipSpecFor({ source });
+  if (bare) return <OriginChip spec={bare} source={key} />;
   return (
     <>
       <span class={`qrow__swatch qrow__swatch--${key}`} aria-hidden="true" />
@@ -119,9 +124,12 @@ function LocalRow({
   row,
   facts,
   item,
+  chip,
 }: {
   row: AssignmentRow;
   facts: DrawerFacts;
+  /** The row's origin chip (project / object type), when its item is known. */
+  chip?: OriginChipSpec | null;
   /** The real input row, so every local adjustment is keyed the way the rest
       of the app keys it. Absent only if the row left `inputs.assigned`. */
   item?: AssignedItem;
@@ -149,7 +157,7 @@ function LocalRow({
           {row.isNewArrival && <NewBadge />}
         </span>
         <span class="qrow__source">
-          <SourceChip source={String(row.source)} />
+          <SourceChip source={String(row.source)} spec={chip} />
           {due && (
             <span class={`unassigned-due unassigned-due--${due.tone ?? "none"}`}>
               {due.text}
@@ -350,6 +358,20 @@ function TierHead({
   );
 }
 
+/** A sub-group heading wears the same chip as its rows: the shared Todoist
+    project (else "Todoist"), or the Capacities object type. Calendar and other
+    groups keep their plain label. */
+function SourceHeadChip({ group }: { group: DrawerSourceGroup }) {
+  const spec = chipSpecFor({
+    source: group.source,
+    projectName: group.projectName,
+    projectColor: group.projectColor,
+    kind: group.kind,
+  });
+  if (!spec) return <>{group.label}</>;
+  return <OriginChip spec={spec} source={group.source} />;
+}
+
 /** Group 1's body: the commitment ladder, then source / object type inside
     each tier. Collapse state is per tier and defaults to open, so the drawer
     opens on today's hardest commitments.
@@ -388,6 +410,8 @@ function LocalGroups({
       urgency: item.urgency,
       scheduledStart: item.scheduledStart ?? null,
       kind: kindLabel(item, structureTitles),
+      projectName: item.projectName ?? null,
+      projectColor: item.projectColor ?? null,
     };
   };
   const tiers = drawerTierGroups(rows, factsOf, s.inputs?.validDate ?? "");
@@ -425,7 +449,7 @@ function LocalGroups({
                     data-source-group={source.key}
                   >
                     <h4 class="unassigned-source__head">
-                      {source.label}
+                      <SourceHeadChip group={source} />
                       <span class="unassigned-source__count">
                         {source.rows.length}
                       </span>
@@ -437,6 +461,10 @@ function LocalGroups({
                           row={row}
                           facts={factsOf(row)}
                           item={itemsById.get(row.id)}
+                          chip={(() => {
+                            const it = itemsById.get(row.id);
+                            return it ? originChipSpec(it, structureTitles) : null;
+                          })()}
                         />
                       ))}
                     </ul>

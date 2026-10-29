@@ -289,6 +289,12 @@ export interface AssignedItem {
   capacitiesId?: string | null;
   capacitiesSpaceId?: string | null;
   capacitiesStructureId?: string | null;
+  /** Todoist project the row belongs to, for the origin chip. `projectColor`
+      is the Todoist colour NAME (e.g. "berry_red"), not a hex. All three are
+      absent/null on fixtures and on payloads that predate them. */
+  projectId?: string | null;
+  projectName?: string | null;
+  projectColor?: string | null;
   /** Server review-reason keys for a Capacities row that still needs a look
       (warn-only, owner decision 2026-10-29): the row plans and commits
       normally, and the reason list only drives the row's "Needs a look" chip.
