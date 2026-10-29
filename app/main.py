@@ -3035,6 +3035,17 @@ def _blocks_of_minutes(minutes: int) -> int:
     return (max(0, minutes) + 29) // 30
 
 
+def _nearest_blocks_of_minutes(minutes: int) -> int:
+    """Nearest 30-minute block count; any positive total costs at least one.
+
+    Habits are a pooled sum of many short items, so rounding the pool up to a
+    block overstates it (65 min is about 2 blocks, not 3)."""
+    minutes = max(0, minutes)
+    if minutes == 0:
+        return 0
+    return max(1, (minutes + 15) // 30)
+
+
 def _override_minutes(entry: Any) -> int | None:
     """A dated override's ``minutes`` as a nonnegative int, else ``None``."""
     if not isinstance(entry, dict):
@@ -3111,7 +3122,7 @@ def _habits_segment(
         flags.append(f"{adjusted} adjusted")
     if flags:
         note += " · " + " · ".join(flags)
-    return _blocks_of_minutes(total_minutes), note
+    return _nearest_blocks_of_minutes(total_minutes), note
 
 
 def _duration_minutes(dur: Any) -> int | None:

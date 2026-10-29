@@ -403,8 +403,8 @@ class TestCapacityFromItems:
     def test_items_sum_drives_the_habits_segment(self, client):
         _install_config()
         _write_artifact(ITEMS_BLOCK)
-        # 25 + 10 + 5 = 40 min -> two 30-min blocks.
-        assert _body(client)["capacity"]["habits"] == 2
+        # 25 + 10 + 5 = 40 min -> nearest 30-min block is one.
+        assert _body(client)["capacity"]["habits"] == 1
 
     def test_skipping_an_item_frees_its_time(self, client):
         _install_config()
@@ -430,15 +430,29 @@ class TestCapacityFromItems:
         client.post("/day-setup",
                     json={"habits": {"total": {"on": False}}},
                     headers=_auth(client))
+        assert _body(client)["capacity"]["habits"] == 1
+
+    def test_pool_rounds_to_the_nearest_block_not_up(self, client):
+        _install_config()
+        _write_artifact({"total": 2, "done": 0, "outstanding": 2,
+                         "est_minutes": 65, "items": [
+                             {"id": "a", "content": "A", "minutes": 40},
+                             {"id": "b", "content": "B", "minutes": 25}]})
+        # 65 min -> two blocks (not three); a 10-min pool still costs one.
         assert _body(client)["capacity"]["habits"] == 2
+        client.post("/day-setup",
+                    json={"habits": {"items": {"a": {"on": False}}}},
+                    headers=_auth(client))
+        assert _body(client)["capacity"]["habits"] == 1
 
     def test_stale_override_is_ignored_but_round_trips(self, client):
         _install_config()
         _write_artifact(ITEMS_BLOCK)
         stale = {"items": {"nope": {"on": False}}, "total": None}
         client.post("/day-setup", json={"habits": stale}, headers=_auth(client))
-        assert _body(client)["capacity"]["habits"] == 2
+        assert _body(client)["capacity"]["habits"] == 1
         assert _body(client)["day_setup"]["habits"] == stale
+
 
     def test_note_mentions_skipped_and_adjusted(self, client):
         _install_config()
