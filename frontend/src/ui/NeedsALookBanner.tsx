@@ -132,7 +132,7 @@ export function NeedsALookBanner() {
       setNotice(
         refreshError
           ? `Added ${count} ${noun}; planning refresh failed: ${refreshError}`
-          : `Added ${count} ${noun} to today's plan; plan inputs refreshed.`,
+          : `Added ${count} ${noun} to today's plan.`,
       );
     } catch (e) {
       const conflict = capacitiesSelectionsConflictOf(e);
@@ -187,10 +187,10 @@ export function NeedsALookBanner() {
           class="btn btn--primary"
           type="button"
           disabled={busy}
-          aria-label={`Okay to plan all ${pending.length} items`}
+          aria-label={`Okay to plan all ${pending.length} ${pending.length === 1 ? "item" : "items"}`}
           onClick={() => void okayRows(pending)}
         >
-          {busy ? "Planning…" : `Okay to plan all (${pending.length})`}
+          {busy ? "Adding…" : `Okay to plan all (${pending.length})`}
         </button>
       </div>
       {notice && (

@@ -1111,7 +1111,8 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 "capacities_tags",
                 # U4 S6: the row's review reasons are indexed so the commit
                 # gate can still refuse it when the row carries them and has
-                # no selection record; acknowledgement is audit metadata only.
+                # no selection record. A SELECTION record is the confirmation;
+                # the reasons only warn and acknowledgement is audit-only.
                 "capacities_review_reasons", "capacities_rule",
             ):
                 if key in row and row.get(key) is not None:
@@ -4386,7 +4387,8 @@ def create_app() -> FastAPI:
         structure. A row that carries review reasons needs only this selection
         to commit — the selection is the confirmation; the ``acknowledge`` flag
         is audit metadata and is never required (review reasons are warn-only,
-        owner decision 2026-10-29). The rules revision is stamped from the
+        owner decision 2026-10-29). An unselected flagged row is still
+        refused at commit. The rules revision is stamped from the
         server's current rules. The write goes through the store's optimistic
         revision, so a stale ``expected_revision`` is a 409 carrying both
         revisions. Direct intake only; no provider call and no Capacities
@@ -6443,7 +6445,8 @@ def create_app() -> FastAPI:
         ``_capacities_commit_refusals``. A rule-assigned row that carries review
         reasons needs a SELECTION record to commit — the selection is the
         confirmation. Acknowledgement is an audit flag only and is never
-        required: review reasons are warn-only (owner decision 2026-10-29).
+        required: review reasons only warn (owner decision 2026-10-29), but an
+        unselected flagged row is still refused here.
 
         Returns the server-authoritative effective config plus a SANITIZED
         digest whose assigned rows carry only trusted server identity, source,

@@ -67,9 +67,6 @@ export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
 /** The Settings hub's five entries share one canonical destination. */
 export type SettingsPanel = "freshness" | "plan" | "missing" | "day" | "repair";
 
-/** The hub entry that is open when Settings first appears. */
-export const DEFAULT_SETTINGS_PANEL: SettingsPanel = "freshness";
-
 /** Pre-hub panel ids stay valid everywhere a panel id is parsed. */
 const LEGACY_SETTINGS_PANELS: Readonly<Record<string, SettingsPanel>> = {
   capacities: "repair",

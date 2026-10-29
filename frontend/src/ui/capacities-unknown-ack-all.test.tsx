@@ -200,7 +200,7 @@ describe("Capacities unknown review — okay to plan all", () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(button.disabled).toBe(true));
-    expect(button.textContent).toContain("Planning");
+    expect(button.textContent).toContain("Adding");
 
     release({
       selections: {

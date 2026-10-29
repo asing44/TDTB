@@ -252,7 +252,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
     );
     expect(
       within(banner(rendered.container)!).getByText(
-        /Added 1 item to today's plan; plan inputs refreshed\./,
+        /Added 1 item to today's plan\./,
       ),
     ).toBeTruthy();
   });
@@ -340,6 +340,25 @@ describe("NeedsALook row chip and non-gating", () => {
     const box = banner(rendered.container)!;
     expect(box.getAttribute("role")).toBe("status");
     expect(within(box).getByRole("button", { name: "Okay to plan Draft launch brief" })).toBeTruthy();
-    expect(within(box).getByRole("button", { name: "Okay to plan all 1 items" })).toBeTruthy();
+    expect(within(box).getByRole("button", { name: "Okay to plan all 1 item" })).toBeTruthy();
+    expect(within(box).getByRole("button", { name: "Okay to plan all 1 item" }).textContent).toBe(
+      "Okay to plan all (1)",
+    );
+  });
+
+  it("names the plural batch button and shows Adding… while saving", async () => {
+    const h = makeHarness("ready");
+    await stage(h, [FLAG_A, FLAG_B]);
+    const rendered = h.ui(<NeedsALookBanner />);
+    await waitFor(() => expect(banner(rendered.container)).toBeTruthy());
+    const box = banner(rendered.container)!;
+    expect(within(box).getByRole("button", { name: "Okay to plan all 2 items" }).textContent).toBe(
+      "Okay to plan all (2)",
+    );
+    vi.spyOn(h.controller, "saveCapacitiesSelections").mockReturnValue(new Promise(() => {}));
+    fireEvent.click(within(box).getByRole("button", { name: "Okay to plan all 2 items" }));
+    await waitFor(() =>
+      expect(within(banner(rendered.container)!).getByText("Adding…")).toBeTruthy(),
+    );
   });
 });

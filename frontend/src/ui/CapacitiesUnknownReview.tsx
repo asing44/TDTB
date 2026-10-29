@@ -1,5 +1,5 @@
 /* CapacitiesUnknownReview — the unknown-candidate review surface for the
-   Connections screen.
+   Settings hub.
 
    Contract this surface keeps:
    - Candidates come from the typed ``capacities_intake`` diagnostic block on
@@ -199,8 +199,8 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       setDraft(initDraft(saved, candidates));
       setNotice(
         refreshError
-          ? `Added ${count} items to today's plan; updating your plan failed: ${refreshError}`
-          : `Added ${count} items to today's plan; your plan is updated.`,
+          ? `Added ${count} ${count === 1 ? "item" : "items"} to today's plan; updating your plan failed: ${refreshError}`
+          : `Added ${count} ${count === 1 ? "item" : "items"} to today's plan.`,
       );
       setPhase("ready");
     } catch (e) {
@@ -317,7 +317,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                   onClick={() => void okayToPlanAll()}
                 >
                   {ackBusy
-                    ? "Planning…"
+                    ? "Adding…"
                     : `Okay to plan all (${unacknowledgedReviewRows.length})`}
                 </button>
               )}
