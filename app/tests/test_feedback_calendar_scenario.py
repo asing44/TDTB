@@ -189,9 +189,12 @@ class TestFeedback05CapacityAccounting:
         _time, cap = self._frame(busy, extra_selected=16)
         assert cap.total == 11  # 17:15 -> 23:00 frame
         assert cap.fixed == 1  # Cooking only; Steelers quarantined never fixed
-        assert cap.available_for_selection == 2
+        # Anchored 3 = Suds 1 + Foods Dinner window 60m (2); Night Routine
+        # starts exactly at the 23:00 hard stop, so it holds no frame time.
+        assert cap.anchored == 3
+        assert cap.available_for_selection == 4
         assert cap.selected == 16
-        assert cap.free == -14
+        assert cap.free == -12
         assert cap.overassigned is True
         assert "over" in cap.remaining
 

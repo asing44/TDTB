@@ -3291,6 +3291,56 @@ def _calendar_union_blocks(
     return _blocks_of_minutes(union_minutes)
 
 
+def _anchored_frame_blocks(
+    spec: dict[str, Any], frame_start: str, frame_end: str
+) -> int:
+    """An anchored block's block cost confined to the active frame.
+
+    A configured anchor whose whole span already sits behind the frame anchor
+    (Morning Routine at an afternoon anchor) or entirely at/after the hard
+    stop can no longer consume schedulable time, so it costs zero — the
+    segment must agree with the timeline the operator sees. A spec with a
+    Start..End window is capped to the window time still inside the frame (a
+    flexible window can only use time still ahead of the frame start); a spec
+    with no parseable times keeps its full ``_spec_blocks`` cost.
+    """
+    blocks = _spec_blocks(spec)
+    start_hhmm = time_engine.to_hhmm(spec.get("Start")) or time_engine.to_hhmm(
+        spec.get("start"))
+    if start_hhmm is None or blocks <= 0:
+        return blocks
+    end_hhmm = time_engine.to_hhmm(spec.get("End")) or time_engine.to_hhmm(
+        spec.get("end"))
+    frame_start_hhmm = time_engine.to_hhmm(frame_start)
+    frame_end_hhmm = time_engine.to_hhmm(frame_end)
+    if not frame_start_hhmm or not frame_end_hhmm:
+        return blocks
+
+    def minute(hhmm: str) -> int:
+        return int(hhmm[:2]) * 60 + int(hhmm[3:])
+
+    frame_a, frame_b = minute(frame_start_hhmm), minute(frame_end_hhmm)
+    if frame_b <= frame_a:
+        return blocks
+    start_min = minute(start_hhmm)
+    end_min = minute(end_hhmm) if end_hhmm else None
+    if end_min is not None and end_min <= start_min:
+        end_min += 24 * 60
+    span_end = (
+        end_min if end_min is not None
+        else start_min + (_duration_minutes(
+            spec.get("Duration") or spec.get("duration")) or 0)
+    )
+    if span_end <= frame_a or start_min >= frame_b:
+        return 0
+    if end_min is None:
+        return blocks
+    overlap = min(end_min, frame_b) - max(start_min, frame_a)
+    if overlap <= 0:
+        return 0
+    return min(blocks, _blocks_of_minutes(overlap))
+
+
 def _capacity_frame(
     config: dict[str, Any],
     day_setup: dict[str, Any],
@@ -3328,13 +3378,14 @@ def _capacity_frame(
         eod_override=time_engine.to_hhmm(day_setup.get("eod")),
     )
     anchored_specs = shadow._anchored_specs(config)
-    fixed_blk = sum(
-        _spec_blocks(b)
-        for b in busy_blocks
-        if not b.get("skip_today")
-        and b.get("capacity_class", "fixed") == "fixed"
+    # Fixed capacity is the frame's covered clock time: overlapping meetings
+    # share their interval once, and time already elapsed or past the hard
+    # stop costs nothing, so the segment matches the visible timeline.
+    fixed_blk = _calendar_union_blocks(
+        busy_blocks, frame.anchor, frame.effective_eod, "fixed"
     )
-    anch_blk = sum(_spec_blocks(s) for s in anchored_specs.values()
+    anch_blk = sum(_anchored_frame_blocks(s, frame.anchor, frame.effective_eod)
+                   for s in anchored_specs.values()
                    if not shadow._anchored_block_off(s))
     habits_blk, habits_note = _habits_segment(habits, day_setup.get("habits"))
     effective_today = today or effective_now.date()

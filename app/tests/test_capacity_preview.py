@@ -247,11 +247,12 @@ class TestDaySetupInputs:
 
 class TestOverAndErrors:
     def test_over_is_blocks_over_and_free_signed(self, client):
-        # total 4 (08:00–10:00), anchored 6 and default Mint 8 →
-        # free = 4 − 6 − 8 = −10 (signed).
+        # total 4 (08:00–10:00); anchored 3 = Morning Routine's 80m, since
+        # Stretch's 18:00 span sits past the 10:00 hard stop; default Mint 8
+        # → free = 4 − 3 − 8 = −7 (signed).
         body = _get(client, {"anchor": "08:00", "eod": "10:00"}).json()
-        assert body["free"] == -10
-        assert body["over"] == 10
+        assert body["free"] == -7
+        assert body["over"] == 7
         assert body["overassigned"] is True
 
     def test_over_zero_when_free_positive(self, client):

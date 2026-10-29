@@ -529,7 +529,18 @@ class TestCalendarDismissal:
         assert row.get("skip_today") is True
         assert row.get("source") == "calendar"
 
-    def test_dismissed_row_leaves_capacity_fixed_segment(self, vault, live_sources_mode):
+    def test_dismissed_row_leaves_capacity_fixed_segment(
+        self, vault, live_sources_mode, monkeypatch
+    ):
+        # Fixed capacity is frame time still ahead: the 09:00–11:00 event only
+        # counts while the frame reaches it, so pin the host clock before it
+        # (otherwise the expectation would drift with the hour the suite runs).
+        class _FixedClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 7, 14, 8, 0)
+
+        monkeypatch.setattr(main_mod, "datetime", _FixedClock)
         tc = self._client()
         before = tc.get("/plan-inputs").json()["capacity"]
         self._dismiss(tc)
