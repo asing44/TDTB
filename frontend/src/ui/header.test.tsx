@@ -1,12 +1,13 @@
 /* U7 page frame — the stepper header replaces the retired ScreenNav tab pill
    and the left rail's source-health chip. These tests cover the step
    activation, keyboard navigation, the one "Refresh sources" pill action,
-   and the Connections link. */
+   and the Settings control that opens the Settings hub. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 import { makeHarness } from "./test-harness";
 import { Header } from "./Header";
+import { SettingsShell } from "./SettingsShell";
 import { ApiError } from "../adapters/api";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
@@ -439,11 +440,20 @@ describe("U7 stepper header", () => {
     expect(r.getByRole("status").textContent).toContain("Sources healthy · 3 skipped");
   });
 
-  it("Connections opens the existing connections screen", () => {
+  it("Settings opens the hub on its freshness entry, not the Connections screen", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
-    fireEvent.click(r.getByRole("button", { name: "Connections" }));
-    expect(h.store.getState().ui.screen).toBe("connections");
+    fireEvent.click(r.getByRole("button", { name: "Settings" }));
+    expect(h.store.getState().ui.settingsPanel).toBe("freshness");
+
+    // The hub is the destination: its freshness entry is the expanded one, and
+    // no Connections screen is what the press produced.
+    cleanup();
+    const hub = h.ui(<SettingsShell />);
+    expect(
+      hub.getByRole("button", { name: /Is my data up to date\?/ }).getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(hub.queryByRole("heading", { name: "Connections" })).toBeNull();
   });
 });
 

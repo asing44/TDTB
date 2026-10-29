@@ -388,6 +388,9 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
     expect(calendarWarnings([warning])).toEqual([warning]);
     expect(sourceHealthOf([warning])).toBe("ok");
     expect(blockingWarnings([warning])).toEqual([]);
+    // The fix value is unchanged by the retirement of the Connections page: the
+    // drawer's consumer maps "connections" onto the Settings hub entry.
+    expect(advisoryNotes([warning])[0]?.fix).toBe("connections");
   });
 });
 

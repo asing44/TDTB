@@ -2,7 +2,10 @@
    are replaced by one persistent header: the date and workday-frame line, a
    three-step stepper bound to the existing `ui.screen` state, a source-health
    pill with ONE action, "Refresh sources", in both pill states, and a
-   Connections link that opens the existing connections screen.
+   Settings control that opens the Settings hub on its "Is my data up to
+   date?" entry. There is no second Settings control, so this pill IS the
+   header's Settings entry point; its class name stays `header__connections`
+   because app.css and the <=1100px compaction rules style it by that class.
 
    The stepper preserves ScreenNav's keyboard behavior (roving tabindex,
    Arrow/Home/End, visible focus, ARIA roles). Step 3 (Commit) maps onto the
@@ -67,7 +70,7 @@ export function Header() {
   const screen = s.ui.screen;
   const commitFlow = s.ui.approvalOpen || s.commitPhase !== "idle";
   // Step 3 is derived from the approval/commit phase, never a screen of its
-  // own. Connections is a header link, not a step.
+  // own. Settings is a header control, not a step.
   const selectedStep: StepId | null =
     screen === "setup"
       ? "setup"
@@ -243,10 +246,10 @@ export function Header() {
         <button
           class="header-pill btn header__connections"
           onClick={() =>
-            store.dispatch({ type: "UI", patch: { screen: "connections", settingsPanel: null } })
+            store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } })
           }
         >
-          Connections
+          Settings
         </button>
       </div>
     </header>

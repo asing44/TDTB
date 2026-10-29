@@ -8,9 +8,21 @@ import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
 import { CalendarDrift } from "./CalendarDrift";
 import { canAutoSequence, canLiveCommit, canShadow, shadowBlockers, type AppState } from "../store/store";
-import { advisoryNotes, blockingWarnings } from "../adapters/wire";
+import { advisoryNotes, blockingWarnings, calendarWarnings } from "../adapters/wire";
 import { display12h } from "../model/time";
 import type { PromptExportOutcome, ShadowEntry } from "../model/types";
+import type { SettingsPanel } from "../store/store";
+
+/** The Settings hub entry that owns a `connections` note. The advisory fix
+    value itself stays "connections" (the wire classification is unchanged and
+    wire tests assert it); this only routes the press to the hub entry that can
+    actually clear the problem now that the full-screen Connections page is
+    gone. The Assigned On declaration diagnostics are mapping/contract problems
+    and live in the mapping editor under "Repair connections"; a calendar read
+    diagnostic is about fresh data and lives in "Is my data up to date?". */
+function hubEntryFor(noteText: string): SettingsPanel {
+  return calendarWarnings([noteText]).length > 0 ? "freshness" : "repair";
+}
 
 /** Where a write lands, in words rather than in the system's own handle.
     `todoist:8899001122` identifies the row to Todoist and to nobody else — the
@@ -163,7 +175,7 @@ export function ApprovalDrawer() {
         ];
   // Everything advisory stays visible at the moment of approval, each note
   // carrying the one action that clears it (R6, KTD8): Refresh sources, Open
-  // Connections, or the existing Sources details hint. The reminder-marker
+  // Settings, or the existing Sources details hint. The reminder-marker
   // omission is an intentional skip, so it produces no note.
   const sourceNotes = advisoryNotes(sourceWarnings);
   const blockers = [
@@ -357,14 +369,13 @@ export function ApprovalDrawer() {
                               store.dispatch({
                                 type: "UI",
                                 patch: {
-                                  screen: "connections",
-                                  settingsPanel: null,
+                                  settingsPanel: hubEntryFor(note.text),
                                   approvalOpen: false,
                                 },
                               })
                             }
                           >
-                            Open Connections
+                            Open Settings
                           </button>
                         )}
                         {note.fix === "details" && (

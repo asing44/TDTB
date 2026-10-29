@@ -64,11 +64,15 @@ function FixtureRoot() {
     const controller = new Controller(adapter, store.dispatch, store.getState);
     void controller.load().then(() => {
       applyStagedState(adapter.scenario, store.dispatch);
-      // Fixture-only visual review hook: `?screen=setup|connections` lands the
-      // promoted screen without UI interaction (screenshot gate, KTD13).
+      // Fixture-only visual review hook: `?screen=setup|plan|connections` lands
+      // the promoted screen without UI interaction (screenshot gate, KTD13).
+      // `connections` names the retired full-screen destination, so that hook
+      // now lands the Settings hub on its "Is my data up to date?" entry.
       const want = new URLSearchParams(location.search).get("screen");
-      if (want === "setup" || want === "connections" || want === "plan") {
+      if (want === "setup" || want === "plan") {
         store.dispatch({ type: "UI", patch: { screen: want, settingsPanel: null } });
+      } else if (want === "connections") {
+        store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
       }
     });
     // Fixture-build debug handle — lets preview verification drive states

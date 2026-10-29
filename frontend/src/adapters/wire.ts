@@ -1662,6 +1662,11 @@ export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
   return notes;
 }
 
+/** The one fix a note offers. ``connections`` means "this needs the Settings
+    hub": the mapping/contract and calendar-read diagnostics are all that
+    produce it, and the drawer's consumer maps each press to the hub entry that
+    owns the problem (``repair`` for mapping, ``freshness`` otherwise). The
+    value is unchanged by the retirement of the full-screen Connections page. */
 function advisoryFixOf(warning: string): AdvisoryNoteFix {
   if (advisoryTypeStaleness.test(warning)) return "refresh";
   if (advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning))) {

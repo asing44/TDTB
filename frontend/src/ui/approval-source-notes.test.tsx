@@ -4,7 +4,7 @@
    commit named no failing read, and every non-blocking warning was invisible
    at the moment of approving writes. Now the blocker quotes the first BLOCKING
    warning verbatim, and each advisory warning is a note carrying the one
-   action that clears it: Refresh sources, Open Connections, or the existing
+   action that clears it: Refresh sources, Open Settings, or the existing
    Sources details hint.
 
    Fixtures and direct store dispatches only — no network, no billed calls:
@@ -13,6 +13,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent } from "@testing-library/preact";
 import { ApprovalDrawer } from "./ApprovalDrawer";
+import { SettingsShell } from "./SettingsShell";
 import { makeHarness } from "./test-harness";
 import { sourceHealthOf } from "../adapters/wire";
 
@@ -27,7 +28,8 @@ const UNCHANGED =
 const TODOIST_FAILED = "Todoist read failed (timeout)";
 
 /** Server-verbatim mistyped declaration the adapter works around: an
-    Assigned On note whose fix lives in Connections (KTD8, OQ-P4). */
+    Assigned On note whose fix lives in Settings › Repair connections (KTD8,
+    OQ-P4). */
 const ASSIGNED_ON =
   'ignored Capacities Assigned On declaration for tasks — unknown property "Assigned To"';
 
@@ -67,7 +69,7 @@ describe("an advisory warning is a note, not a blocker (R6, AE2)", () => {
 });
 
 describe("a note's fix goes where the fix actually lives (KTD8)", () => {
-  it("opens Connections for an unknown Assigned On property", () => {
+  it("opens the hub's Repair connections entry for an unknown Assigned On property", () => {
     const h = makeHarness("commit-preview", (scenario) => {
       scenario.inputs.sourceWarnings = [ASSIGNED_ON];
       scenario.inputs.sourceHealth = sourceHealthOf(scenario.inputs.sourceWarnings);
@@ -75,8 +77,36 @@ describe("a note's fix goes where the fix actually lives (KTD8)", () => {
     const r = h.ui(<ApprovalDrawer />);
 
     expect(r.getByText(ASSIGNED_ON)).toBeTruthy();
-    fireEvent.click(r.getByRole("button", { name: "Open Connections" }));
-    expect(h.store.getState().ui.screen).toBe("connections");
+    fireEvent.click(r.getByRole("button", { name: "Open Settings" }));
+    // A mapping/contract problem lands on the hub entry that owns the mapping,
+    // and the press still closes the drawer.
+    expect(h.store.getState().ui.settingsPanel).toBe("repair");
+    expect(h.store.getState().ui.approvalOpen).toBe(false);
+
+    cleanup();
+    const hub = h.ui(<SettingsShell />);
+    expect(hub.getByRole("heading", { name: "Repair connections" })).toBeTruthy();
+  });
+
+  it("opens the hub's freshness entry for a calendar diagnostic", () => {
+    const calendar =
+      "Calendar: 1 duplicate event representation(s) merged by canonical identity";
+    const h = makeHarness("commit-preview", (scenario) => {
+      scenario.inputs.sourceWarnings = [calendar];
+      scenario.inputs.sourceHealth = sourceHealthOf(scenario.inputs.sourceWarnings);
+    });
+    const r = h.ui(<ApprovalDrawer />);
+
+    expect(r.getByText(calendar)).toBeTruthy();
+    fireEvent.click(r.getByRole("button", { name: "Open Settings" }));
+    expect(h.store.getState().ui.settingsPanel).toBe("freshness");
+    expect(h.store.getState().ui.approvalOpen).toBe(false);
+
+    cleanup();
+    const hub = h.ui(<SettingsShell />);
+    expect(
+      hub.getByRole("button", { name: /Is my data up to date\?/ }).getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 
   it("keeps the Skipped objects hint for a note with no single action", () => {
