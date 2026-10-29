@@ -9,8 +9,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
 
-import type { DescriptionSkips, MicroAdventure, PromptDisabled } from "../../model/types";
+import type {
+  DaySetupSaveResult,
+  DescriptionSkips,
+  MicroAdventure,
+  PromptDisabled,
+} from "../../model/types";
 import { FixtureAdapter } from "../../adapters/fixture";
+import { projectDaySetupSaveResult } from "../../adapters/wire";
+import { Controller } from "../../store/controller";
+import { Ctx } from "../context";
 import { makeHarness } from "../test-harness";
 import { PromptsCard } from "./PromptsCard";
 import { writeCustomPrompts } from "./customPrompts";
@@ -341,5 +349,117 @@ describe("PromptsCard pool editor entry", () => {
     fireEvent.keyDown(r.getByRole("dialog"), { key: "Escape" });
     expect(r.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(open);
+  });
+});
+
+/* The LIVE POST /day-setup echo nests both flag maps under `day_setup` (no
+   top-level `prompt_disabled` / `description_skips`). This stub answers with
+   that REAL shape through the same wire projection the API client uses, so the
+   toggle path is exercised end to end instead of through a hand-built
+   `DaySetupSaveResult`. */
+class NestedEchoAdapter extends FixtureAdapter {
+  private skipsMap: DescriptionSkips = { forMeegy: false, stoic: false };
+  private disabledMap: PromptDisabled = { forMeegy: false, stoic: false };
+
+  private echo(): DaySetupSaveResult {
+    const s = this.skipsMap;
+    const d = this.disabledMap;
+    return projectDaySetupSaveResult({
+      ok: true,
+      re_included: [],
+      day_setup_confirmed: false,
+      day_setup: {
+        description_skips: s.forMeegy || s.stoic
+          ? { intention: false, megan_nicety: s.forMeegy, stoic_intention: s.stoic }
+          : null,
+        prompt_disabled: d.forMeegy || d.stoic
+          ? { intention: false, megan_nicety: d.forMeegy, stoic_intention: d.stoic }
+          : null,
+      },
+      optins: { intention: true, megan_nicety: true, stoic_intention: true },
+      optins_revision: 0,
+    });
+  }
+
+  override async savePromptDisabled(disabled: PromptDisabled): Promise<DaySetupSaveResult> {
+    this.disabledMap = {
+      forMeegy: disabled.forMeegy === true,
+      stoic: disabled.stoic === true,
+    };
+    return this.echo();
+  }
+
+  override async savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult> {
+    this.skipsMap = { forMeegy: skips.forMeegy === true, stoic: skips.stoic === true };
+    return this.echo();
+  }
+}
+
+/** Render the card over a controller backed by `adapter`. */
+function cardWithAdapter(m: MicroAdventure, adapter: FixtureAdapter) {
+  const h = makeHarness("fresh");
+  const controller = new Controller(adapter, h.store.dispatch, h.store.getState);
+  const r = render(
+    <Ctx.Provider value={{ store: h.store, controller }}>
+      <PromptsCard
+        micro={m}
+        liveCustom=""
+        onLiveCustom={noop}
+        onPickPool={noop}
+        onSetCustom={noop}
+        onShuffle={noop}
+        onResetAuto={noop}
+        captures={{ intention: "", forMeegy: "", stoic: "" }}
+        onCapture={noop}
+        onAutosave={noop}
+        onPersistCustom={noop}
+        promptSave={{ phase: "idle", error: null, warnings: [] }}
+        customStorage={fakeStorage()}
+      />
+    </Ctx.Provider>,
+  );
+  return { r, h };
+}
+
+describe("PromptsCard redraws from the live nested save echo", () => {
+  it("redraws the include switch, mutes the text, and never moves the sibling flag", async () => {
+    const { r, h } = cardWithAdapter(micro(), new NestedEchoAdapter("fresh"));
+    const meegySwitch = () => r.getByLabelText("Include For Meegy in commit") as HTMLInputElement;
+    const stoicSwitch = () => r.getByLabelText("Include Stoic in commit") as HTMLInputElement;
+    const meegyText = () => r.getByLabelText("For Meegy") as HTMLTextAreaElement;
+
+    fireEvent.click(meegySwitch());
+    await vi.waitFor(() => expect(meegySwitch().checked).toBe(false));
+    expect(meegySwitch().getAttribute("aria-checked")).toBe("false");
+    expect(meegyText().className).toContain("trow__muted");
+    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect(stoicSwitch().checked).toBe(true);
+    expect(h.store.getState().daySetup.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+
+    // Toggling twice returns to the original state.
+    fireEvent.click(meegySwitch());
+    await vi.waitFor(() => expect(meegySwitch().checked).toBe(true));
+    expect(meegyText().className).not.toContain("trow__muted");
+    expect(stoicSwitch().checked).toBe(true);
+    expect(h.store.getState().daySetup.promptDisabled).toEqual({ forMeegy: false, stoic: false });
+    expect(h.store.getState().daySetup.confirmed).toBe(false);
+  });
+
+  it("redraws the skip checkbox and never moves the sibling flag", async () => {
+    const { r, h } = cardWithAdapter(micro(), new NestedEchoAdapter("fresh"));
+    const meegySkip = () => r.getByLabelText("Skip description for Meegy") as HTMLInputElement;
+    const stoicSkip = () => r.getByLabelText("Skip description for Stoic") as HTMLInputElement;
+
+    fireEvent.click(meegySkip());
+    await vi.waitFor(() => expect(meegySkip().checked).toBe(true));
+    expect(stoicSkip().checked).toBe(false);
+    expect(h.store.getState().daySetup.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+
+    fireEvent.click(meegySkip());
+    await vi.waitFor(() => expect(meegySkip().checked).toBe(false));
+    expect(stoicSkip().checked).toBe(false);
+    expect(h.store.getState().daySetup.descriptionSkips).toEqual({ forMeegy: false, stoic: false });
   });
 });

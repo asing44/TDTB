@@ -129,7 +129,13 @@ describe("U5 prompt wire projection", () => {
   it("the fixture accepts custom prompt keys in the captures filter", async () => {
     const adapter = new FixtureAdapter("fresh");
     const echo = await adapter.savePromptDrafts({ "custom-abc-1": "the rain" });
-    expect(echo).toEqual({ ok: true, daySetupConfirmed: false, promptWarnings: [] });
+    expect(echo).toEqual({
+      ok: true,
+      daySetupConfirmed: false,
+      promptWarnings: [],
+      descriptionSkips: { forMeegy: false, stoic: false },
+      promptDisabled: { forMeegy: false, stoic: false },
+    });
   });
 
   it("the save echo carries the skip map under the captures wire keys", () => {
@@ -152,17 +158,21 @@ describe("U5 prompt wire projection", () => {
     expect(result).not.toHaveProperty("descriptionSkips");
   });
 
-  it("the fixture replaces the whole skip map and omits the echo when nothing is skipped", async () => {
+  it("the fixture replaces the whole skip map and echoes the server's nested shape", async () => {
     const adapter = new FixtureAdapter("fresh");
     expect((await adapter.savePromptSkips({ forMeegy: true, stoic: true })).descriptionSkips)
       .toEqual({ forMeegy: true, stoic: true });
     // Full replace: an omitted-then-false key really turns off.
     expect((await adapter.savePromptSkips({ forMeegy: false, stoic: true })).descriptionSkips)
       .toEqual({ forMeegy: false, stoic: true });
+    // The live route always includes both maps under `day_setup`, as null when
+    // the store is empty, so the fixture does too.
     expect(await adapter.savePromptSkips({ forMeegy: false, stoic: false })).toEqual({
       ok: true,
       daySetupConfirmed: false,
       promptWarnings: [],
+      descriptionSkips: { forMeegy: false, stoic: false },
+      promptDisabled: { forMeegy: false, stoic: false },
     });
   });
 });
@@ -218,7 +228,7 @@ describe("prompt include-in-commit flags", () => {
     });
   });
 
-  it("the fixture replaces the whole map and omits the echo when nothing is disabled", async () => {
+  it("the fixture replaces the whole map and echoes the server's nested shape", async () => {
     const adapter = new FixtureAdapter("fresh");
     expect((await adapter.savePromptDisabled({ forMeegy: true, stoic: true })).promptDisabled)
       .toEqual({ forMeegy: true, stoic: true });
@@ -229,6 +239,88 @@ describe("prompt include-in-commit flags", () => {
       ok: true,
       daySetupConfirmed: false,
       promptWarnings: [],
+      descriptionSkips: { forMeegy: false, stoic: false },
+      promptDisabled: { forMeegy: false, stoic: false },
     });
+  });
+});
+
+/* The LIVE server's POST /day-setup echo (verified against app/main.py): the
+   flag maps ride NESTED under `day_setup`, and there is no top-level
+   `prompt_disabled` / `description_skips`. Reading only the top level made the
+   echo always "absent", so every click re-dispatched an all-included map and
+   the switches never redrew. */
+function liveSaveEcho(
+  daySetup: Record<string, unknown>,
+  topLevel: Record<string, unknown> = {},
+) {
+  return {
+    ok: true,
+    re_included: [],
+    day_setup_confirmed: false,
+    day_setup: daySetup,
+    optins: { intention: true, megan_nicety: true, stoic_intention: true },
+    optins_revision: 0,
+    ...topLevel,
+  };
+}
+
+describe("day-setup save echo nesting", () => {
+  it("reads both flag maps from the live nested day_setup echo", () => {
+    const result = projectDaySetupSaveResult(
+      liveSaveEcho({
+        prompt_disabled: { intention: false, megan_nicety: true, stoic_intention: false },
+        description_skips: { intention: false, megan_nicety: true, stoic_intention: false },
+      }),
+    );
+    expect(result.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+    expect(result.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+    expect(result.daySetupConfirmed).toBe(false);
+  });
+
+  it("the nested map wins over a stale conflicting top-level key", () => {
+    const result = projectDaySetupSaveResult(
+      liveSaveEcho(
+        { prompt_disabled: { megan_nicety: true, stoic_intention: false } },
+        { prompt_disabled: { megan_nicety: false, stoic_intention: true } },
+      ),
+    );
+    expect(result.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+  });
+
+  it("a legacy top-level map still projects when day_setup carries no key", () => {
+    const result = projectDaySetupSaveResult(
+      liveSaveEcho(
+        {},
+        {
+          prompt_disabled: { megan_nicety: false, stoic_intention: true },
+          description_skips: { megan_nicety: true, stoic_intention: false },
+        },
+      ),
+    );
+    expect(result.promptDisabled).toEqual({ forMeegy: false, stoic: true });
+    expect(result.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+  });
+
+  it("the route's null nested maps mean the safe all-included default", () => {
+    const result = projectDaySetupSaveResult(
+      liveSaveEcho({ prompt_disabled: null, description_skips: null }),
+    );
+    expect(result.promptDisabled).toEqual({ forMeegy: false, stoic: false });
+    expect(result.descriptionSkips).toEqual({ forMeegy: false, stoic: false });
+  });
+
+  it("a malformed nested map stays a safe default instead of throwing", () => {
+    const result = projectDaySetupSaveResult(
+      liveSaveEcho({ prompt_disabled: "nope", description_skips: [1, 2] }),
+    );
+    expect(result.promptDisabled).toEqual({ forMeegy: false, stoic: false });
+    expect(result.descriptionSkips).toEqual({ forMeegy: false, stoic: false });
+  });
+
+  it("neither location carrying the key leaves both maps absent", () => {
+    const result = projectDaySetupSaveResult(liveSaveEcho({}));
+    expect(result).not.toHaveProperty("promptDisabled");
+    expect(result).not.toHaveProperty("descriptionSkips");
   });
 });

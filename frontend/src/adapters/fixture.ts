@@ -55,7 +55,7 @@ import type {
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
 import { toMinutes } from "../model/time";
 import { habitsView } from "../model/habits";
-import { itemIdentity, normalizeTodoistExclusionName } from "./wire";
+import { itemIdentity, normalizeTodoistExclusionName, projectDaySetupSaveResult } from "./wire";
 
 const LATENCY_MS = 350;
 
@@ -814,20 +814,33 @@ export class FixtureAdapter implements Adapter {
     return this.promptEcho();
   }
 
+  /** The fixture answers with the LIVE route's real echo shape — both flag
+      maps nested under `day_setup` (null when that store is empty), never a
+      top-level key — and runs it through the adapter's own projection. The
+      mock therefore cannot drift from the wire the way a hand-built result
+      object can. */
   private promptEcho(): DaySetupSaveResult {
-    const echo: DaySetupSaveResult = {
+    const skips = this.descriptionSkips;
+    const disabled = this.promptDisabled;
+    return projectDaySetupSaveResult({
       ok: true,
-      daySetupConfirmed: false,
-      promptWarnings: [],
-    };
-    // Mirror the server: the map is omitted entirely when nothing is skipped.
-    if (this.descriptionSkips.forMeegy || this.descriptionSkips.stoic) {
-      echo.descriptionSkips = { ...this.descriptionSkips };
-    }
-    if (this.promptDisabled.forMeegy || this.promptDisabled.stoic) {
-      echo.promptDisabled = { ...this.promptDisabled };
-    }
-    return echo;
+      re_included: [],
+      day_setup_confirmed: false,
+      day_setup: {
+        description_skips: skips.forMeegy || skips.stoic
+          ? { intention: false, megan_nicety: skips.forMeegy, stoic_intention: skips.stoic }
+          : null,
+        prompt_disabled: disabled.forMeegy || disabled.stoic
+          ? {
+            intention: false,
+            megan_nicety: disabled.forMeegy,
+            stoic_intention: disabled.stoic,
+          }
+          : null,
+      },
+      optins: { intention: true, megan_nicety: true, stoic_intention: true },
+      optins_revision: 0,
+    });
   }
 
   /** The fixture mirrors the server's full-replace skip map: the whole map is
