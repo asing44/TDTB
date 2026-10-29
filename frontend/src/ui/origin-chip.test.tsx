@@ -307,3 +307,16 @@ describe("origin chip contrast and hex discipline", () => {
     expect(rules).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });
+
+describe("origin chip colour specificity", () => {
+  it("the base chip rule does not set --chip-c, so colour classes can win", () => {
+    const css = readFileSync(resolve(__dirname, "../app.css"), "utf8");
+    const start = css.indexOf(".origin-chip[data-origin] {");
+    expect(start).toBeGreaterThan(-1);
+    const body = css.slice(start, css.indexOf("}", start));
+    // A (0,2,0) base rule declaring --chip-c would beat every
+    // .origin-chip--td-* / --cap-h* class (0,1,0) and paint every chip grey.
+    expect(body).not.toMatch(/--chip-c\s*:/);
+    expect(body).toMatch(/var\(--chip-c,\s*var\(--t-muted\)\)/);
+  });
+});

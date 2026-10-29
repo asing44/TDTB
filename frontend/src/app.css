@@ -11161,16 +11161,15 @@ button.strip-cal {
    Specificity (.origin-chip[data-origin]) beats the plain-text .qrow__src
    rules above and the muted override in plan-dark-contrast.css. */
 .origin-chip[data-origin] {
-  --chip-c: var(--t-muted);
   display: inline-block;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 22ch;
   padding: 1px 8px;
-  border: 1px solid color-mix(in srgb, var(--chip-c) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip-c, var(--t-muted)) 55%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--chip-c) 14%, var(--t-surface));
-  color: color-mix(in srgb, var(--chip-c) 40%, var(--t-text));
+  background: color-mix(in srgb, var(--chip-c, var(--t-muted)) 14%, var(--t-surface));
+  color: color-mix(in srgb, var(--chip-c, var(--t-muted)) 40%, var(--t-text));
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
