@@ -193,6 +193,29 @@ class TodoistClient:
             if not cursor:
                 return results
 
+    def get_labels(self) -> list[dict]:
+        """GET /labels, auto-paginated to a flat list of label dicts.
+
+        Same v1 envelope as :meth:`get_projects` (``{"results": [...],
+        "next_cursor": str|null}``), with the raw-list body tolerated too.
+        ``/labels/personal`` is already included: v1 returns the workspace's
+        own labels, and a label dict carries ``name`` and a ``color`` NAME
+        (``berry_red``), which is what the cockpit tints with.
+        """
+        results: list[dict] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {}
+            if cursor is not None:
+                params["cursor"] = cursor
+            body = self._request("GET", "/labels", params=params).json()
+            if isinstance(body, list):
+                return results + body
+            results.extend(body.get("results", []))
+            cursor = body.get("next_cursor")
+            if not cursor:
+                return results
+
     def get_task(self, task_id: str) -> dict:
         response = self._request("GET", f"/tasks/{task_id}")
         return response.json()

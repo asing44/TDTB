@@ -731,6 +731,9 @@ REST_ROW = {
     # The row's Todoist project is always present; this task carries none, so
     # every project field is null (the cockpit renders no project chip).
     "project_id": None, "project_name": None, "project_color": None,
+    # Label colours always ride along; the artifact row has no label catalog,
+    # so the map is empty rather than absent.
+    "label_colors": {},
 }
 
 

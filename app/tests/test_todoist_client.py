@@ -107,6 +107,49 @@ def test_get_project_tasks_scopes_by_project_id_and_paginates():
     assert result == [{"id": "1"}, {"id": "2"}]
 
 
+def test_get_labels_auto_paginates_to_exhaustion():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/labels"
+        params = dict(request.url.params)
+        calls.append(params)
+        if "cursor" not in params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "l1", "name": "10min", "color": "red"}],
+                    "next_cursor": "cursor-2",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "l2", "name": "Half-hour", "color": "yellow"}],
+                "next_cursor": None,
+            },
+        )
+
+    client = make_client(handler)
+    result = client.get_labels()
+
+    assert calls[0] == {}
+    assert calls[1] == {"cursor": "cursor-2"}
+    assert result == [
+        {"id": "l1", "name": "10min", "color": "red"},
+        {"id": "l2", "name": "Half-hour", "color": "yellow"},
+    ]
+
+
+def test_get_labels_tolerates_a_raw_list_body():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": "l1", "name": "10min"}])
+
+    client = make_client(handler)
+
+    assert client.get_labels() == [{"id": "l1", "name": "10min"}]
+
+
 def test_get_project_tasks_without_limit_omits_param():
     captured = {}
 
