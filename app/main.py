@@ -35,7 +35,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
@@ -97,6 +97,22 @@ import artifact_source  # noqa: E402
 #: Sentinel distinguishing "no coordinator built yet" from a built-but-
 #: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
 _REFRESH_COORDINATOR_UNSET = object()
+
+#: The counts a schema-change notice carries, in the order its own document
+#: writes them. The status route republishes these keys and nothing else from
+#: the stored diff: ids, fingerprints, and free text stay server-side.
+_SCHEMA_CHANGE_COUNT_KEYS = (
+    "structures_added",
+    "structures_removed",
+    "properties_added",
+    "properties_removed",
+    "properties_retyped",
+    "properties_renamed",
+    "options_added",
+    "options_removed",
+    "options_renamed",
+    "unresolved_open_values",
+)
 
 # Distant-future sentinel for deadline sorting: items without a deadline sort
 # after every dated item, deterministically.
@@ -2226,6 +2242,27 @@ class CapacitiesRefreshStartRequest(BaseModel):
         return value
 
 
+class CapacitiesSchemaChangeAckRequest(BaseModel):
+    """Request body for POST /capacities/refresh/schema-change/ack.
+
+    Closed and strictly typed like the refresh start body: unknown keys are
+    rejected and ``to_hash`` must be a non-blank literal string. Only the
+    notice carrying exactly this hash may be acknowledged, so a body that names
+    nothing usable is a 422 before any state is read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_hash: StrictStr
+
+    @field_validator("to_hash")
+    @classmethod
+    def _usable_to_hash(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("to_hash must be a non-blank string")
+        return value
+
+
 class CapacitiesSelectionEntry(BaseModel):
     """One identity to select. ``acknowledge`` is the operator's R32 flag."""
 
@@ -4064,13 +4101,75 @@ def create_app() -> FastAPI:
             )
         return coordinator
 
+    def _schema_change_notice(coordinator: Any | None) -> dict[str, Any] | None:
+        """The stored schema-change notice as a minimal public projection.
+
+        Read-only and advisory: the Settings banner needs a severity, one
+        generated sentence, the hashes it may acknowledge, and the counts. The
+        sidecar's ``namespace``/``scope_key`` are machine-local keys, not UI
+        facts, so they never leave the store, and the diff is projected to its
+        counts alone — the ids and the object data the diff never held stay
+        server-side. Any failure (no store, absent or corrupt bytes, a
+        non-coordinator) reads as ``None`` rather than an error, because the
+        notice must never turn a status read into a failure.
+        """
+        if coordinator is None:
+            return None
+        load = getattr(getattr(coordinator, "store", None), "load_schema_change", None)
+        if not callable(load):
+            return None
+        try:
+            record = load()
+        except Exception:  # noqa: BLE001 — advisory notice, never the read
+            return None
+        if not isinstance(record, dict):
+            return None
+        severity = record.get("severity")
+        to_hash = record.get("to_hash")
+        # The store already rejects any other severity value; this second check
+        # keeps the projection closed if that contract ever slips.
+        if severity not in ("info", "warn"):
+            return None
+        if not isinstance(to_hash, str) or not to_hash:
+            return None
+        diff = record.get("diff")
+        counts = diff.get("counts") if isinstance(diff, dict) else None
+        if not isinstance(counts, dict):
+            counts = {}
+
+        def _text(key: str) -> str | None:
+            value = record.get(key)
+            return value if isinstance(value, str) and value else None
+
+        generation = record.get("generation")
+        summary = record.get("summary")
+        return {
+            "severity": severity,
+            "summary": summary if isinstance(summary, str) else "",
+            "detected_at": _text("detected_at"),
+            "generation": generation if type(generation) is int else 0,
+            "from_hash": _text("from_hash"),
+            "to_hash": to_hash,
+            "acknowledged": record.get("acknowledged") is True,
+            "acknowledged_at": _text("acknowledged_at"),
+            "diff": {
+                "counts": {
+                    key: counts[key] if type(counts.get(key)) is int else 0
+                    for key in _SCHEMA_CHANGE_COUNT_KEYS
+                }
+            },
+        }
+
     @app.get("/capacities/refresh/status")
     def get_capacities_refresh_status() -> dict:
         """Tokenless local read of the one refresh job + last complete snapshot.
 
         Never calls a provider and never spawns work; an unconfigured source
-        answers ``configured: false`` with no job rather than erroring."""
+        answers ``configured: false`` with no job rather than erroring. The
+        advisory ``schema_change`` notice rides the same read so the Settings
+        banner needs no second request."""
         coordinator = _refresh_coordinator()
+        schema_change = _schema_change_notice(coordinator)
         if coordinator is None:
             return {
                 "configured": False,
@@ -4080,6 +4179,7 @@ def create_app() -> FastAPI:
                 "progress": {},
                 "warnings": [],
                 "coverage": {},
+                "schema_change": schema_change,
                 "snapshot": {
                     "present": False,
                     "generation": 0,
@@ -4089,7 +4189,9 @@ def create_app() -> FastAPI:
                     "type_check_times": {},
                 },
             }
-        return coordinator.status()
+        status = coordinator.status()
+        status["schema_change"] = schema_change
+        return status
 
     @app.post(
         "/capacities/refresh/start",
@@ -4133,6 +4235,42 @@ def create_app() -> FastAPI:
         installs no new generation; returns the current truthful status."""
         coordinator = _refresh_configured()
         return coordinator.cancel()
+
+    @app.post(
+        "/capacities/refresh/schema-change/ack",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_refresh_schema_change_ack(
+        body: CapacitiesSchemaChangeAckRequest, response: Response
+    ) -> dict:
+        """Token-guarded acknowledgement of ONE schema-change notice.
+
+        Marks the stored notice acknowledged only when its ``to_hash`` is the
+        one the caller named; a repeat call on an already acknowledged match is
+        idempotent and answers the same body. A different hash is a 409 and a
+        missing (or unreadable) notice a 404, and neither writes anything. This
+        route starts no Refresh, changes no intake state, warning, or mapping —
+        it only flips the advisory notice's own flag.
+        """
+        coordinator = _refresh_configured()
+        store = getattr(coordinator, "store", None)
+        load = getattr(store, "load_schema_change", None)
+        acknowledge = getattr(store, "acknowledge_schema_change", None)
+        try:
+            current = load() if callable(load) else None
+        except Exception:  # noqa: BLE001 — unreadable bytes read as no notice
+            current = None
+        if not isinstance(current, dict):
+            response.status_code = 404
+            return {"ok": False, "error": "not_found"}
+        try:
+            acknowledged = bool(callable(acknowledge) and acknowledge(body.to_hash))
+        except Exception:  # noqa: BLE001 — acknowledgement is advisory
+            acknowledged = False
+        if not acknowledged:
+            response.status_code = 409
+            return {"ok": False, "error": "stale"}
+        return {"ok": True, "acknowledged": True}
 
     def _tag_catalog() -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
