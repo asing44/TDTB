@@ -88,33 +88,117 @@ def _normalize_project_name(name: Any) -> str:
     return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
 
 
-def _habit_projects(client: Any) -> tuple[list[dict[str, Any]] | None, list[str]]:
+def _project_label(project: dict[str, Any]) -> str | None:
+    """A project's display name, or ``None`` when it carries no usable one."""
+    name = project.get("name")
+    if isinstance(name, str) and name.strip():
+        return name
+    return None
+
+
+def _project_color(project: dict[str, Any]) -> str | None:
+    """A project's Todoist colour NAME (``sky_blue``), or ``None``.
+
+    REST v2/v1 send ``color`` as a string name. An MCP-shaped project may nest
+    it (``{"name": "sky_blue"}``) or send something else entirely; only a
+    usable string survives. Mapping that name to hex is the frontend's job, so
+    the wire carries the name and never a guess."""
+    color = project.get("color")
+    if isinstance(color, dict):
+        color = color.get("name")
+    if not isinstance(color, str):
+        return None
+    return color.strip() or None
+
+
+class TodoistProjects:
+    """The Todoist project catalogue for ONE run: at most one paginated read.
+
+    A single ``/plan-inputs`` request needs the project list twice — the habit
+    scope read (to find the Habits project) and every row's project
+    name/colour — so the catalogue is built once and passed to both readers.
+    Nothing is persisted: a new run builds a new catalogue and re-reads.
+
+    A failed, unavailable, or malformed lookup is SILENT here: rows degrade to
+    a null project name/colour rather than blocking planning with a new
+    warning. The habit reader still labels its own failure in the existing
+    words (``HABITS_READ_FAILED_WARNING``), so its one loud fallback is
+    unchanged.
+    """
+
+    def __init__(self, client: Any = None) -> None:
+        self._client = client
+        self._loaded = False
+        #: True only when a lookup EXISTS and failed — never for one that is
+        #: simply absent (an unconfigured runtime or a plain double).
+        self.failed = False
+        self._projects: list[dict[str, Any]] | None = None
+        self._index: dict[str, tuple[str | None, str | None]] = {}
+
+    def load(self) -> list[dict[str, Any]] | None:
+        """The raw project list (dicts only), or ``None`` when unavailable."""
+        if self._loaded:
+            return self._projects
+        self._loaded = True
+        getter = getattr(self._client, "get_projects", None)
+        if not callable(getter):
+            return None
+        try:
+            fetched = getter()
+        except Exception:  # noqa: BLE001 — degrade: rows keep a null project
+            self.failed = True
+            return None
+        if not isinstance(fetched, list):
+            self.failed = True
+            return None
+        self._projects = [p for p in fetched if isinstance(p, dict)]
+        index: dict[str, tuple[str | None, str | None]] = {}
+        for project in self._projects:
+            project_id = project.get("id")
+            if project_id is None:
+                continue
+            key = str(project_id).strip()
+            if key:
+                index[key] = (_project_label(project), _project_color(project))
+        self._index = index
+        return self._projects
+
+    def name_and_color(self, project_id: Any) -> tuple[str | None, str | None]:
+        """``(project_name, project_color)`` for one id; nulls when unknown."""
+        self.load()
+        if project_id is None:
+            return None, None
+        return self._index.get(str(project_id).strip(), (None, None))
+
+
+def _habit_projects(
+    client: Any, catalog: TodoistProjects | None = None
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
     """The habit projects as ``(projects, warnings)``.
 
     ``None`` means the read cannot be project-scoped at all: the client has no
     project lookup (a double, or an unconfigured runtime). The caller keeps its
     existing source and adds no warning. A lookup that RAISES returns the same
     ``None`` plus the loud stale-list warning, so a real failure is labelled.
+
+    ``catalog`` (optional) is the run's already-built project catalogue: the
+    habit scope then reuses that one read instead of issuing its own.
     """
-    getter = getattr(client, "get_projects", None)
-    if not callable(getter):
-        return None, []
-    try:
-        projects = getter()
-    except Exception:  # noqa: BLE001 — degrade contract; the caller labels it
-        return None, [HABITS_READ_FAILED_WARNING]
-    if not isinstance(projects, list):
-        return None, [HABITS_READ_FAILED_WARNING]
+    catalog = catalog if catalog is not None else TodoistProjects(client)
+    projects = catalog.load()
+    if projects is None:
+        return None, ([HABITS_READ_FAILED_WARNING] if catalog.failed else [])
     return [
         p for p in projects
-        if isinstance(p, dict)
-        and _normalize_project_name(p.get("name")) in _HABIT_PROJECT_NAMES
+        if _normalize_project_name(p.get("name")) in _HABIT_PROJECT_NAMES
     ], []
 
 
-def _habit_project_ids(client: Any) -> set[str]:
+def _habit_project_ids(
+    client: Any, catalog: TodoistProjects | None = None
+) -> set[str]:
     """IDs of the habit projects; empty when the lookup is unavailable."""
-    projects, _warnings = _habit_projects(client)
+    projects, _warnings = _habit_projects(client, catalog)
     return {
         str(p.get("id")) for p in (projects or []) if p.get("id") is not None
     }
@@ -171,7 +255,10 @@ def _is_habit_task(task: dict[str, Any], project_ids: set[str]) -> bool:
 
 
 def fetch_habits_items(
-    client: Any, config: dict[str, Any], logical_day: Any = None
+    client: Any,
+    config: dict[str, Any],
+    logical_day: Any = None,
+    projects: TodoistProjects | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """Read the operator's OPEN habit tasks as the artifact's habits block.
 
@@ -198,11 +285,11 @@ def fetch_habits_items(
     """
     if client is None:
         return None, []
-    projects, warnings = _habit_projects(client)
-    if projects is None:
+    project_list, warnings = _habit_projects(client, projects)
+    if project_list is None:
         return None, warnings
     project_ids = {
-        str(p.get("id")) for p in projects if p.get("id") is not None
+        str(p.get("id")) for p in project_list if p.get("id") is not None
     }
     if not project_ids:
         # Nothing to scope the read to: without a project the "zero" would be
@@ -250,7 +337,45 @@ def _is_reminder(task: dict[str, Any]) -> bool:
     return str(task.get("content", "")).startswith(_NUDGE_PREFIX)
 
 
-def _to_item(task: dict[str, Any], assigned: bool) -> dict[str, Any]:
+def _task_project_id(task: dict[str, Any]) -> str | None:
+    """The task's project id as a string, or ``None``.
+
+    REST v2/v1 tasks carry ``project_id``; the MCP shape carries
+    ``projectId``. Either normalises to a string, and anything unusable
+    becomes ``None`` so the wire key is always present and honest."""
+    raw = task.get("project_id")
+    if raw is None:
+        raw = task.get("projectId")
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        return None
+    key = str(raw).strip()
+    return key or None
+
+
+def _project_fields(
+    task: dict[str, Any], projects: TodoistProjects | None
+) -> dict[str, Any]:
+    """The row's project identity: id always, name/colour when resolvable.
+
+    ``project_color`` is the Todoist colour NAME (``sky_blue``); the frontend
+    owns the name→hex map. An unavailable or failed project lookup leaves the
+    name/colour null — never a warning, never a blocked plan."""
+    project_id = _task_project_id(task)
+    project_name = project_color = None
+    if project_id is not None and projects is not None:
+        project_name, project_color = projects.name_and_color(project_id)
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "project_color": project_color,
+    }
+
+
+def _to_item(
+    task: dict[str, Any],
+    assigned: bool,
+    projects: TodoistProjects | None = None,
+) -> dict[str, Any]:
     tid = str(task.get("id"))
     # Todoist API priority: 4 = highest — same direction as the urgency scale.
     priority = int(task.get("priority") or 1)
@@ -264,6 +389,10 @@ def _to_item(task: dict[str, Any], assigned: bool) -> dict[str, Any]:
         "assigned": assigned,
         "source": "todoist",
         "todoist_id": tid,
+        # The cockpit groups/filters by project, so every Todoist row names its
+        # project: the id always, the display name and the colour NAME when the
+        # run's project catalogue resolved them (else null).
+        **_project_fields(task, projects),
         "duration": _duration_minutes(task),
         "labels": task.get("labels") or [],
         # recurring tasks are schedule-pinned (M1.0): surfaced so the UI can
@@ -274,7 +403,10 @@ def _to_item(task: dict[str, Any], assigned: bool) -> dict[str, Any]:
 
 
 def fetch_todoist_items(
-    client: Any, config: dict[str, Any], exclude_ids: set[str] | None = None
+    client: Any,
+    config: dict[str, Any],
+    exclude_ids: set[str] | None = None,
+    projects: TodoistProjects | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Pull assigned (due today/overdue) + quick-pool tasks.
 
@@ -282,16 +414,21 @@ def fetch_todoist_items(
     a mirror never re-appears as a Todoist-sourced row on a later load
     (including later days while it is still open).
 
+    ``projects`` (optional) is the run's project catalogue; without one this
+    read builds its own, so the project list is still read once per call and
+    never once per row.
+
     Returns ``(assigned_items, pool_items, warnings)``; never raises.
     """
     if client is None:
         return [], [], ["Todoist unavailable (no client/token) — digest is missing Todoist items"]
 
+    catalog = projects if projects is not None else TodoistProjects(client)
     excluded = {str(value) for value in (exclude_ids or ())}
     assigned_q = str(config.get("todoist.read_query.assigned") or ASSIGNED_QUERY_FALLBACK)
     quick_q = str(config.get("todoist.read_query.quick") or QUICK_QUERY_FALLBACK)
     try:
-        habit_projects = _habit_project_ids(client)
+        habit_projects = _habit_project_ids(client, catalog)
 
         def _plannable(t: dict[str, Any]) -> bool:
             return (not _is_reminder(t)
@@ -303,10 +440,10 @@ def fetch_todoist_items(
     except Exception as exc:  # noqa: BLE001 — degrade contract
         return [], [], [f"Todoist read failed ({exc}) — digest is missing Todoist items"]
 
-    assigned_items = [_to_item(t, assigned=True) for t in assigned_tasks]
+    assigned_items = [_to_item(t, assigned=True, projects=catalog) for t in assigned_tasks]
     assigned_ids = {i["todoist_id"] for i in assigned_items}
     pool_items = [
-        _to_item(t, assigned=False)
+        _to_item(t, assigned=False, projects=catalog)
         for t in quick_tasks
         if str(t.get("id")) not in assigned_ids
     ]

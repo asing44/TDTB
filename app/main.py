@@ -4900,6 +4900,10 @@ def create_app() -> FastAPI:
         }
         artifact_warnings: list[str] = []
         todoist_c = None
+        # ONE Todoist project catalogue per request: the habit scope read and
+        # every row's project name/colour share this single paginated read, so
+        # a request never costs one project lookup per row (or two reads).
+        todoist_projects: Any = None
         store = None
         t_assigned: list[dict[str, Any]] = []
         t_pool: list[dict[str, Any]] = []
@@ -4977,8 +4981,9 @@ def create_app() -> FastAPI:
                     c_pool = [r for r in live_capacities if r.get("assigned") is not True]
             # Live habits: read the operator's Habits project open tasks so
             # the plan lists every habit, not the artifact's cached snapshot.
+            todoist_projects = external_sources.TodoistProjects(todoist_c)
             live_habits, w_hab = external_sources.fetch_habits_items(
-                todoist_c, ext_cfg, today
+                todoist_c, ext_cfg, today, projects=todoist_projects
             )
             if live_habits is None:
                 # Stale list. A failed read brings its own warning; when no
@@ -5024,7 +5029,8 @@ def create_app() -> FastAPI:
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
-                    todoist_c, ext_cfg, exclude_ids=mirror_excluded
+                    todoist_c, ext_cfg, exclude_ids=mirror_excluded,
+                    projects=todoist_projects,
                 )
             if store is not None:
                 try:

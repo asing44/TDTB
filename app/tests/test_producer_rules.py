@@ -728,6 +728,9 @@ REST_ROW = {
     "urgency": 3, "deadline": "2026-10-08", "priority_score": 3.0,
     "assigned": True, "source": "todoist", "todoist_id": "42", "duration": 45,
     "labels": ["@work"], "is_recurring": True, "scheduled_start": "09:00",
+    # The row's Todoist project is always present; this task carries none, so
+    # every project field is null (the cockpit renders no project chip).
+    "project_id": None, "project_name": None, "project_color": None,
 }
 
 
