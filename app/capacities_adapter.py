@@ -387,6 +387,31 @@ def _label_options(definition: dict[str, Any]) -> set[str]:
     return result
 
 
+def _label_identifiers(definition: Any) -> set[str]:
+    """Normalized LIVE identifiers of one label property's ``labelSet``.
+
+    This is the reference set that tells a status option Capacities still
+    defines from one it no longer does. A member contributes its ``id``, and
+    its display ``name`` only when it carries no id. Unlike ``_label_options``
+    (strict, ids only, used by the completion contract check) this read never
+    raises: a missing, empty, or malformed label set simply knows no live option
+    identity, so nothing can be classified dead from it.
+    """
+    if not isinstance(definition, Mapping):
+        return set()
+    options = definition.get("labelSet")
+    if not isinstance(options, list):
+        return set()
+    result: set[str] = set()
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        ident = _text(option.get("id")) or _text(option.get("name"))
+        if ident:
+            result.add(_normalized(ident))
+    return result
+
+
 def _property_payload(prop: Any, prop_id: str) -> tuple[str, Any]:
     if not isinstance(prop, dict):
         raise _MalformedObject(
@@ -593,6 +618,117 @@ def _classify_open_status(
     if tokens.intersection({_normalized(value) for value in open_values}):
         return "open"
     return "closed"
+
+
+#: Status resolution outcomes. ``unknown_dead`` is the state a status payload
+#: takes when EVERY member names an option the live label set no longer
+#: defines: Capacities still sends the deleted option id (with that id as its
+#: display name), so the payload carries neither readable open nor readable
+#: closed evidence.
+_STATUS_RESOLUTION_EMPTY = "empty"
+_STATUS_RESOLUTION_OPEN = "open"
+_STATUS_RESOLUTION_CLOSED = "closed"
+_STATUS_RESOLUTION_UNKNOWN_DEAD = "unknown_dead"
+_STATUS_RESOLUTION_UNKNOWN = "unknown"
+
+
+def _status_member_tokens(member: Any) -> tuple[set[str], set[str]] | None:
+    """``(identity, display)`` tokens for one status payload member.
+
+    The identity is the ``id``; a member carrying no id falls back to its
+    display ``name``, so a name-only payload still resolves. The display tokens
+    are both values, because the open vocabulary has always matched an id OR a
+    label display name. ``None`` means the member cannot be read as a label
+    reference at all (a non-string value, a nested structure, a scalar), which
+    is the same strictness ``_rule_status_tokens`` applies on the rule path.
+    """
+    if isinstance(member, str):
+        token = _normalized(member)
+        if not token:
+            return None
+        return {token}, {token}
+    if not isinstance(member, dict):
+        return None
+    display: set[str] = set()
+    for key in ("id", "name"):
+        value = member.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not _text(value):
+            return None
+        token = _normalized(value)
+        if token:
+            display.add(token)
+    if not display:
+        return None
+    ident = member.get("id")
+    identity = (
+        {_normalized(ident)}
+        if isinstance(ident, str) and _text(ident)
+        else set(display)
+    )
+    return identity, display
+
+
+def _status_resolution(
+    prop: Any,
+    definition: Any,
+    open_values: frozenset[str],
+) -> str:
+    """Resolve a mapped status payload against the LIVE label set.
+
+    ``definition`` is the property definition from the structures contract, so
+    its ``labelSet`` is what Capacities currently defines. Each payload member
+    resolves when its identity is in that set and is DEAD otherwise. The
+    payload then reads:
+
+    * ``empty`` — readable payload with no members (the shipped absent-signal
+      rule stays with the caller);
+    * ``open`` — at least one resolved member is in ``open_values`` (the
+      display name may match, exactly as the existing token gate allows);
+    * ``closed`` — resolved members only, none open;
+    * ``unknown_dead`` — every member is dead;
+    * ``unknown`` — absent, unreadable, or no live label set is known. Nothing
+      is called dead without a live option identity to compare against.
+
+    A mixed payload keeps the stronger resolved evidence: open + dead reads
+    open, and resolved non-open + dead reads closed.
+    """
+    if prop is None or not isinstance(prop, dict):
+        return _STATUS_RESOLUTION_UNKNOWN
+    kind = _text(prop.get("type"))
+    if not kind or kind not in prop or kind not in {"label", "entity"}:
+        return _STATUS_RESOLUTION_UNKNOWN
+    payload = prop[kind]
+    if not isinstance(payload, list):
+        return _STATUS_RESOLUTION_UNKNOWN
+    if not payload:
+        return _STATUS_RESOLUTION_EMPTY
+    live = _label_identifiers(definition)
+    if not live:
+        return _STATUS_RESOLUTION_UNKNOWN
+    open_tokens = {_normalized(value) for value in open_values}
+    resolved = 0
+    dead = 0
+    open_members = 0
+    for member in payload:
+        parsed = _status_member_tokens(member)
+        if parsed is None:
+            return _STATUS_RESOLUTION_UNKNOWN
+        identity, display = parsed
+        if identity.intersection(live):
+            resolved += 1
+            if display.intersection(open_tokens):
+                open_members += 1
+        else:
+            dead += 1
+    if not dead:
+        return (
+            _STATUS_RESOLUTION_OPEN if open_members else _STATUS_RESOLUTION_CLOSED
+        )
+    if not resolved:
+        return _STATUS_RESOLUTION_UNKNOWN_DEAD
+    return _STATUS_RESOLUTION_OPEN if open_members else _STATUS_RESOLUTION_CLOSED
 
 
 def _classify_completion(
@@ -1583,6 +1719,27 @@ class CapacitiesAdapter:
         # anything it alone carried (for example the title).
         return {**row, **content}
 
+    def _property_definition(
+        self, structure_id: str, prop_id: str
+    ) -> dict[str, Any] | None:
+        """The live property definition for one mapped property, or ``None``.
+
+        ``_ensure_contract`` stamps every structure row with its resolved
+        ``_definitions`` map, and that definition carries the live ``labelSet``
+        a status payload is resolved against. A missing structure, property, or
+        definition is ``None``: no live option identity is known, so nothing is
+        ever classified dead from it.
+        """
+        structures = self._structure_defs or {}
+        structure = structures.get(structure_id)
+        if not isinstance(structure, dict):
+            return None
+        definitions = structure.get("_definitions")
+        if not isinstance(definitions, Mapping):
+            return None
+        definition = definitions.get(prop_id)
+        return definition if isinstance(definition, dict) else None
+
     def _project_object(
         self, obj: dict[str, Any], mapping: StructureMapping, logical_day: date
     ) -> dict[str, Any] | None:
@@ -1720,13 +1877,37 @@ class CapacitiesAdapter:
             mapping.structure_id
             in self.config.assignment_settings.native_task_structures
         )
+        # A status option Capacities no longer defines arrives with the dead id
+        # repeated as its display name, so the payload carries neither readable
+        # open nor readable closed evidence. Resolving every member against the
+        # LIVE label set is what separates that from a genuinely closed status.
+        # Nothing is called dead when no live label set is known, and an empty
+        # payload keeps the shipped absent-signal rules untouched.
+        dead_status_member = False
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
-            if active_rule is not None:
-                status_state = _classify_open_status(
+            dead_status_member = (
+                _status_resolution(
                     status_prop,
-                    mapping.open_status_property,
+                    self._property_definition(
+                        mapping.structure_id, mapping.open_status_property
+                    ),
                     mapping.open_status_values,
+                )
+                == _STATUS_RESOLUTION_UNKNOWN_DEAD
+            )
+            if active_rule is not None:
+                # A dead option is UNKNOWN on the stored-rule path too: the
+                # existing plumbing then keeps the row unassigned with the
+                # ``status_unknown`` review reason (D2: never auto-assigned).
+                status_state = (
+                    "unknown"
+                    if dead_status_member
+                    else _classify_open_status(
+                        status_prop,
+                        mapping.open_status_property,
+                        mapping.open_status_values,
+                    )
                 )
             elif status_prop is None:
                 # A missing mapped status value is an absent signal, not closed
@@ -1734,6 +1915,12 @@ class CapacitiesAdapter:
                 # evaluator can admit the row on its own due/deadline/source
                 # signal; a custom structure keeps the fail-closed gate.
                 status_is_open = None if native_status_structure else False
+            elif dead_status_member:
+                # Undecided status: the projection keeps the row as an
+                # unassigned review candidate instead of dropping it as closed.
+                # ``None`` is not closed evidence, so the evaluator's status
+                # gate does not reject it.
+                status_is_open = None
             elif shared_direct_field and (
                 _classify_open_status(
                     status_prop,
@@ -1817,6 +2004,15 @@ class CapacitiesAdapter:
                     mapping.completion_property,
                     mapping.completion_value,
                 )
+            if (
+                dead_status_member
+                and mapping.completion_property == mapping.open_status_property
+            ):
+                # The completion field IS the unresolvable status payload, so
+                # it carries no readable completed evidence either. Without
+                # this the strict classifier would call the dead value closed
+                # and drop the row before the review surface ever saw it.
+                completion_state = "unknown"
 
         # ``date_property`` remains a day-projection filter: a future date means
         # the object is not part of today's candidate set. The evaluator owns
@@ -1917,19 +2113,27 @@ class CapacitiesAdapter:
                 logical_day=logical_day,
                 settings=self.config.assignment_settings,
             )
-            if not decision.eligible:
+            if direct_completion and completion_state == "closed":
+                # Direct-refresh completion override (U3b-4): a readable
+                # completed value is a hard exclusion even when source-assigned.
                 return None
-            assigned = True
-            if direct_completion:
-                # Direct-refresh completion override (U3b-4). The legacy
-                # decision admitted the row; a readable completed value is a
-                # hard exclusion even when source-assigned, and an UNKNOWN
-                # completion keeps the row as an unassigned warning candidate.
-                # The override only narrows: it never admits a row the legacy
-                # evaluator rejected.
-                if completion_state == "closed":
+            if dead_status_member:
+                # A dead status option is never auto-assigned, on any path
+                # (D2), and it is never silently dropped: the row is a review
+                # candidate that reports ``status_unknown``. A stable-identity
+                # exclusion still wins, exactly as it does on the stored-rule
+                # path, and the outcome is reported as unassigned either way.
+                if decision.provenance.exclusion_matched:
                     return None
-                if completion_state == "unknown":
+                assigned = False
+            elif not decision.eligible:
+                return None
+            else:
+                assigned = True
+                if direct_completion and completion_state == "unknown":
+                    # An UNKNOWN completion keeps the row as an unassigned
+                    # warning candidate; the override only narrows, it never
+                    # admits a row the legacy evaluator rejected.
                     assigned = False
 
         # Per-type fallback duration: used when the duration mapping is
@@ -2016,8 +2220,16 @@ class CapacitiesAdapter:
                 # Rule-less direct rows carry only the completion availability
                 # and its review reason; no stored rule state is fabricated.
                 row["capacities_completion_state"] = completion_state
+            if dead_status_member:
+                # Mirror exactly how the stored-rule path represents an
+                # unresolved status: the same state token and the same stable
+                # review reason, so one consumer renders both paths alike.
+                row["capacities_status_state"] = "unknown"
+            if dead_status_member or direct_completion:
                 row["capacities_review_reasons"] = _review_reasons(
-                    None, None, completion_state
+                    None,
+                    "unknown" if dead_status_member else None,
+                    completion_state if direct_completion else None,
                 )
         if tag_error is not None:
             row["capacities_tags_error"] = tag_error

@@ -76,7 +76,16 @@ def _structures():
                 _definition(
                     "state",
                     "label",
-                    labels=[("active", "Active"), ("done", "Done")],
+                    labels=[
+                        ("active", "Active"),
+                        ("done", "Done"),
+                        # Live-but-unlisted statuses these fixtures use (see
+                        # ``_native_structures``): an id missing from the live
+                        # label set means a deleted option.
+                        ("option-id", "In Progress"),
+                        ("planning", "Planning"),
+                        ("in-progress", "Active"),
+                    ],
                 ),
             ],
         },
@@ -590,6 +599,13 @@ def _native_structures():
                         ("open", "Open"),
                         ("done", "Done"),
                         ("dropped", "Dropped"),
+                        # Live-but-unlisted statuses these fixtures use. A
+                        # payload id absent from the live label set is a
+                        # DELETED option, which reads UNKNOWN and becomes a
+                        # review candidate, so the synthetic contract must
+                        # declare every option a fixture payload refers to.
+                        ("option-id", "In Progress"),
+                        ("in-progress", "Active"),
                     ],
                 ),
                 _definition("due", "date"),
