@@ -162,24 +162,25 @@
   --tier-color: var(--t-border, #d9d7cd);
 }
 
-/* Source / object-type sub-group inside a tier: a demoted label with its own
+/* Source / object-type sub-group inside a tier: the same origin chip its rows
+   wear (readable 12-13px, not tiny uppercase) with its own
    count, never a second disclosure — the tier is the only thing that folds. */
 .unassigned-source__head {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0 0 2px;
-  padding-left: 8px;
-  border-left: 2px solid color-mix(in srgb, var(--t-border, #d9d7cd) 80%, transparent);
-  color: var(--t-muted, #6b7280);
-  font-size: 9px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding-left: 0;
+  color: var(--t-text, #1f2430);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .unassigned-source__count {
   color: var(--t-muted, #6b7280);
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
