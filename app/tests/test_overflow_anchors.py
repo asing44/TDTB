@@ -217,8 +217,12 @@ class TestOverflowSpill:
             proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
         )
         assert second.ok is True, second.hard_errors
-        assert not _warnings_by_rule(second, "overflow_reseated")
         assert {k: (v["start"], v["end"]) for k, v in _by_id(proposal).items()} == times_before
+        # the park owns these rows, so the same warnings come back unchanged
+        assert {w["id"] for w in _warnings_by_rule(second, "overflow_reseated")} \
+            == {w["id"] for w in _warnings_by_rule(first, "overflow_reseated")}
+        assert {w["id"] for w in _warnings_by_rule(second, "overflow_past_eod")} \
+            == {w["id"] for w in _warnings_by_rule(first, "overflow_past_eod")}
 
 
 class TestOverflowNoGapParksAtFive:
@@ -311,11 +315,13 @@ class TestOverflowNoGapParksAtFive:
             proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
         )
         assert second.ok is True, second.hard_errors
-        assert not _warnings_by_rule(second, "overflow_reseated")
-        assert not _warnings_by_rule(second, "overflow_past_eod")
         assert {
             k: (v["start"], v["end"]) for k, v in _by_id(proposal).items()
         } == times_before
+        # a converged sequence still reports the park's rows, unchanged
+        for rule in ("overflow_reseated", "overflow_past_eod"):
+            assert {w["id"] for w in _warnings_by_rule(second, rule)} \
+                == {w["id"] for w in _warnings_by_rule(first, rule)}
 
 
 class TestOverflowParkKeepsDurationAndOrder:

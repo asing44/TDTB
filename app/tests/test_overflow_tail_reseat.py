@@ -13,6 +13,7 @@ These tests pin the deterministic re-seat of unrepresentable tail rows.
 from __future__ import annotations
 
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -178,9 +179,16 @@ class TestReseatRule:
         proposal, assigned = _live_scenario()
         first = validate_sequence(proposal, assigned, [], {}, time_frame=FRAME)
         assert first.ok is True
+        times_before = {row["id"]: (row["start"], row["end"])
+                        for row in proposal["sequence"]}
         second = validate_sequence(proposal, assigned, [], {}, time_frame=FRAME)
         assert second.ok is True
-        assert not _warnings_by_rule(second, "overflow_reseated")
+        # A second pass moves nothing and reports the same park warnings: the
+        # park is a fixed point, not a per-pass rewrite (review B1).
+        assert {row["id"]: (row["start"], row["end"])
+                for row in proposal["sequence"]} == times_before
+        assert _warnings_by_rule(second, "overflow_reseated") \
+            == _warnings_by_rule(first, "overflow_reseated")
 
     def test_parked_row_skips_anchor_span(self):
         # asing44/TDTB#15 (2026-10-16, operator decision) reverses the earlier
@@ -326,6 +334,183 @@ class TestPlannerBoundary:
             w.get("rule") == "overflow_reseated"
             for w in outcome.result["warnings"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-pass fixed point (review B1, 2026-10-29)
+# ---------------------------------------------------------------------------
+# The real flow is /sequence -> client store -> /validate-sequence, and
+# /validate-sequence runs on its OWN output every time the timeline revalidates
+# (app/planning.py, frontend controller.revalidate). The park must therefore be
+# a fixed point after one pass: a second pass may move no row and must report
+# the same warning rules. The regression: candidates were re-derived from
+# "start >= effective_eod", so a row the FIRST pass gap-parked at/after EOD
+# became a candidate again on pass 2 — while its own slot (and every row parked
+# before it) had become an obstacle — and got re-spilled onto the 17:00 stack.
+#
+# Shape (the reviewer's replay): a fixed 12:00-20:00 wall leaves 20:00-23:59 as
+# the day's only room, effective EOD 22:00, and 24 half-hour tail rows: 7 fit
+# the free gaps, 13 stack at 17:00, and 4 keep their 23:59 marker because the
+# 5:00 PM stack is full.
+
+FIXED_POINT_FRAME = {"anchor": "12:00", "effective_eod": "22:00"}
+FIXED_POINT_TAIL = tuple(f"T{i:02d}" for i in range(24))
+FIT_IDS = FIXED_POINT_TAIL[:7]
+SPILL_IDS = FIXED_POINT_TAIL[7:20]
+MARKER_IDS = FIXED_POINT_TAIL[20:]
+PARK_RULES = ("overflow_reseated", "overflow_past_eod")
+
+
+def _wall_shape(tail_ids=FIXED_POINT_TAIL, tail_times=("23:59", "23:59"),
+                wall=("12:00", "20:00")):
+    def _minutes(hhmm):
+        hours, minutes = str(hhmm).split(":")
+        return int(hours) * 60 + int(minutes)
+
+    # The fixed wall is a plain assigned item (a long multi-block row), not an
+    # anchored block: the day's only room after 5:00 PM opens where it ends.
+    wall_blocks = (_minutes(wall[1]) - _minutes(wall[0])) / 30
+    assigned = [_item("Hard Wall", blocks=wall_blocks)]
+    assigned += [_item(i) for i in tail_ids]
+    sequence = [
+        _row("Hard Wall", *wall),
+        *[_row(i, *tail_times) for i in tail_ids],
+    ]
+    return {"sequence": sequence}, assigned
+
+
+def _spans(proposal):
+    return {row["id"]: (row["start"], row["end"])
+            for row in proposal["sequence"] if isinstance(row, dict)}
+
+
+def _park_rules(result):
+    """{row id: park rule} for the rows the park reports this pass."""
+    return {w["id"]: w.get("rule") for w in result.warnings
+            if isinstance(w, dict) and w.get("rule") in PARK_RULES}
+
+
+def _rule_multiset(result):
+    return Counter(w.get("rule") for w in result.warnings
+                   if isinstance(w, dict))
+
+
+def _replay(proposal, assigned, frame=None, passes=4):
+    """Feed each pass's output back in, exactly as /validate-sequence does."""
+    frame = frame or FIXED_POINT_FRAME
+    times, rules, oks = [], [], []
+    for _ in range(passes):
+        result = validate_sequence(proposal, assigned, [], {}, time_frame=frame)
+        oks.append(result.ok)
+        times.append(_spans(proposal))
+        rules.append(_rule_multiset(result))
+    return times, rules, oks
+
+
+class TestOverflowParkFixedPoint:
+    def test_revalidation_of_its_own_output_moves_no_row(self):
+        proposal, assigned = _wall_shape()
+        times, rules, oks = _replay(proposal, assigned)
+        assert oks == [True, True, True, True]
+        assert times[0] == times[1] == times[2] == times[3]
+        assert rules[0] == rules[1] == rules[2] == rules[3]
+
+    def test_first_pass_keeps_the_documented_outcome(self):
+        proposal, assigned = _wall_shape()
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert result.ok is True, result.hard_errors
+        rows = _spans(proposal)
+        # rows that fit a free gap park there at full duration
+        assert [rows[i] for i in FIT_IDS] == [
+            ("20:00", "20:30"), ("20:30", "21:00"), ("21:00", "21:30"),
+            ("21:30", "22:00"), ("22:00", "22:30"), ("22:30", "23:00"),
+            ("23:00", "23:30"),
+        ]
+        # rows that fit nowhere stack at 17:00 in original order, full duration
+        assert [rows[i] for i in SPILL_IDS] == [
+            (f"{(17 * 60 + index * 30) // 60:02d}:{(17 * 60 + index * 30) % 60:02d}",
+             f"{(17 * 60 + (index + 1) * 30) // 60:02d}:{(17 * 60 + (index + 1) * 30) % 60:02d}")
+            for index in range(len(SPILL_IDS))
+        ]
+        # the 5:00 PM stack is full for the last four: marker kept, still warned
+        assert {rows[i] for i in MARKER_IDS} == {("23:59", "23:59")}
+        parked = _park_rules(result)
+        assert {i for i, rule in parked.items() if rule == "overflow_reseated"} \
+            == set(FIT_IDS)
+        assert {i for i, rule in parked.items() if rule == "overflow_past_eod"} \
+            == set(SPILL_IDS) | set(MARKER_IDS)
+
+    def test_gap_parked_row_past_eod_is_never_respilled(self):
+        proposal, assigned = _wall_shape()
+        first = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert first.ok is True, first.hard_errors
+        assert _spans(proposal)[FIT_IDS[-1]] == ("23:00", "23:30")
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert second.ok is True, second.hard_errors
+        # the row sits at/after EOD, but it already holds a park slot
+        assert _spans(proposal)[FIT_IDS[-1]] == ("23:00", "23:30")
+        assert not [
+            w for w in second.warnings
+            if isinstance(w, dict) and w.get("rule") == "overflow_past_eod"
+            and w.get("id") == FIT_IDS[-1]
+        ]
+
+    def test_spilled_row_before_eod_is_not_moved_on_the_next_pass(self):
+        proposal, assigned = _wall_shape()
+        validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        first = _spans(proposal)
+        assert first[SPILL_IDS[0]] == ("17:00", "17:30")
+        validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert _spans(proposal) == first
+
+    def test_pathological_marker_rows_stay_put_on_later_passes(self):
+        proposal, assigned = _wall_shape()
+        first = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        rules_after_first = _park_rules(first)
+        for _ in range(3):
+            result = validate_sequence(
+                proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+            assert result.ok is True, result.hard_errors
+            rows = _spans(proposal)
+            for item_id in MARKER_IDS:
+                assert rows[item_id] == ("23:59", "23:59")
+            assert _park_rules(result) == rules_after_first
+
+    def test_now_after_five_pm_still_spills_at_five_pm_and_holds(self):
+        late_frame = {"anchor": "18:30", "effective_eod": "22:00"}
+        proposal, assigned = _wall_shape()
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=late_frame)
+        assert result.ok is True, result.hard_errors
+        rows = _spans(proposal)
+        assert rows[SPILL_IDS[0]] == ("17:00", "17:30")
+        assert rows[SPILL_IDS[1]] == ("17:30", "18:00")
+        times, rules, oks = _replay(proposal, assigned, frame=late_frame,
+                                    passes=3)
+        assert oks == [True, True, True]
+        assert times[0] == times[1] == times[2]
+        assert rules[0] == rules[1] == rules[2]
+
+    @pytest.mark.parametrize("tail_times", [
+        ("23:59", "23:59"),   # the model's midnight overflow marker
+        ("23:46", "23:59"),   # an already-truncated tail, start past EOD
+    ])
+    def test_fresh_proposal_overflow_row_still_spills_on_the_first_pass(
+            self, tail_times):
+        proposal, assigned = _wall_shape(
+            tail_ids=("Late",), tail_times=tail_times,
+            wall=("12:00", "23:45"))
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert result.ok is True, result.hard_errors
+        assert _spans(proposal)["Late"] == ("17:00", "17:30")
+        assert _park_rules(result) == {"Late": "overflow_past_eod"}
 
 
 # ---------------------------------------------------------------------------
