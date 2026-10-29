@@ -10931,8 +10931,15 @@ button.strip-cal {
    changes a row's controls — the banner is advisory and never gates. */
 .capacities-look {
   display: grid;
-  gap: 6px;
-  margin: 0 0 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+}
+.capacities-look__head,
+.capacities-look__list {
+  grid-column: 1;
 }
 .capacities-look__head {
   margin: 0;
@@ -10941,22 +10948,24 @@ button.strip-cal {
   font-size: 13px;
 }
 .capacities-look__list {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .capacities-look__list > li {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
+  max-width: 100%;
 }
 .capacities-look__list .btn {
   flex: none;
-  padding: 4px 10px;
+  min-height: 0;
+  padding: 2px 8px;
   font-size: 12px;
 }
 .capacities-look__name {
@@ -10970,10 +10979,25 @@ button.strip-cal {
   color: var(--t-muted);
 }
 .capacities-look__actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: flex;
   gap: 8px;
 }
 .capacities-look__note,
+.capacities-look__error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+@media (max-width: 700px) {
+  .capacities-look {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .capacities-look__actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
 .capacities-look__error {
   margin: 0;
 }

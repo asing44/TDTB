@@ -276,6 +276,7 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                   {busy === "cancelling" ? "Stopping…" : "Stop refresh"}
                 </button>
               )}
+              {!running && statusLine && <p class="capacities-settings__state">{statusLine}</p>}
             </div>
 
             {actionError && (
@@ -290,8 +291,6 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
               </p>
             )}
             {summaryText && <p class="capacities-settings__hint">{summaryText}</p>}
-
-            {!running && statusLine && <p class="capacities-settings__state">{statusLine}</p>}
 
             {schemaNotice && (
               <>
