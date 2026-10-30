@@ -1,10 +1,10 @@
 /* Set up screen, round 3: quiet single-card timeline. Scoped to
-   .day-setup-screen and loaded after app.css. Amber values are the design
-   language's --amber-soft / --amber pairs (proposed, owner to confirm). */
+   .day-setup-screen and loaded after app.css. The Mint lane runs yellow by
+   owner decision (30 Oct), not the design language's amber warning pair. */
 .day-setup-screen {
-  --r3-mint-fill: light-dark(#f3e6c7, #493a25);
-  --r3-mint-line: light-dark(#a87428, #e1b866);
-  --r3-mint-ink: light-dark(#6b4710, #f3e6c7);
+  --r3-mint-fill: light-dark(#fde68a, #4a3c0e);
+  --r3-mint-line: light-dark(#e0b400, #d8b52b);
+  --r3-mint-ink: light-dark(#6f5a00, #f4dd7a);
   --r3-anchor-fill: light-dark(#dedbd3, #3a3934);
   --r3-anchor-ink: light-dark(#3a3934, #e8e6e0);
 }
