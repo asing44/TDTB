@@ -319,8 +319,11 @@
 .cockpit:has(.day-setup-screen) .prompt-card .prompt-card__foot {
   margin-top: auto;
 }
-.cockpit:has(.day-setup-screen) .prompt-card__include {
+.cockpit:has(.day-setup-screen) .prompt-card .prompt-card__include {
   display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
   align-items: center;
   gap: 6px;
   color: var(--t-muted);
