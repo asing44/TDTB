@@ -424,6 +424,33 @@ describe("skipped Capacities objects (advisory)", () => {
   });
 });
 
+describe("Capacities selection notices (advisory)", () => {
+  const id = "capacities:d584988c:b0ef1817:2133034f";
+
+  it("does not let a not-promoted selection hold sequencing", () => {
+    for (const reason of [
+      "no cached Capacities row matches it",
+      "its Capacities type is no longer mapped",
+      "excluded by the tag exclusions or the drop list",
+    ]) {
+      expect(sourceHealthOf([`Capacities selection ${id} was not promoted: ${reason}`])).toBe("ok");
+    }
+    expect(
+      sourceHealthOf([
+        `Capacities selection ${id} was promoted, but its selection predates the current rules revision`,
+      ]),
+    ).toBe("ok");
+  });
+
+  it("keeps unreadable selection records blocking", () => {
+    expect(
+      sourceHealthOf([
+        "Capacities selections were not applied: a Capacities record is unreadable or malformed",
+      ]),
+    ).toBe("degraded");
+  });
+});
+
 describe("generation-freshness warnings (KTD6 reclassification)", () => {
   const missingGeneration =
     "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";

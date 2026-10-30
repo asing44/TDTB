@@ -1659,6 +1659,15 @@ function isCalendarWarning(warning: string): boolean {
 const advisoryCapacitiesReviewNotice =
   /^Capacities review — \d+ unassigned candidate\(s\) not fully evaluated:/;
 
+/** A stored owner selection the intake did not promote (excluded, its type is
+    unmapped, or no cached row matches it) or promoted under older rules. The
+    server words it ``Capacities selection <identity> was not promoted: ...`` or ``... was promoted, but ...``.
+    The object simply is not in today's plan; nothing failed to read, so it
+    must not hold sequencing. The unreadable/malformed-record warnings use a
+    different sentence and stay blocking. */
+const advisorySelectionNotice =
+  /^\s*Capacities selection \S+ was (?:not promoted: |promoted, but ).+$/;
+
 /** Every warning that does NOT block commit or sequence. The list is explicit
     and closed: an unrecognised warning stays blocking, so a future server
     diagnostic fails closed rather than passing silently (KTD6). */
@@ -1668,6 +1677,7 @@ function isAdvisoryWarning(warning: string): boolean {
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
     advisoryCapacitiesReviewNotice.test(warning) ||
+    advisorySelectionNotice.test(warning) ||
     advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning)) ||
     isCalendarWarning(warning)
   );
