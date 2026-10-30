@@ -1,5 +1,6 @@
 import { useRef, useState } from 'preact/hooks';
-import { habitsView, parseHabitMinutes, withHabitEntry } from '../../model/habits';
+import { habitsView, parseHabitMinutes, withHabitEntry, type HabitRow } from '../../model/habits';
+import { HABIT_GROUPS, habitGroupOf, type HabitGroup } from '../../model/habitGroups';
 import type { HabitOverrides, HabitsInfo } from '../../model/types';
 import { HabitsDrawer, type HabitsSaveStatus } from './HabitsDrawer';
 
@@ -9,11 +10,18 @@ function todayLabel(): string {
   return new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+/** Rows bucketed for the rail, in the owner's group order. */
+function grouped(rows: HabitRow[]): { group: HabitGroup; rows: HabitRow[] }[] {
+  return HABIT_GROUPS.map((group) => ({
+    group,
+    rows: rows.filter((row) => habitGroupOf(row.label) === group),
+  })).filter((g) => g.rows.length > 0);
+}
+
 /** Today-only planning controls. No upstream completion or assignment writes.
-    Habits are an active list: the card counts the habits and the minutes
-    counted today, and opens the drawer. With per-habit items the card is a
-    one-line summary; with only the aggregate it keeps the single total row
-    inline. */
+    Habits are an active list: the card shows the counted summary plus one chip
+    per time-of-day bucket, and "Pick habits" unfolds the per-habit pills the
+    design draws ("tap one to include it today"). */
 export function HabitsCard({ info, overrides, onSave, dateLabel }: {
   info?: HabitsInfo;
   overrides?: HabitOverrides;
@@ -24,6 +32,7 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
   const [status, setStatus] = useState<HabitsSaveStatus>('idle');
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const failed = useRef<HabitOverrides | null>(null);
   const busy = status === 'saving';
   if (view.mode === 'hidden') return null;
@@ -33,17 +42,78 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
     catch { failed.current = value; setError(SAVE_FAILED); setStatus('failed'); }
   }
   if (view.mode === 'items') {
-    const off = view.rows.filter(r => !r.on).length;
+    const on = view.rows.filter((r) => r.on).length;
+    const groups = grouped(view.rows);
+    /** One save per changed row, chained so the last write wins on the server. */
+    async function setRows(rows: HabitRow[], nextOn: boolean) {
+      let value = overrides;
+      for (const row of rows) {
+        value = withHabitEntry(value, row.key, { on: nextOn }, row.defaultMinutes);
+      }
+      if (value) await save(value);
+    }
     return <section class="setup-section habits-card" aria-labelledby="setup-sec-habits">
-      <div class="setup-section__head">
+      <div class="setup-section__head habits-card__head">
         <h3 id="setup-sec-habits">Habits</h3>
-        <span class="habits-card__summary">{`${view.rows.length - off} of ${view.rows.length} on · ${view.countedMinutes}m`}</span>
-        <button type="button" class="btn habits-card__pick" aria-haspopup="dialog" onClick={() => setOpen(true)}>Pick habits</button>
+        <span class="habits-card__summary">{`${on} of ${view.rows.length} on · ${view.countedMinutes}m`}</span>
+        {groups.map(({ group, rows }) => {
+          const n = rows.filter((r) => r.on).length;
+          const all = n === rows.length;
+          return <button type="button" key={group}
+            class={`habits-chip${n === 0 ? ' habits-chip--off' : all ? ' habits-chip--on' : ' habits-chip--mixed'}`}
+            aria-pressed={all}
+            aria-label={`${all ? 'Turn off' : 'Turn on'} ${group} habits`}
+            disabled={busy}
+            onClick={() => void setRows(rows, !all)}>
+            {group} {n}/{rows.length}
+          </button>;
+        })}
+        <button type="button" class="btn habits-card__pick" aria-expanded={open}
+          onClick={() => setOpen(!open)}>
+          {open ? 'Hide list ▴' : 'Pick habits ▾'}
+        </button>
       </div>
-      {open && <HabitsDrawer view={view} overrides={overrides}
+      {open && (
+        <div class="setup-section__body habits-list">
+          <p class="habits-list__hint">
+            Todoist › Habits · tap one to include it today ·{' '}
+            <button type="button" class="habits-list__link" disabled={busy}
+              onClick={() => void setRows(view.rows, true)}>all on</button>
+            {' / '}
+            <button type="button" class="habits-list__link" disabled={busy}
+              onClick={() => void setRows(view.rows, false)}>all off</button>
+            {' · '}
+            <button type="button" class="habits-list__link"
+              aria-haspopup="dialog"
+              onClick={() => setDrawerOpen(true)}>Edit minutes</button>
+          </p>
+          {groups.map(({ group, rows }) => (
+            <div class="habits-list__group" key={group}>
+              <span class="habits-list__label">{group.toUpperCase()}</span>
+              <div class="habits-list__pills">
+                {rows.map((row) => (
+                  <button type="button" key={row.key}
+                    class={`habit-pill${row.on ? '' : ' habit-pill--off'}`}
+                    aria-pressed={row.on}
+                    aria-label={`Count ${row.label} today`}
+                    disabled={busy}
+                    onClick={() => void save(
+                      withHabitEntry(overrides, row.key, { on: !row.on }, row.defaultMinutes),
+                    )}>
+                    {row.label} {row.minutes}m
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {error && !drawerOpen && <span class="field-error" role="alert">{error}</span>}
+        </div>
+      )}
+      {error && !open && <span class="field-error" role="alert">{error}</span>}
+      {drawerOpen && <HabitsDrawer view={view} overrides={overrides}
         dateLabel={dateLabel ?? todayLabel()} status={status} error={error}
-        onSave={v => void save(v)} onRetry={() => failed.current && void save(failed.current)}
-        onClose={() => setOpen(false)} />}
+        onSave={(v) => void save(v)} onRetry={() => failed.current && void save(failed.current)}
+        onClose={() => setDrawerOpen(false)} />}
     </section>;
   }
   return <section class="setup-section habits-card" aria-labelledby="setup-sec-habits">
