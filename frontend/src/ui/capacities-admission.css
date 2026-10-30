@@ -74,3 +74,16 @@
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* Type names ("Purchase", "Continual") must not break mid-word in the narrow
+   drawer: give the identity column a fixed floor and let the control flex. */
+.capacities-admission .capacities-object-row__identity {
+  flex: 0 0 104px;
+  min-width: 104px;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.capacities-admission__control {
+  max-width: none;
+}
