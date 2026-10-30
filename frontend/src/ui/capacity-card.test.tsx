@@ -15,7 +15,13 @@ afterEach(cleanup);
 import { CapacityCard } from "./CapacityCard";
 import { makeHarness } from "./test-harness";
 import { localSelected } from "../store/allocatorView";
-import { formatBlockAmount } from "../model/time";
+/* R3: the card reads blocks as 30-minute durations ("1h 30m"), like the mockup. */
+function formatBlockAmount(blocks: number): string {
+  const mins = Math.round(Math.abs(blocks) * 30);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return mins === 0 ? "0m" : h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
 
 /** Force an over-capacity day by shrinking the day total under the fixed
     time the fixture already carries. */
@@ -67,6 +73,37 @@ describe("U9 capacity headline card", () => {
     expect(container.querySelector(".cap-card__bar")).toBeNull();
     expect(queryByText(/Over by/i)).toBeNull();
     expect(queryByText(/\b0 blk\b/)).toBeNull();
+  });
+
+  it("R3: the head reads 'of a <total> day' and the marker caption names the frame", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<CapacityCard />);
+    expect(container.querySelector(".cap-card__of")!.textContent).toMatch(/^of a .+ day$/);
+    expect(container.querySelector(".cap-card__capacity")!.textContent).toContain(
+      "Marker = end of day",
+    );
+  });
+
+  it("R3: an over day shows the 'To fit' card without an apply button; a fitting day does not", () => {
+    const over = overHarness().ui(<CapacityCard />);
+    expect(over.getByText("To fit, trim from the bottom")).toBeTruthy();
+    expect(over.container.querySelector(".cap-card__trim button")).toBeNull();
+    cleanup();
+    const ok = makeHarness("ready").ui(<CapacityCard />);
+    expect(ok.container.querySelector(".cap-card__trim")).toBeNull();
+  });
+
+  it("R3: the issues card names blocking issues and toggles warnings", () => {
+    const h = makeHarness("ready");
+    const { container, getByText } = h.ui(<CapacityCard />);
+    const issues = container.querySelector(".cap-card__issues")!;
+    expect(issues.textContent).toMatch(/blocking/i);
+    const toggle = container.querySelector(".cap-card__warnings-toggle") as HTMLElement | null;
+    if (toggle) {
+      expect(toggle.textContent).toBe("show");
+      fireEvent.click(toggle);
+      expect(getByText("hide")).toBeTruthy();
+    }
   });
 
   it("legend names every segment and Details exposes every old-ledger number", () => {

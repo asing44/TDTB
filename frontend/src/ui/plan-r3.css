@@ -1,0 +1,47 @@
+/* Plan screen, round 3 — rail issue/trim cards and the Today's timeline
+   card. Tokens only; the dark theme follows the token layer. */
+.cap-card__issues,
+.cap-card__trim {
+  margin-top: var(--space-m, 12px);
+  padding: 12px 14px;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  background: var(--t-surface);
+  font-size: 12px;
+}
+.cap-card__issues-head,
+.cap-card__trim-head {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--t-text);
+}
+.cap-card__issues-head--bad {
+  color: var(--c-overflow);
+}
+.cap-card__issues-list {
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--t-muted);
+}
+.cap-card__warnings {
+  margin: 4px 0 0;
+  color: var(--t-muted);
+}
+.cap-card__warnings-toggle {
+  all: unset;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.cap-card__warnings-toggle:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 3px;
+}
+.cap-card__trim-body {
+  margin: 0;
+  color: var(--t-muted);
+  line-height: 1.45;
+}
+.cap-card__headline--over {
+  font-size: 26px;
+}

@@ -20,10 +20,23 @@
    as zero or as an over-capacity day. */
 
 import { useAppState } from "./context";
+import { useState } from "preact/hooks";
 import { includedItems } from "../store/store";
-import { localSelected } from "../store/allocatorView";
-import { formatBlockAmount } from "../model/time";
+import { localSelected, trimForState } from "../store/allocatorView";
+import { display12h } from "../model/time";
 import { Rail } from "./Rail";
+import "./plan-r3.css";
+
+/** Capacity blocks are 30 min; the rail reads them as "1h 30m" like the
+    mockup, never as a bare block count. */
+function hm(blocks: number): string {
+  const mins = Math.round(Math.abs(blocks) * 30);
+  if (mins === 0) return "0m";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+const formatBlockAmount = hm;
 
 interface Segment {
   key: string;
@@ -35,6 +48,7 @@ interface Segment {
 export function CapacityCard() {
   const s = useAppState();
   const cap = s.capacity;
+  const [showWarnings, setShowWarnings] = useState(false);
 
   if (!cap) {
     return (
@@ -88,6 +102,14 @@ export function CapacityCard() {
     { key: "selected", label: "Tasks", blocks: tasks, token: "--c-selected" },
   ];
 
+  const blocking = s.validation?.hardErrors ?? [];
+  const warnings = s.validation?.warnings ?? [];
+  const trim = over > 0 ? trimForState(s) : null;
+  const titleOf = (id: string) => s.inputs?.assigned.find((i) => i.id === id)?.name ?? id;
+  const frame = s.inputs
+    ? `${display12h(s.inputs.time.anchor)} – ${display12h(s.inputs.time.effectiveEod)}`
+    : null;
+
   const barLabel = [
     ...segments.map((seg) => `${seg.label} ${formatBlockAmount(seg.blocks)}`),
     ...(overflow > 0 ? [`Over by ${formatBlockAmount(overflow)}`] : []),
@@ -104,7 +126,7 @@ export function CapacityCard() {
           {headline}
         </p>
         {/* Planning 2a: the head reads "6 blk left" + "of 31" (mockup). */}
-        <span class="cap-card__of">of {total}</span>
+        <span class="cap-card__of">of a {hm(total)} day</span>
         <p class="cap-card__cause">
           {cause} Your {taskCount} {taskCount === 1 ? "task" : "tasks"} add{" "}
           {formatBlockAmount(tasks)}.
@@ -146,9 +168,57 @@ export function CapacityCard() {
         </ul>
         <p class="cap-card__capacity">
           <span class="cap-card__capacity-mark" aria-hidden="true" />
-          Day capacity {formatBlockAmount(total)}
+          Marker = end of day{frame ? ` · ${frame}` : ""}
         </p>
       </div>
+      <section
+        class="cap-card__issues"
+        aria-label="Blocking issues"
+        data-testid="cap-issues"
+      >
+        <p class={`cap-card__issues-head ${blocking.length > 0 ? "cap-card__issues-head--bad" : ""}`}>
+          {blocking.length > 0 ? `${blocking.length} blocking` : "Nothing blocking"}
+        </p>
+        {blocking.length > 0 && (
+          <ul class="cap-card__issues-list">
+            {blocking.map((b, i) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+        )}
+        {warnings.length > 0 && (
+          <p class="cap-card__warnings">
+            {warnings.length} {warnings.length === 1 ? "warning" : "warnings"} ·{" "}
+            <button
+              type="button"
+              class="cap-card__warnings-toggle"
+              aria-expanded={showWarnings}
+              onClick={() => setShowWarnings((v) => !v)}
+            >
+              {showWarnings ? "hide" : "show"}
+            </button>
+          </p>
+        )}
+        {showWarnings && (
+          <ul class="cap-card__issues-list">
+            {warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {over > 0 && (
+        <section class="cap-card__trim" aria-label="To fit">
+          <p class="cap-card__trim-head">To fit, trim from the bottom</p>
+          <p class="cap-card__trim-body">
+            {trim && trim.drop.length > 0
+              ? `Moving ${trim.drop.map(titleOf).join(", ")} to tomorrow frees ${hm(trim.freed)}${
+                  trim.partial ? ", still over" : " and brings the day inside its room"
+                }. Or reduce durations or exclude rows.`
+              : "Reduce durations or exclude rows to bring the day inside its room."}
+          </p>
+        </section>
+      )}
     </section>
   );
 }
