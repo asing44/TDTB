@@ -849,6 +849,12 @@ export function DaySetupPanel({
     return (
       <div class="settings-panel settings-panel--day day-setup-screen">
         <div class="day-setup-screen__stack">
+            <header class="setup-page-head">
+              <h1 id="setup-sec-frame" class="setup-page-head__title">Shape your day</h1>
+              <p class="setup-page-head__intro">
+                What already claims time today. Click an anchor to edit it; drag to move, drag its right edge to resize, or pick Mint sessions.
+              </p>
+            </header>
             {micro.pendingConfirm && (
               <LooseEndBanner
                 pending={micro.pendingConfirm}
@@ -864,10 +870,6 @@ export function DaySetupPanel({
             >
               <div class="your-day__head">
                 <div class="your-day__title">
-                  <h3 id="setup-sec-frame">Your day</h3>
-                  <p class="setup-section__hint">
-                    Click an anchor to edit it. Drag to move it, drag its right edge to resize it, or pick Mint sessions.
-                  </p>
                   <button
                     type="button"
                     class="header-pill all-blocks__trigger"

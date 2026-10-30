@@ -135,3 +135,113 @@
 .strip-cal.strip-cal--edge-resizable {
   padding-right: 16px;
 }
+
+/* Lanes polish, Set up screen. Scoped to the promoted screen; colours come from
+   the --t-* / --lane-* tokens, so light and dark follow the theme. */
+
+/* Page title: 28px/700 H1 and one muted line above the Your day card. */
+.cockpit:has(.day-setup-screen) .setup-page-head {
+  margin-bottom: -4px;
+}
+.cockpit:has(.day-setup-screen) .setup-page-head__title {
+  margin: 0;
+  color: var(--t-text);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.cockpit:has(.day-setup-screen) .setup-page-head__intro {
+  margin: 6px 0 0;
+  color: var(--t-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Mint slots: free slots are quiet outlines on the lane, never bright boxes;
+   blocked slots keep a faint hatch; chosen sessions are the Mint block. */
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint .strip-slot:not(.strip-slot--selected):not(.strip-slot--blocked) {
+  border: 1px solid color-mix(in srgb, var(--lane-mint-border) 38%, transparent);
+  background: transparent;
+  color: var(--lane-mint-ink);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint .strip-slot:not(.strip-slot--selected):not(.strip-slot--blocked):hover {
+  border-color: var(--lane-mint-border);
+  background: color-mix(in srgb, var(--lane-mint-block) 45%, transparent);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint .strip-slot--blocked {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--lane-mint-ink) 10%, transparent) 4px 8px
+  );
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint .strip-slot--selected {
+  border: 1px solid var(--lane-mint-border);
+  background: var(--lane-mint-block);
+}
+
+/* Resize grips appear on hover or focus of their block, and while dragging.
+   Touch screens have no hover, so they keep a quiet grip at rest. */
+.cockpit:has(.day-setup-screen) .strip-cal__resize::before {
+  opacity: 0;
+}
+.cockpit:has(.day-setup-screen) .strip-cal__resize--edge {
+  background: transparent;
+}
+.cockpit:has(.day-setup-screen) .strip-cal__resize:hover::before,
+.cockpit:has(.day-setup-screen) .strip-cal__resize:focus-visible::before,
+.cockpit:has(.day-setup-screen) .strip-cal__resize--active::before,
+.cockpit:has(.day-setup-screen) .strip-cal:hover .strip-cal__resize::before,
+.cockpit:has(.day-setup-screen) .strip-cal--resizing .strip-cal__resize::before,
+.cockpit:has(.day-setup-screen) button:hover + .strip-cal__resize::before,
+.cockpit:has(.day-setup-screen) button:focus-visible + .strip-cal__resize::before {
+  border-color: var(--t-text);
+  opacity: 0.75;
+}
+.cockpit:has(.day-setup-screen) .strip-cal__resize--edge:hover,
+.cockpit:has(.day-setup-screen) .strip-cal__resize--edge:focus-visible,
+.cockpit:has(.day-setup-screen) .strip-cal__resize--active,
+.cockpit:has(.day-setup-screen) button:hover + .strip-cal__resize--edge,
+.cockpit:has(.day-setup-screen) button:focus-visible + .strip-cal__resize--edge {
+  background: color-mix(in srgb, var(--t-text) 10%, transparent);
+}
+@media (hover: none) {
+  .cockpit:has(.day-setup-screen) .strip-cal__resize::before {
+    opacity: 0.45;
+  }
+}
+
+/* Mint summary banner: calm tint, ink text, a clean pill for Reset to config. */
+.cockpit:has(.day-setup-screen) .frame-summary {
+  border-radius: 12px;
+  background: var(--lane-mint-tint);
+  color: var(--t-text);
+}
+.cockpit:has(.day-setup-screen) .frame-summary__mint {
+  color: var(--lane-mint-ink);
+}
+.cockpit:has(.day-setup-screen) .frame-summary__free,
+.cockpit:has(.day-setup-screen) .frame-summary__blocks {
+  color: var(--t-text);
+}
+.cockpit:has(.day-setup-screen) .frame-summary .frame-summary__reset {
+  align-self: center;
+  padding: 6px 14px;
+  border: 1px solid var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.cockpit:has(.day-setup-screen) .frame-summary .frame-summary__reset:hover {
+  background: var(--t-seg);
+}
+.cockpit:has(.day-setup-screen) .setup-section--your-day .field-warning {
+  display: block;
+  margin-top: 12px;
+  color: var(--lane-mint-ink);
+  font-size: 13px;
+}

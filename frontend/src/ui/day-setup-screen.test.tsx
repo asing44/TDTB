@@ -65,13 +65,13 @@ const slotOf = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>, id: string)
   r.container.querySelector(`[data-slot-id="${id}"]`) as HTMLElement;
 
 describe("U12 Set up day composition", () => {
-  it("renders the Your day card and the Morning prompts card plus the strip", () => {
+  it("renders the Shape your day title, the Your day card and the Morning prompts card plus the strip", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
-    expect(r.getByRole("heading", { name: "Your day" })).toBeTruthy();
+    expect(r.getByRole("heading", { name: "Shape your day" })).toBeTruthy();
     expect(r.getByRole("heading", { name: "Morning prompts" })).toBeTruthy();
     expect(r.queryByRole("heading", { name: "Anchors" })).toBeNull();    expect(
-      r.getByText("Click an anchor to edit it. Drag to move it, drag its right edge to resize it, or pick Mint sessions."),
+      r.getByText("What already claims time today. Click an anchor to edit it; drag to move, drag its right edge to resize, or pick Mint sessions."),
     ).toBeTruthy();
     expect(r.getByTestId("day-strip")).toBeTruthy();
     expect(r.getByRole("button", { name: /Continue to tasks/ })).toBeTruthy();
