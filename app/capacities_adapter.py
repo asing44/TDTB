@@ -104,7 +104,9 @@ class StructureMapping:
     supplies ``assignment_property`` keeps the legacy explicit-marker seam.
 
     ``date_property`` maps the source due date and stays a day-projection
-    filter. ``deadline_property`` maps the source deadline the evaluator
+    filter; a multi-day range on it is a window described by its end. A source
+    assignment (boolean marker or Assigned On date) outranks that filter.
+    ``deadline_property`` maps the source deadline the evaluator
     horizon-checks. The mapped ``open_status_property`` supplies both the
     open/closed safety signal and the status token the native Auto rule reads.
     Optional fields are capabilities, not guesses: absent mappings never cause
@@ -1046,6 +1048,29 @@ def _property_date(prop: Any, prop_id: str) -> date | None:
         raise _MalformedObject(
             f"date property {prop_id!r} has invalid start", reason=_SKIP_REASON_DATE
         ) from None
+
+
+def _property_date_end(prop: Any, prop_id: str) -> date | None:
+    """Range end of a date property, or ``None``.
+
+    A Capacities date property may carry a multi-day range as
+    ``{"start": ..., "end": ...}``. The end is strictly advisory: the start
+    already carries the contracted date, so an absent, empty, non-date, or
+    unparseable end is ignored rather than failing the object. Callers compare
+    it against the start to decide whether a range is real.
+    """
+    if not isinstance(prop, dict) or _text(prop.get("type")) != "date":
+        return None
+    payload = prop.get("date")
+    if not isinstance(payload, dict):
+        return None
+    end = payload.get("end")
+    if end in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(_text(end)[:10])
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -2097,20 +2122,28 @@ class CapacitiesAdapter:
                 # and drop the row before the review surface ever saw it.
                 completion_state = "unknown"
 
-        # ``date_property`` remains a day-projection filter: a future date means
-        # the object is not part of today's candidate set. The evaluator owns
-        # the native deadline horizon from ``deadline_property``. An object the
-        # source explicitly places on today's board through its Assigned On
-        # declaration is today's work whatever its own date property says, so
-        # that declaration outranks the day filter; every other signal keeps the
-        # existing drop.
-        assigned_on_today = bool(mapping.assigned_on_property) and source_assigned is True
+        # ``date_property`` remains a day-projection filter, but a MULTI-DAY
+        # range (``end`` strictly after ``start``) is a window rather than a
+        # single date. A window that has not begun is still a future date and
+        # keeps the ordinary drop; a window still open today, or already
+        # wholly past, is described by its END so a long-running range is
+        # never read as overdue on its start. The evaluator owns the native
+        # deadline horizon from ``deadline_property``. An object the source
+        # explicitly marks assigned is today's work whatever its own date
+        # property says, so that declaration — from either the boolean
+        # ``assigned_property``/``assignment_property`` or the Assigned On
+        # date — outranks the day filter; every other signal keeps the drop.
         due: date | None = None
+        window_end: date | None = None
         if mapping.date_property:
             date_prop = properties.get(mapping.date_property)
             if date_prop is not None:
                 due = _property_date(date_prop, mapping.date_property)
-                if due is not None and due > logical_day and not assigned_on_today:
+                if due is not None:
+                    end = _property_date_end(date_prop, mapping.date_property)
+                    if end is not None and end > due:
+                        window_end = end
+                if due is not None and due > logical_day and source_assigned is not True:
                     return None
 
         deadline: date | None = None
@@ -2118,6 +2151,24 @@ class CapacitiesAdapter:
             deadline_prop = properties.get(mapping.deadline_property)
             if deadline_prop is not None:
                 deadline = _property_date(deadline_prop, mapping.deadline_property)
+
+        # The row's displayed ``deadline`` is the evaluator-visible due date for
+        # every single-day value, and the range END for a multi-day window, so
+        # the digest row never reports a window's start as its deadline.
+        display_deadline: date | None = due
+        if window_end is not None:
+            display_deadline = window_end
+            if window_end >= logical_day:
+                # Active window: the object is not due today, it is in
+                # progress. A mapped ``deadline_property`` still wins as the
+                # evaluator's deadline; with none mapped the window end is the
+                # natural deadline.
+                due = None
+                if not mapping.deadline_property:
+                    deadline = window_end
+            else:
+                # Wholly past window: genuinely overdue, measured by its end.
+                due = window_end
 
         title_prop = properties.get(mapping.title_property)
         if title_prop is None:
@@ -2259,7 +2310,7 @@ class CapacitiesAdapter:
             "source": "capacities",
             "types": [mapping.structure_id],
             "urgency": None,
-            "deadline": due.isoformat() if due else None,
+            "deadline": display_deadline.isoformat() if display_deadline else None,
             "priority_score": 0,
             "assigned": assigned,
             "duration": duration,

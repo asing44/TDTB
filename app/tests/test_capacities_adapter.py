@@ -257,12 +257,21 @@ def test_enumerates_allowlisted_structures_filters_typed_properties_and_projects
 
     result = _adapter(provider).items_for_day(TODAY)
 
-    assert [row["name"] for row in result.items] == ["Ship project", "Write brief"]
+    # ``task-future`` is dated tomorrow but its source boolean Assigned marker is
+    # true: the source assignment outranks the day-projection date filter, so it
+    # stays a candidate while ``task-unassigned`` (no assignment, no future
+    # date) and ``task-done`` (closed) are still dropped.
+    assert [row["name"] for row in result.items] == [
+        "Ship project",
+        "Tomorrow",
+        "Write brief",
+    ]
     assert result.items[0]["source"] == "capacities"
     assert result.items[0]["identity"] == "capacities:space-1:custom-project:project-today"
     assert result.items[0]["path"] == "capacities://space-1/project-today"
-    assert result.items[1]["duration_minutes"] == 45
-    assert result.items[1]["blocks"] == 1.5
+    assert result.items[1]["capacities_assignment"]["mode"] == "assigned"
+    assert result.items[2]["duration_minutes"] == 45
+    assert result.items[2]["blocks"] == 1.5
     assert provider.list_calls == [
         ("RootTask", None),
         ("RootTask", "page-2"),
@@ -4089,3 +4098,242 @@ def test_tag_titles_never_feed_the_source_fingerprint():
     assert first["capacities_tags"][0]["title"] == "home"
     assert second["capacities_tags"][0]["title"] == "renamed later"
     assert first["source_fingerprint"] == second["source_fingerprint"]
+
+
+# ---------------------------------------------------------------------------
+# Assigned outranks the day filter; multi-day ranges are windows
+# ---------------------------------------------------------------------------
+# ``date_property`` stays a day-projection filter, but two source facts outrank
+# a naive read of its ``start``: the source's own Assigned declaration (a
+# future-dated object the user ticked as assigned is this board's work whatever
+# its date says), and a multi-day range (a window still open, or already wholly
+# closed, is described by its END, never by its start).
+
+
+def _range_value(start: date | None, end, *, end_raw: str | None = None):
+    payload = {"dateResolution": "day"}
+    if start is not None:
+        payload["start"] = f"{start.isoformat()}T00:00:00.000Z"
+    if end_raw is not None:
+        payload["end"] = end_raw
+    elif end is not None:
+        payload["end"] = f"{end.isoformat()}T00:00:00.000Z"
+    return _prop("date", "date", payload)
+
+
+def _native_range_object(object_id, *, status, start, end=None, end_raw=None):
+    properties = {
+        "title": _prop("title", "title", {"value": object_id}),
+        "status": _prop("label", "label", [{"id": status}]),
+        "due": _range_value(start, end, end_raw=end_raw),
+    }
+    return _object(object_id, "RootTask", properties)
+
+
+def _range_result(objects, *, deadline_property=None, assigned_property=None):
+    mapping = _native_mapping(
+        deadline_property=deadline_property,
+        assigned_property=assigned_property,
+    )
+    return _adapter(_native_provider(objects), mappings=(mapping,)).items_for_day(TODAY)
+
+
+def test_active_range_is_not_overdue_and_carries_its_end_as_deadline():
+    # Live shape: 'Chistmats Gifts', Time Frame today-1 .. today+45. The window
+    # is in progress, so its start must never read as an overdue due date.
+    start = TODAY - timedelta(days=1)
+    end = TODAY + timedelta(days=45)
+
+    result = _range_result([_native_range_object("chistmats", status="active",
+                                                 start=start, end=end)])
+
+    assert [row["capacities_id"] for row in result.items] == ["chistmats"]
+    row = result.items[0]
+    assert row["deadline"] == end.isoformat()
+    assert "auto-due-today-or-overdue" not in row["capacities_assignment"]["reasons"]
+
+
+def test_active_range_is_not_admitted_by_the_due_rule_alone():
+    # Same window on an object nothing else admits: with due suppressed and the
+    # end far outside the horizon, no Auto condition matches, so it stays out.
+    start = TODAY - timedelta(days=1)
+    end = TODAY + timedelta(days=45)
+
+    result = _range_result([_native_range_object("chistmats", status="open",
+                                                 start=start, end=end)])
+
+    assert result.items == []
+
+
+def test_wholly_past_range_is_overdue_by_its_end():
+    start = TODAY - timedelta(days=20)
+    end = TODAY - timedelta(days=10)
+
+    result = _range_result([_native_range_object("shipped", status="open",
+                                                 start=start, end=end)])
+
+    assert [row["capacities_id"] for row in result.items] == ["shipped"]
+    row = result.items[0]
+    assert row["deadline"] == end.isoformat()
+    assert "auto-due-today-or-overdue" in row["capacities_assignment"]["reasons"]
+
+
+def test_single_day_and_end_less_values_keep_start_semantics():
+    yesterday = TODAY - timedelta(days=1)
+
+    result = _range_result([
+        _native_range_object("same-day", status="open", start=yesterday,
+                             end=yesterday),
+        _native_range_object("no-end", status="open", start=yesterday),
+    ])
+
+    assert [row["capacities_id"] for row in result.items] == ["no-end", "same-day"]
+    for row in result.items:
+        assert row["deadline"] == yesterday.isoformat()
+        assert "auto-due-today-or-overdue" in row["capacities_assignment"]["reasons"]
+
+
+def test_range_starting_tomorrow_is_dropped_when_not_source_assigned():
+    start = TODAY + timedelta(days=1)
+    end = TODAY + timedelta(days=40)
+
+    result = _range_result([_native_range_object("future-window", status="active",
+                                                 start=start, end=end)])
+
+    assert result.items == []
+
+
+def test_range_starting_tomorrow_is_kept_when_source_assigned():
+    start = TODAY + timedelta(days=1)
+    end = TODAY + timedelta(days=40)
+
+    result = _assigned_future_range(start, end)
+
+    assert [row["capacities_id"] for row in result.items] == ["future-window"]
+    assert result.items[0]["deadline"] == end.isoformat()
+    assert result.items[0]["capacities_assignment"]["mode"] == "assigned"
+
+
+def _assigned_future_range(start: date, end: date):
+    properties = {
+        "title": _prop("title", "title", {"value": "future-window"}),
+        "status": _prop("label", "label", [{"id": "active"}]),
+        "assigned": _prop("boolean", "boolean", True),
+        "due": _range_value(start, end),
+    }
+    mapping = _native_mapping(deadline_property=None, assigned_property="assigned")
+    return _adapter(
+        _native_provider([_object("future-window", "RootTask", properties)]),
+        mappings=(mapping,),
+    ).items_for_day(TODAY)
+
+
+def test_unparseable_range_end_is_ignored_and_the_start_still_governs():
+    yesterday = TODAY - timedelta(days=1)
+
+    result = _range_result([
+        _native_range_object("bad-end", status="open", start=yesterday,
+                             end_raw="not-a-date"),
+    ])
+
+    assert [row["capacities_id"] for row in result.items] == ["bad-end"]
+    row = result.items[0]
+    assert row["deadline"] == yesterday.isoformat()
+    assert "auto-due-today-or-overdue" in row["capacities_assignment"]["reasons"]
+
+
+def _checkbox_project(object_id, *, assigned, start, end=None, status="planning"):
+    return _override_object(
+        object_id,
+        {
+            "state": _prop("label", "label", [{"id": status}]),
+            SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", assigned),
+            "date": _range_value(start, end),
+        },
+    )
+
+
+def _checkbox_result(objects):
+    mapping = _override_mapping(
+        date_property="date",
+        open_status_values=frozenset({"active", "planning"}),
+    )
+    return _override_adapter(
+        _override_provider(objects), mapping,
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+
+def test_future_dated_object_with_the_assigned_checkbox_ticked_is_projected():
+    # Live shape: Event 'Halloween', date ahead, status Planning, Assigned
+    # ticked. Source assignment is the strongest signal, so the day filter must
+    # not drop it and the evaluator must admit it as assigned.
+    result = _checkbox_result([
+        _checkbox_project("halloween", assigned=True,
+                          start=TODAY + timedelta(days=32)),
+    ])
+
+    assert [row["capacities_id"] for row in result.items] == ["halloween"]
+    assert result.items[0]["capacities_assignment"] == {
+        "mode": "assigned",
+        "reasons": ["source-assigned"],
+        "source_assigned": True,
+        "excluded": False,
+    }
+
+
+def test_future_dated_object_without_the_assigned_checkbox_is_still_dropped():
+    result = _checkbox_result([
+        _checkbox_project("halloween", assigned=False,
+                          start=TODAY + timedelta(days=32)),
+    ])
+
+    assert result.items == []
+
+
+def test_assigned_on_date_declaration_still_outranks_the_day_filter():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "gardens-sake",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+                "date": _range_value(TODAY + timedelta(days=1), None),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider,
+        _assigned_on_mapping(date_property="date"),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["gardens-sake"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "assigned"
+
+
+def test_mapped_deadline_property_wins_over_the_range_end():
+    # A mapped ``deadline_property`` is the evaluator's own deadline and keeps
+    # winning inside an active window; only the row's DISPLAYED deadline is the
+    # window end, so the digest never reports the window start.
+    start = TODAY - timedelta(days=1)
+    end = TODAY + timedelta(days=45)
+    properties = {
+        "title": _prop("title", "title", {"value": "mapped"}),
+        "status": _prop("label", "label", [{"id": "open"}]),
+        "due": _range_value(start, end),
+        "deadline": _range_value(TODAY + timedelta(days=2), None),
+    }
+
+    result = _adapter(
+        _native_provider([_object("mapped", "RootTask", properties)]),
+        mappings=(_native_mapping(),),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["mapped"]
+    row = result.items[0]
+    assert row["deadline"] == end.isoformat()
+    reasons = row["capacities_assignment"]["reasons"]
+    assert "auto-deadline-within-horizon" in reasons
+    assert "auto-due-today-or-overdue" not in reasons
