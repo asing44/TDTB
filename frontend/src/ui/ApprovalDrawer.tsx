@@ -7,6 +7,9 @@ import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
 import { CalendarDrift } from "./CalendarDrift";
+import { CommitSummary, commitCounts } from "./CommitSummary";
+import { CommitTimeline } from "./CommitTimeline";
+import "./commit-r3.css";
 import { canAutoSequence, canLiveCommit, canShadow, shadowBlockers, type AppState } from "../store/store";
 import { advisoryNotes, blockingWarnings, calendarWarnings } from "../adapters/wire";
 import { display12h } from "../model/time";
@@ -45,28 +48,6 @@ function writeTarget(e: ShadowEntry): { label: string; title: string } {
   }
   const file = raw.split("/").pop() ?? raw;
   return { label: file.replace(/\.md$/, ""), title: raw };
-}
-
-function SurfaceTotals({ entries }: { entries: ShadowEntry[] }) {
-  const systems = ["todoist", "calendar"] as const;
-  return (
-    <div class="surface-totals">
-      {systems.map((sys) => {
-        const rows = entries.filter((e) => e.system === sys);
-        const active = rows.filter((e) => e.classification !== "no-op").length;
-        return (
-          <div key={sys} class="surface-card">
-            <div class="surface-card__system">{sys}</div>
-            <div class="surface-card__count">{active}</div>
-            <div class="qrow__meta">
-              {active === 1 ? "1 write" : `${active} writes`}
-              {rows.length - active > 0 ? ` · ${rows.length - active} no-op` : ""}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 /** Friendly names for the built-in prompt keys. A browser-defined
@@ -208,7 +189,7 @@ export function ApprovalDrawer() {
     <>
       <div class="drawer-backdrop" onClick={close} />
       <div
-        class="drawer"
+        class={`drawer${shadow && !committed ? " drawer--commit" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label="Commit approval"
@@ -219,15 +200,31 @@ export function ApprovalDrawer() {
         <button class="iconbtn drawer__close" onClick={close} aria-label="Close approval">
           ✕
         </button>
-        <h2>
-          {committed
-            ? "Results"
-            : s.shadowPhase === "loading"
-              ? "Building shadow preview…"
-              : s.liveArmed
-                ? "Approve writes"
-                : "Preview writes"}
-        </h2>
+        <div class="commit-head">
+          <div>
+            <h2>
+              {committed
+                ? "Results"
+                : s.shadowPhase === "loading"
+                  ? "Building shadow preview…"
+                  : shadow
+                    ? "Here's where it lands"
+                    : s.liveArmed
+                      ? "Approve writes"
+                      : "Preview writes"}
+            </h2>
+            {shadow && !committed && (
+              <p class="commit-head__sub">
+                Sequenced into today's open time. Nothing is written until you commit.
+              </p>
+            )}
+          </div>
+          {shadow && !committed && (
+            <button class="commit-head__adjust" onClick={close}>
+              ← Adjust plan
+            </button>
+          )}
+        </div>
 
         {/* FEEDBACK-08: the Results entry is reachable from review before a
             preview exists — say what to do instead of rendering an empty
@@ -304,8 +301,10 @@ export function ApprovalDrawer() {
               <span class="drawer-status__label">{previewStatus.label}</span>
               <span class="drawer-status__detail">{previewStatus.detail}</span>
             </div>
-            <h3>Writes by surface</h3>
-            <SurfaceTotals entries={shadow.entries} />
+            <CommitTimeline />
+            <CommitSummary
+              counts={commitCounts(shadow, s.daySetup.captures, s.daySetup.promptDisabled)}
+            />
             {shadow.notes.length > 0 && (
               <>
                 <h3>Not included in this preview</h3>
@@ -387,16 +386,13 @@ export function ApprovalDrawer() {
                 </ul>
               </>
             )}
-            <h3>
-              <button
-                class="capacity__disclose"
-                style={{ marginLeft: 0, padding: 0 }}
-                onClick={() => setExpandOverride(!expanded)}
-                aria-expanded={expanded}
-              >
-                Exact writes ({shadow.entries.length}) {expanded ? "▴" : "▾"}
-              </button>
-            </h3>
+            <button
+              class="commit-disclose"
+              onClick={() => setExpandOverride(!expanded)}
+              aria-expanded={expanded}
+            >
+              {expanded ? "Hide" : "Show"} every exact write ({shadow.entries.length})
+            </button>
             {expanded &&
               shadow.entries.map((e, i) => {
                 const target = writeTarget(e);
@@ -414,7 +410,14 @@ export function ApprovalDrawer() {
                 );
               })}
 
-            <div class="commit-zone">
+            <div class="commit-zone commit-zone--r3">
+              <span class="commit-zone__status" role="status">
+                {s.shadowPhase === "current"
+                  ? "Preview current · edits on Plan mark it stale"
+                  : s.shadowPhase === "stale"
+                    ? "Preview stale · rerun it before committing"
+                    : "Building preview…"}
+              </span>
               {!s.liveArmed ? (
                 <button
                   class="btn btn--primary"
@@ -428,8 +431,8 @@ export function ApprovalDrawer() {
                         : undefined
                   }
                 >
-                  Looks right — arm live commit
-                  <span class="btn__sub">nothing written yet</span>
+                  Commit to Todoist & Calendar
+                  <span class="commit-sr-only"> — looks right, arm live commit</span>
                 </button>
               ) : (
                 <>
@@ -461,17 +464,17 @@ export function ApprovalDrawer() {
                 Preview writes), then the verification heading precedes the
                 list it describes, then the single primary action: Done. */}
             <div
-              class={`drawer-status ${report.status === "ok" ? "drawer-status--ok" : "drawer-status--partial"}`}
+              class={`drawer-status ${report.status === "ok" ? "drawer-status--ok commit-banner" : "drawer-status--partial"}`}
               role="status"
             >
               <span class="drawer-status__label">
                 {report.status === "ok"
-                  ? "Committed and verified"
+                  ? "✓ Committed and verified"
                   : "Commit incomplete"}
               </span>
               <span class="drawer-status__detail">
                 {report.status === "ok"
-                  ? "Every surface wrote and read back cleanly."
+                  ? "zero failures — every surface wrote and read back cleanly."
                   : report.verifyFailures.length > 0
                     ? `${report.verifyFailures.length} verification failure${report.verifyFailures.length === 1 ? "" : "s"} to review — nothing here rewrites live state.`
                     : report.promptExportsOk === false

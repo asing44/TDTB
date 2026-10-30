@@ -33,7 +33,7 @@ function previewDrawer() {
 describe("FEEDBACK-18 — Preview writes and Results have distinct headings, status, and primary actions", () => {
   it("preview state: heading, current status strip, totals heading, and arm-live primary action", () => {
     const { r } = previewDrawer();
-    expect(r.getByRole("heading", { name: "Preview writes" })).toBeTruthy();
+    expect(r.getByRole("heading", { name: "Here's where it lands" })).toBeTruthy();
 
     // Distinct status: the first scan line names the phase and what was NOT
     // yet written, with the active exact-write count (fixture: 6 of 7 rows).
@@ -44,7 +44,7 @@ describe("FEEDBACK-18 — Preview writes and Results have distinct headings, sta
     expect(status.textContent).toContain("nothing written yet");
 
     // Totals have their own scan heading.
-    expect(r.getByRole("heading", { name: "Writes by surface" })).toBeTruthy();
+    expect(r.getByLabelText("What will be written")).toBeTruthy();
 
     // Primary next action stays the two-gate arm; no Results Done action yet.
     expect(r.getByText(/arm live commit/)).toBeTruthy();
@@ -165,7 +165,7 @@ describe("FEEDBACK-18 — preserved FEEDBACK-13/23 contracts", () => {
     // A small preview opens expanded by default (operator fix); the toggle
     // still folds it so the disclosure behaviour is preserved.
     expect(r.container.querySelectorAll(".write-row").length).toBeGreaterThan(0);
-    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    fireEvent.click(r.getByRole("button", { name: /every exact write/ }));
     expect(r.container.querySelectorAll(".write-row").length).toBe(0);
   });
 

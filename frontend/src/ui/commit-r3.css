@@ -1,0 +1,238 @@
+/* Commit step (R3): the approval drawer's content restyled to the owner's
+   mockup — heading + Adjust plan, one timeline card, three summary cards,
+   disclosure link, footer row. Container, guards, and write paths unchanged.
+   Colors derive from existing tokens so dark follows --t-* automatically. */
+
+.drawer.drawer--commit {
+  width: min(1180px, 100vw);
+  padding: 28px clamp(16px, 4vw, 48px) 28px;
+}
+.commit-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-right: 48px;
+}
+.drawer--commit .commit-head h2 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+}
+.commit-head__sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+.commit-head__adjust {
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.commit-timeline {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--t-border);
+  border-radius: 14px;
+  background: var(--t-surface);
+}
+.commit-timeline__axis {
+  position: relative;
+  height: 18px;
+  margin-left: 96px;
+  font-size: 11px;
+  font-family: var(--t-mono, ui-monospace, monospace);
+  color: var(--t-muted);
+}
+.commit-timeline__axis > span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.commit-lane {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 8px;
+}
+.commit-lane__label {
+  flex: 0 0 96px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t-text);
+}
+.commit-lane__track {
+  position: relative;
+  flex: 1;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--t-surface-2);
+}
+.commit-lane[data-lane="calendar"] .commit-lane__track {
+  background: color-mix(in srgb, var(--c-event) 16%, var(--t-surface));
+}
+.commit-lane[data-lane="mint"] .commit-lane__track {
+  background: color-mix(in srgb, var(--c-minting) 12%, var(--t-surface));
+}
+.commit-lane[data-lane="tasks"] .commit-lane__track {
+  background: color-mix(in srgb, var(--c-free) 10%, var(--t-surface));
+}
+.commit-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t-text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.commit-block--calendar {
+  background: color-mix(in srgb, var(--c-event) 45%, var(--t-surface));
+  border-color: var(--c-event);
+}
+.commit-block--anchors {
+  background: color-mix(in srgb, var(--c-anchored) 40%, var(--t-surface));
+  border-color: var(--c-anchored);
+}
+.commit-block--mint {
+  background: color-mix(in srgb, var(--c-minting) 40%, var(--t-surface));
+  border-color: var(--c-minting);
+}
+.commit-block--critical {
+  background: color-mix(in srgb, var(--c-overflow) 28%, var(--t-surface));
+  border-color: var(--c-overflow);
+}
+.commit-block--room {
+  background: color-mix(in srgb, var(--c-selected) 30%, var(--t-surface));
+  border-color: var(--c-selected);
+}
+.commit-legend {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 0 96px;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.commit-legend__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.commit-legend__keys > span::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 2px;
+  background: var(--k, var(--t-border));
+  border: 1px solid var(--k, var(--t-border));
+}
+.commit-legend__keys [data-k="critical"] { --k: var(--c-overflow); }
+.commit-legend__keys [data-k="fixed"] { --k: var(--c-event); }
+.commit-legend__keys [data-k="room"] { --k: var(--c-selected); }
+.commit-legend__keys [data-k="habit"] { --k: var(--c-habit); }
+.commit-legend__keys [data-k="mint"] { --k: var(--c-minting); }
+.commit-legend__miss strong {
+  color: var(--t-text);
+}
+
+.commit-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.commit-card {
+  padding: 12px 16px;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  background: var(--t-surface);
+}
+.commit-card__label {
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.commit-card__count {
+  margin: 2px 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--t-text);
+}
+.commit-card__note {
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
+.commit-disclose {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--t-accent-strong);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.commit-zone--r3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.commit-zone__status {
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.commit-zone--r3 .btn--primary {
+  border-radius: 999px;
+  padding: 10px 22px;
+}
+.commit-zone--r3 .commit-zone__back {
+  margin-left: 0;
+}
+
+.drawer-status.commit-banner {
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--c-free) 16%, var(--t-surface));
+}
+.drawer-status.commit-banner .drawer-status__label,
+.drawer-status.commit-banner .drawer-status__detail {
+  color: var(--t-text);
+}
+
+/* The footer row carries "Preview current · …"; the status strip above the
+   timeline would say it twice. */
+.drawer--commit .drawer-status--preview {
+  display: none;
+}
+
+.commit-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

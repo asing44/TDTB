@@ -231,7 +231,7 @@ describe("ApprovalDrawer two-gate commit", () => {
   it("shows surface totals and hides the live button until armed", () => {
     const { ui } = makeHarness("commit-preview");
     const { getByText, queryByText } = ui(<ApprovalDrawer />);
-    expect(getByText("todoist")).toBeTruthy();
+    expect(getByText("Todoist")).toBeTruthy();
     expect(getByText(/arm live commit/)).toBeTruthy();
     expect(queryByText(/Commit live — write to all surfaces/)).toBeNull();
   });
