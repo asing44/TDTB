@@ -11341,3 +11341,10 @@ button.strip-cal {
   color: var(--t-muted);
   font-size: 13px;
 }
+/* Lanes blocks follow the theme (derived dark fills), so inside labels do too. */
+.cockpit:has(.day-setup-screen) .strip-cal .strip-cal__label--inside {
+  color: var(--t-text);
+}
+.cockpit:has(.day-setup-screen) .strip-cal--cancelled .strip-cal__label--inside {
+  color: var(--t-muted);
+}
