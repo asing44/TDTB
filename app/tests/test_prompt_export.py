@@ -254,6 +254,101 @@ class TestPlan:
         assert "Reminder" not in repr(preview)
         assert "For Meegy" not in repr(preview)
 
+    def test_impromptu_builtin_prompt_plans_without_any_draft(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={},
+            description_skips={"megan_nicety": True,
+                               "stoic_intention": True,
+                               "intention": False},
+        )
+        # An Impromptu built-in prompt (explicit description skip) exports its
+        # fixed label even with no typed text at all; ``intention`` has no
+        # saved flag, so it plans nothing.
+        assert [(p.prompt_key, p.title, p.description) for p in plans] == [
+            ("megan_nicety", "For Meegy", None),
+            ("stoic_intention", "Stoic", None),
+        ]
+        assert [p.content for p in plans] == ["", ""]
+
+    def test_impromptu_flag_with_a_blank_draft_still_plans_title_only(self):
+        for drafts in ({"megan_nicety": ""}, {"megan_nicety": "   "},
+                       {"megan_nicety": None}, {"megan_nicety": 5}, {}):
+            [plan] = pe.plan_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts=drafts,
+                description_skips={"megan_nicety": True},
+            )
+            assert (plan.title, plan.description) == ("For Meegy", None)
+
+    def test_builtin_without_a_skip_flag_and_no_draft_plans_nothing(self):
+        for skips in (None, {}, {"megan_nicety": False},
+                      {"megan_nicety": "yes"}, {"megan_nicety": 1},
+                      {"intention": False}):
+            assert pe.plan_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts={"megan_nicety": ""},
+                description_skips=skips,
+            ) == []
+            assert pe.plan_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts={}, description_skips=skips,
+            ) == []
+
+    def test_impromptu_flag_with_typed_text_still_drops_the_text(self):
+        [plan] = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={"megan_nicety": SECRET},
+            description_skips={"megan_nicety": True},
+        )
+        assert (plan.title, plan.description) == ("For Meegy", None)
+
+    def test_disabled_impromptu_prompt_plans_nothing(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={},
+            description_skips={"megan_nicety": True,
+                               "stoic_intention": True},
+            disabled={"megan_nicety": True},
+        )
+        assert [p.prompt_key for p in plans] == ["stoic_intention"]
+
+    def test_unreadable_flags_withhold_impromptu_builtins(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: CUSTOM_ANSWER},
+            description_skips={"megan_nicety": True,
+                               "stoic_intention": True},
+            prompt_flags_unreadable=True,
+        )
+        assert [p.prompt_key for p in plans] == [CUSTOM_KEY]
+
+    def test_impromptu_flag_never_creates_a_custom_prompt_task(self):
+        assert pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: ""},
+            description_skips={CUSTOM_KEY: True},
+        ) == []
+        assert pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={},
+            description_skips={CUSTOM_KEY: True},
+        ) == []
+
+    def test_preview_plans_impromptu_builtins_with_no_draft(self):
+        preview = pe.preview_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={},
+            description_skips={"megan_nicety": True,
+                               "stoic_intention": True,
+                               "intention": False},
+        )
+        assert preview == [
+            {"prompt_key": "megan_nicety", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+            {"prompt_key": "stoic_intention", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+        ]
+        assert "For Meegy" not in repr(preview)
+
+    def test_preview_omits_impromptu_builtin_when_disabled_or_unreadable(self):
+        for kwargs in ({"disabled": {"megan_nicety": True}},
+                       {"prompt_flags_unreadable": True}):
+            assert pe.preview_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts={},
+                description_skips={"megan_nicety": True}, **kwargs,
+            ) == []
+
     def test_disabled_builtin_prompt_plans_nothing_even_with_text(self):
         plans = pe.plan_prompt_exports(
             day=DAY, civil_date=CIVIL,
@@ -395,6 +490,32 @@ class TestRun:
         assert created["due_date"] == CIVIL
         assert er.load_receipts().get(
             DAY, "megan_nicety", pe.EXPORT_ACTION).status == er.STATUS_DONE
+
+    def test_impromptu_prompts_export_title_only_at_commit(self):
+        client = RecordingTodoist()
+        skips = {"megan_nicety": True, "stoic_intention": True,
+                 "intention": False}
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client, drafts={},
+            description_skips=skips,
+        )
+        assert [o.prompt_key for o in outcomes] == [
+            "megan_nicety", "stoic_intention",
+        ]
+        assert all(o.status == pe.OUTCOME_DONE for o in outcomes)
+        assert [(c["content"], c["description"], c["due_date"])
+                for c in client.created] == [
+            ("For Meegy", None, CIVIL), ("Stoic", None, CIVIL),
+        ]
+        # The durable receipt guard still applies: a second identical run
+        # creates nothing and mutates no task.
+        before = list(client.created)
+        again = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client, drafts={},
+            description_skips=skips,
+        )
+        assert [o.status for o in again] == [pe.OUTCOME_DONE] * 2
+        assert client.created == before
 
     def test_disabled_prompt_creates_no_task_and_no_receipt(self):
         client = RecordingTodoist()
@@ -1129,6 +1250,35 @@ class TestPromptExportRoute:
             "status": "planned",
         }]
         assert SECRET not in r.text
+        assert not er.receipts_path().exists()
+
+    def test_shadow_preview_plans_impromptu_builtins_from_the_skip_store(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state",
+                            _live_state(garage_live=False))
+        # No drafts at all: an Impromptu built-in prompt (explicit skip) must
+        # still be previewed, because the live run creates that task. This is
+        # the wiring check that the route reads today's skip store.
+        ps.save_description_skips(day=DAY, patch={
+            "megan_nicety": True, "stoic_intention": True,
+            "intention": False,
+        })
+
+        def _boom(cfg):
+            raise AssertionError("shadow must not build a provider client")
+
+        client.app.state.build_commit_clients = _boom
+        r = client.post("/commit?mode=shadow", headers=_auth(client),
+                        json={"digest": DIGEST, "sequence": SEQUENCE,
+                              "config": {}})
+        assert r.status_code == 200, r.text
+        assert r.json()["prompt_exports"] == [
+            {"prompt_key": "megan_nicety", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+            {"prompt_key": "stoic_intention", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+        ]
         assert not er.receipts_path().exists()
 
     def test_missing_create_task_client_fails_content_free_no_traceback(

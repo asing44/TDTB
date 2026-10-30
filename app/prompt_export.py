@@ -35,7 +35,10 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
   the offending bytes are preserved, and a repaired store exports normally on
   the next run. The read-only preview applies the same decision, so the UI
   never promises an export the run will not make.
-* An empty/absent/non-string draft produces no task.
+* An empty/absent/non-string draft produces no task — EXCEPT for a
+  built-in prompt whose description skip is explicitly ``True``: that is an
+  Impromptu card, so the fixed-label title is still exported with no
+  description even when no text was typed at all.
 * The due is the CIVIL calendar date (``datetime.now().date()``), not the
   logical-day date, so a pre-02:00 commit never back-dates the task.
 * Routing reuses the retired capture lane's Inbox default (``project_id``
@@ -123,11 +126,12 @@ class TodoistExportLike(Protocol):
 
 @dataclass(frozen=True)
 class PromptExportPlan:
-    """One authorized export: a prompt key with a non-empty draft.
+    """One authorized export: a prompt key with a draft to write.
 
     ``title`` is what the provider receives as the task TITLE: the fixed label
     for a built-in prompt, or the prompt text for a custom prompt. ``content``
-    is the private prompt text and ``description`` the task body — the text for
+    is the private prompt text (empty for a title-only Impromptu built-in
+    prompt) and ``description`` the task body — the text for
     a built-in prompt whose description is not skipped, else ``None`` (no
     description is written at all). ``content``, ``description``, and a
     custom prompt's ``title`` are deliberately absent from :meth:`as_preview`
@@ -188,9 +192,12 @@ def plan_prompt_exports(
     consulted.
 
     Built-in keys plan in canonical order, then browser-defined custom keys
-    (``custom-<id>``) in sorted order. A draft that is absent/blank/non-string,
-    a key that is neither built-in nor custom, and a built-in key that
-    ``disabled`` marks produce nothing at all.
+    (``custom-<id>``) in sorted order. A key that is neither built-in nor
+    custom and a built-in key that ``disabled`` marks produce nothing at all.
+    A draft that is absent/blank/non-string produces nothing — except for a
+    BUILT-IN key that ``description_skips`` marks explicitly ``True``: that is
+    an Impromptu prompt, so its fixed-label title still plans with no
+    description and an empty ``content``.
 
     ``prompt_flags_unreadable`` is the fail-closed switch for an unreadable
     gate store: the lane cannot prove a built-in prompt was left enabled and
@@ -203,18 +210,27 @@ def plan_prompt_exports(
     with no description. A custom key has no fixed label: its text is the title
     and it never carries a description."""
     plans: list[PromptExportPlan] = []
-    for key in _planned_keys(drafts):
+    mapping = drafts if isinstance(drafts, Mapping) else {}
+    for key in _planned_keys(drafts, description_skips):
         if prompt_flags_unreadable and key in BUILTIN_PROMPT_TITLES:
             continue
         if _is_disabled(disabled, key):
             continue
-        text = drafts.get(key)
-        if not isinstance(text, str) or not text.strip():
+        text = mapping.get(key)
+        if isinstance(text, str) and text.strip():
+            title, description = _task_shape(key, text.strip(), description_skips)
+            content = text.strip()
+        elif (key in BUILTIN_PROMPT_TITLES
+                and _description_is_skipped(description_skips, key)):
+            # Impromptu built-in prompt: the label is the whole task, so an
+            # absent/blank draft still exports a title-only task. No private
+            # text exists for this plan, so ``content`` is the empty string.
+            title, description, content = BUILTIN_PROMPT_TITLES[key], None, ""
+        else:
             continue
-        title, description = _task_shape(key, text.strip(), description_skips)
         plans.append(PromptExportPlan(
             day=day, civil_date=civil_date, prompt_key=key,
-            action=EXPORT_ACTION, content=text.strip(),
+            action=EXPORT_ACTION, content=content,
             title=title, description=description,
         ))
     return plans
@@ -252,13 +268,23 @@ def _is_disabled(disabled: Any, key: str) -> bool:
     return disabled.get(key) is True
 
 
-def _planned_keys(drafts: Any) -> list[str]:
-    """The recognized draft keys to consider, in deterministic order."""
-    if not isinstance(drafts, Mapping):
-        return []
-    known = [key for key in PROMPT_EXPORT_KEYS if key in drafts]
+def _planned_keys(drafts: Any, description_skips: Any = None) -> list[str]:
+    """The recognized keys to consider, in deterministic order.
+
+    A draft key counts when it is present in the draft store, and a BUILT-IN
+    key also counts when ``description_skips`` marks it explicitly ``True``:
+    that is an Impromptu prompt, which exports its fixed label even with no
+    text. A custom prompt never qualifies that way — it has no fixed label, so
+    with no text there is nothing to write."""
+    mapping = drafts if isinstance(drafts, Mapping) else {}
+    known = [
+        key for key in PROMPT_EXPORT_KEYS
+        if key in mapping
+        or (key in BUILTIN_PROMPT_TITLES
+            and _description_is_skipped(description_skips, key))
+    ]
     custom = sorted(
-        key for key in drafts if prompt_state.is_custom_prompt_key(key)
+        key for key in mapping if prompt_state.is_custom_prompt_key(key)
     )
     return known + custom
 
@@ -268,6 +294,7 @@ def preview_prompt_exports(
     day: str,
     civil_date: str,
     drafts: dict[str, str] | Any,
+    description_skips: Mapping[str, bool] | Any = None,
     disabled: Mapping[str, bool] | Any = None,
     prompt_flags_unreadable: bool = False,
 ) -> list[dict[str, Any]]:
@@ -276,9 +303,12 @@ def preview_prompt_exports(
     Never writes a receipt and never performs a provider call. It applies the
     same fail-closed decision as the export run: an unreadable gate store
     withholds every built-in prompt from the preview too, so the UI never
-    promises an export the run will not make."""
+    promises an export the run will not make. ``description_skips`` mirrors
+    the export run so an Impromptu built-in prompt is previewed as planned
+    even with no typed text."""
     return [p.as_preview() for p in plan_prompt_exports(
-        day=day, civil_date=civil_date, drafts=drafts, disabled=disabled,
+        day=day, civil_date=civil_date, drafts=drafts,
+        description_skips=description_skips, disabled=disabled,
         prompt_flags_unreadable=prompt_flags_unreadable,
     )]
 

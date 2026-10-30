@@ -6533,10 +6533,14 @@ def create_app() -> FastAPI:
         # no receipt and performs no provider call; the preview is content-free.
         preview_drafts, _ = _read_prompt_drafts(shadow_today)
         preview_disabled, _ = _read_prompt_disabled(shadow_today)
+        # An unreadable skip store degrades to "no skips": the preview must not
+        # promise an Impromptu export the real run would not make.
+        preview_skips, _ = _read_prompt_description_skips(shadow_today)
         result["prompt_exports"] = prompt_export.preview_prompt_exports(
             day=shadow_today.isoformat(),
             civil_date=prompt_export.civil_date_for(datetime.now()).isoformat(),
             drafts=preview_drafts,
+            description_skips=preview_skips or {},
             disabled=preview_disabled or {},
             # D1: an unreadable gate store makes the real run withhold every
             # built-in prompt, so the preview withholds them too rather than
