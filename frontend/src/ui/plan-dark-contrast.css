@@ -160,3 +160,13 @@
 }
 
 /* Connections screen. */
+
+/* Over-capacity ink: --c-overflow (#ef4444) is 4.2-4.4:1 on the dark card
+   surfaces; dark theme reads --lane-crit-ink instead (light unchanged). */
+.cap-card__headline--over,
+.rail-budget__spend--over,
+.rail-budget__delta--over,
+.rail-capacity__over,
+.pie__over-caption {
+  color: light-dark(var(--c-overflow), var(--lane-crit-ink));
+}

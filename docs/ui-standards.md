@@ -78,3 +78,13 @@ The old rules (no shadows, weights 400/500 only, small radii) no longer apply. L
 - Each lane has an ink, tint and block triple: Calendar (`--lane-cal-*`), Anchors (`--lane-anchor-*`), Mint (`--lane-mint-*`), Tasks (`--lane-task-*`), plus the habit pair (`--lane-habit*`).
 - Dark is derived from light: every token has a dark value in `tokens.css` (system dark and forced dark). Text stays at least 4.5:1.
 - Still no gradients. Change a Lanes colour in `tokens.css` only, in both themes.
+
+## Plan look
+
+The Plan screen reuses the Lanes tokens; it adds no new colours.
+
+- Each lane group (Critical, Fixed, When there's room, Not in plan) is a tinted card with a 4px left rule and a 12px radius. Rows inside are white pill-control cards.
+- Lane colours come from the ink / tint / bar tokens: `--lane-crit-*` (Critical, over-capacity ink and the overflow hatch), `--lane-cal-*` (Fixed), `--lane-task-*` (When there's room), `--lane-anchor-*` (Not in plan).
+- Everything is scoped by `.cockpit:has(.queue)`, in the Plan block at the end of `app.css`; Set up stays on `.cockpit:has(.day-setup-screen)`.
+- The duration pill is `[- 1hr 30min +]` in a 140px column above 1000px; below that the steppers drop out and the readout stands alone.
+- Dark over-capacity text uses `--lane-crit-ink` (`plan-dark-contrast.css`); `--c-overflow` is under 4.5:1 on dark cards.
