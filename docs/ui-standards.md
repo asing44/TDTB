@@ -88,3 +88,7 @@ The Plan screen reuses the Lanes tokens; it adds no new colours.
 - Everything is scoped by `.cockpit:has(.queue)`, in the Plan block at the end of `app.css`; Set up stays on `.cockpit:has(.day-setup-screen)`.
 - The duration pill is `[- 1hr 30min +]` in a 140px column above 1000px; below that the steppers drop out and the readout stands alone.
 - Dark over-capacity text uses `--lane-crit-ink` (`plan-dark-contrast.css`); `--c-overflow` is under 4.5:1 on dark cards.
+- An empty Critical lane is a slim one-line strip ("nothing here"), not a full card.
+- The needs-a-look banner is one slim line: count, up to five titles each with "Okay to plan", "+N more", and a single "Okay to plan all (N)". The long explanation lives in its tooltip.
+- Row selection is a native checkbox drawn as an 18px outline circle (filled with a tick when checked); Complete is a 32px outline circle. Roles, labels and behaviour are unchanged.
+- Row controls sit on a fixed five-column grid (Mint, switch, Complete, calendar, expand) with a 10px gap; a row without a calendar button leaves its slot empty so the chevron stays in the last column.
