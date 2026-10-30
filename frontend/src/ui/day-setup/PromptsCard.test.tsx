@@ -7,7 +7,7 @@
    and `cardWithoutStore` renders bare, with no store behind the card. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/preact";
 
 import type {
   DaySetupSaveResult,
@@ -26,6 +26,15 @@ import { writeCustomPrompts } from "./customPrompts";
 afterEach(cleanup);
 
 const noop = () => {};
+
+/** The Impromptu | Write it group on one card, by the card's prompt name. */
+function seg(r: ReturnType<typeof render>, name: string) {
+  const group = within(r.getByRole("group", { name: `${name} description` }));
+  return {
+    impromptu: group.getByRole("button", { name: "Impromptu" }) as HTMLButtonElement,
+    write: group.getByRole("button", { name: "Write it" }) as HTMLButtonElement,
+  };
+}
 
 /** A Map-backed Storage so a test can seed the browser-defined prompts. */
 function fakeStorage(): Storage {
@@ -116,6 +125,7 @@ function cardWithoutStore(m: MicroAdventure) {
 describe("PromptsCard Reminder copy", () => {
   it("labels the one-thing prompt Reminder with the reminder placeholder", () => {
     const { r } = cardWithStore(micro());
+    fireEvent.click(seg(r, "Reminder").write);
     const field = r.getByLabelText("Reminder") as HTMLTextAreaElement;
     expect(field.closest(".prompt-card")).toBeTruthy();
     expect(field.getAttribute("placeholder")).toBe("One thing to remind myself today");
@@ -150,45 +160,43 @@ describe("PromptsCard Reminder copy", () => {
   });
 });
 
-describe("PromptsCard skip-description toggles", () => {
-  it("renders one toggle on the For Meegy and Stoic cards, and none on Reminder", () => {
+describe("PromptsCard skip-description segmented control", () => {
+  it("renders one Impromptu | Write it control on the For Meegy and Stoic cards", () => {
     const { r } = cardWithStore(micro());
-    expect(r.getAllByRole("checkbox")).toHaveLength(2);
-    const meegy = r.getByLabelText("Skip description for Meegy") as HTMLInputElement;
-    const stoic = r.getByLabelText("Skip description for Stoic") as HTMLInputElement;
-    expect(meegy.getAttribute("type")).toBe("checkbox");
-    expect(meegy.closest(".capacities-setting-row")).toBeTruthy();
-    expect(meegy.closest(".prompt-card")?.querySelector("#cap-meegy")).toBeTruthy();
-    expect(stoic.closest(".prompt-card")?.querySelector("#cap-stoic")).toBeTruthy();
-    const reminder = r.getByLabelText("Reminder").closest(".prompt-card") as HTMLElement;
-    expect(reminder.querySelector('input[type="checkbox"]')).toBeNull();
+    const meegy = seg(r, "For Meegy");
+    const stoic = seg(r, "Stoic");
+    expect(meegy.write.closest(".prompt-seg")?.getAttribute("role")).toBe("group");
+    expect(meegy.write.closest(".prompt-card")?.querySelector("#cap-meegy")).toBeTruthy();
+    expect(stoic.write.closest(".prompt-card")?.querySelector("#cap-stoic")).toBeTruthy();
+    // The old skip checkbox markup is gone; only the include switches remain.
+    expect(r.queryByLabelText("Skip description for Meegy")).toBeNull();
+    expect(r.getAllByRole("switch")).toHaveLength(2);
+    expect(r.queryAllByRole("checkbox")).toHaveLength(0);
   });
 
   it("follows the incoming server state", () => {
     const { r } = cardWithStore(micro(), fakeStorage(), { forMeegy: true, stoic: false });
-    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).checked).toBe(
-      true,
-    );
-    expect((r.getByLabelText("Skip description for Stoic") as HTMLInputElement).checked).toBe(
-      false,
-    );
+    expect(seg(r, "For Meegy").impromptu.getAttribute("aria-pressed")).toBe("true");
+    expect(seg(r, "For Meegy").write.getAttribute("aria-pressed")).toBe("false");
+    expect(r.queryByLabelText("For Meegy")).toBeNull();
+    expect(r.getAllByText("Impromptu \u2014 left as the default")).toHaveLength(2);
+    expect(seg(r, "Stoic").write.getAttribute("aria-pressed")).toBe("true");
+    expect(r.getByLabelText("Stoic")).toBeTruthy();
   });
 
-  it("reads an absent skip map as unchecked", () => {
+  it("reads an absent skip map as Write it", () => {
     const { r } = cardWithStore(micro());
-    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).checked).toBe(
-      false,
-    );
-    expect((r.getByLabelText("Skip description for Stoic") as HTMLInputElement).checked).toBe(
-      false,
-    );
+    expect(seg(r, "For Meegy").write.getAttribute("aria-pressed")).toBe("true");
+    expect(seg(r, "Stoic").write.getAttribute("aria-pressed")).toBe("true");
+    expect(r.getByLabelText("For Meegy")).toBeTruthy();
+    expect(r.getByLabelText("Stoic")).toBeTruthy();
   });
 
-  it("toggling a key saves the whole map and keeps the other key's value", async () => {
+  it("Impromptu sets the skip flag over the whole map, Write it clears it", async () => {
     const { r, h } = cardWithStore(micro(), fakeStorage(), { forMeegy: true, stoic: false }, "fresh");
     const save = vi.spyOn(h.controller, "savePromptSkips");
     const draftsBefore = h.store.getState().daySetup.captures;
-    fireEvent.click(r.getByLabelText("Skip description for Stoic"));
+    fireEvent.click(seg(r, "Stoic").impromptu);
     await vi.waitFor(() => {
       expect(save).toHaveBeenLastCalledWith({ forMeegy: true, stoic: true });
     });
@@ -196,10 +204,13 @@ describe("PromptsCard skip-description toggles", () => {
     expect(h.store.getState().daySetup.captures).toEqual(draftsBefore);
     expect(h.store.getState().daySetup.confirmed).toBe(false);
     await vi.waitFor(() => {
-      expect((r.getByLabelText("Skip description for Stoic") as HTMLInputElement).checked).toBe(
-        true,
-      );
+      expect(r.queryByLabelText("Stoic")).toBeNull();
     });
+    fireEvent.click(seg(r, "For Meegy").write);
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenLastCalledWith({ forMeegy: false, stoic: true });
+    });
+    await vi.waitFor(() => expect(r.getByLabelText("For Meegy")).toBeTruthy());
   });
 
   it("explains that a skipped prompt still creates the task", () => {
@@ -251,7 +262,9 @@ describe("PromptsCard include-in-commit switches", () => {
     expect(stoic.checked).toBe(true);
     expect(meegy.closest(".prompt-card")?.querySelector("#cap-meegy")).toBeTruthy();
     expect(stoic.closest(".prompt-card")?.querySelector("#cap-stoic")).toBeTruthy();
-    const reminder = r.getByLabelText("Reminder").closest(".prompt-card") as HTMLElement;
+    // Quiet secondary control on the card footer.
+    expect(meegy.closest(".prompt-card__foot")).toBeTruthy();
+    const reminder = seg(r, "Reminder").write.closest(".prompt-card") as HTMLElement;
     expect(reminder.querySelector('[role="switch"]')).toBeNull();
     // Copy lock: the same short copy sits on both cards.
     expect(r.getAllByText("Include in commit")).toHaveLength(2);
@@ -294,7 +307,7 @@ describe("PromptsCard include-in-commit switches", () => {
     });
   });
 
-  it("mutes the textarea and disables the skip control while a prompt is off", () => {
+  it("mutes the textarea and disables the segmented control while a prompt is off", () => {
     const { r } = cardWithStore(micro(), fakeStorage(), undefined, "ready", {
       forMeegy: true,
       stoic: false,
@@ -306,12 +319,9 @@ describe("PromptsCard include-in-commit switches", () => {
     expect(meegy.className).toContain("trow__muted");
     expect(stoic.className).not.toContain("trow__muted");
     // Nothing is exported, so the skip-description control is inert.
-    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).disabled).toBe(
-      true,
-    );
-    expect((r.getByLabelText("Skip description for Stoic") as HTMLInputElement).disabled).toBe(
-      false,
-    );
+    expect(seg(r, "For Meegy").impromptu.disabled).toBe(true);
+    expect(seg(r, "For Meegy").write.disabled).toBe(true);
+    expect(seg(r, "Stoic").impromptu.disabled).toBe(false);
   });
 
   it("renders no switch without the app store behind it", () => {
@@ -432,9 +442,7 @@ describe("PromptsCard redraws from the live nested save echo", () => {
     await vi.waitFor(() => expect(meegySwitch().checked).toBe(false));
     expect(meegySwitch().getAttribute("aria-checked")).toBe("false");
     expect(meegyText().className).toContain("trow__muted");
-    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).disabled).toBe(
-      true,
-    );
+    expect(seg(r, "For Meegy").impromptu.disabled).toBe(true);
     expect(stoicSwitch().checked).toBe(true);
     expect(h.store.getState().daySetup.promptDisabled).toEqual({ forMeegy: true, stoic: false });
 
@@ -447,19 +455,19 @@ describe("PromptsCard redraws from the live nested save echo", () => {
     expect(h.store.getState().daySetup.confirmed).toBe(false);
   });
 
-  it("redraws the skip checkbox and never moves the sibling flag", async () => {
+  it("redraws the segmented control and never moves the sibling flag", async () => {
     const { r, h } = cardWithAdapter(micro(), new NestedEchoAdapter("fresh"));
-    const meegySkip = () => r.getByLabelText("Skip description for Meegy") as HTMLInputElement;
-    const stoicSkip = () => r.getByLabelText("Skip description for Stoic") as HTMLInputElement;
+    const pressed = (name: string, which: "impromptu" | "write") =>
+      seg(r, name)[which].getAttribute("aria-pressed");
 
-    fireEvent.click(meegySkip());
-    await vi.waitFor(() => expect(meegySkip().checked).toBe(true));
-    expect(stoicSkip().checked).toBe(false);
+    fireEvent.click(seg(r, "For Meegy").impromptu);
+    await vi.waitFor(() => expect(pressed("For Meegy", "impromptu")).toBe("true"));
+    expect(pressed("Stoic", "write")).toBe("true");
     expect(h.store.getState().daySetup.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
 
-    fireEvent.click(meegySkip());
-    await vi.waitFor(() => expect(meegySkip().checked).toBe(false));
-    expect(stoicSkip().checked).toBe(false);
+    fireEvent.click(seg(r, "For Meegy").write);
+    await vi.waitFor(() => expect(pressed("For Meegy", "write")).toBe("true"));
+    expect(pressed("Stoic", "write")).toBe("true");
     expect(h.store.getState().daySetup.descriptionSkips).toEqual({ forMeegy: false, stoic: false });
   });
 });

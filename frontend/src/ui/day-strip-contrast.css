@@ -245,3 +245,107 @@
   color: var(--lane-mint-ink);
   font-size: 13px;
 }
+
+/* Morning prompts, Lanes look: white 16px cards, a muted title with a green
+   destination suffix, an Impromptu | Write it segmented control, underline
+   fields, and a quiet include-in-commit switch on the card footer. */
+.cockpit:has(.day-setup-screen) .prompt-card {
+  gap: 10px;
+  padding: 16px 18px;
+  border: 0;
+  border-radius: var(--t-card-radius);
+  background: var(--t-card);
+  box-shadow: var(--t-card-shadow);
+}
+.cockpit:has(.day-setup-screen) .prompt-card__labelrow {
+  justify-content: flex-start;
+  gap: 6px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__labelrow label {
+  color: var(--t-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__dest {
+  color: var(--t-accent-strong);
+  font-size: 13px;
+  font-weight: 500;
+}
+.cockpit:has(.day-setup-screen) .prompt-seg {
+  display: flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--t-pill-radius);
+  background: var(--t-seg);
+}
+.cockpit:has(.day-setup-screen) .prompt-seg button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--t-pill-radius);
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cockpit:has(.day-setup-screen) .prompt-seg button[aria-pressed="true"] {
+  background: var(--t-seg-on);
+  box-shadow: var(--t-seg-shadow);
+  color: var(--t-text);
+  font-weight: 600;
+}
+.cockpit:has(.day-setup-screen) .prompt-seg button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__impromptu {
+  margin: 0;
+  padding: 4px 0;
+  color: var(--t-muted);
+  font-size: 14px;
+  font-style: italic;
+}
+.cockpit:has(.day-setup-screen) .setup-section--prompts .prompt-card textarea {
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1.5px solid var(--t-accent-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--t-text);
+  font-size: 14px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card .prompt-card__foot {
+  margin-top: auto;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__include {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__include input {
+  margin: 0;
+}
+.cockpit:has(.day-setup-screen) .prompt-card--live select {
+  border: 0;
+  border-bottom: 1.5px solid var(--t-control-border);
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--t-text);
+  font-size: 15px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card--live .btn {
+  border: 1px solid var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.cockpit:has(.day-setup-screen) .live-micro__custom-link,
+.cockpit:has(.day-setup-screen) .setup-section--prompts .setup-section__head-action {
+  color: var(--t-accent-strong);
+}

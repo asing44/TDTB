@@ -400,6 +400,12 @@ describe("Planning 2a Morning prompts", () => {
     const cards = Array.from(grid.querySelectorAll(".prompt-card"));
     expect(cards.length).toBe(4);
     expect(cards[0].textContent).toContain("Live micro-adventure");
+    // Reminder starts on Impromptu (no draft), so Write it reveals its field.
+    fireEvent.click(
+      within(r.getByRole("group", { name: "Reminder description" })).getByRole("button", {
+        name: "Write it",
+      }),
+    );
     for (const label of ["Reminder", "For Meegy", "Stoic"]) {
       const field = r.getByLabelText(label);
       expect(field.closest(".prompt-card")).toBeTruthy();
@@ -413,10 +419,11 @@ describe("Planning 2a Morning prompts", () => {
     expect(r.queryByText("text → daily note")).toBeNull();
     expect(r.queryByText("pool → Live block")).toBeNull();
     expect(r.queryByText("Prompt exports")).toBeNull();
-    // The skip-description toggles live on the For Meegy and Stoic cards only.
-    expect(r.getAllByRole("checkbox")).toHaveLength(2);
-    expect(r.getByLabelText("Skip description for Meegy")).toBeTruthy();
-    expect(r.getByLabelText("Skip description for Stoic")).toBeTruthy();
+    // The skip flag is the Impromptu | Write it control; the only checkboxes
+    // left are the two include-in-commit switches.
+    expect(r.getAllByRole("switch", { name: /Include .* in commit/ })).toHaveLength(2);
+    expect(r.getByRole("group", { name: "For Meegy description" })).toBeTruthy();
+    expect(r.getByRole("group", { name: "Stoic description" })).toBeTruthy();
   });
 
   it("shows the single export line and + Add prompt under the grid", () => {

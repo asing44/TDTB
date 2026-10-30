@@ -106,12 +106,6 @@ function MicroPoolEditorHost({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** The skip labels, in the order the cards appear. */
-const SKIP_LABELS = {
-  forMeegy: "Skip description for Meegy",
-  stoic: "Skip description for Stoic",
-} as const;
-
 /** Include-in-commit switch for one built-in prompt. Off means the prompt is
     left out of the Commit export; its draft text is kept, so turning it back on
     restores it. Store-backed, so it mounts only inside the app context. */
@@ -121,7 +115,7 @@ function IncludeInCommit({ which }: { which: BuiltInKey }) {
   const disabled = (s.daySetup.promptDisabled ?? ALL_INCLUDED)[which];
   return (
     <label
-      class="dux-mem"
+      class="dux-mem prompt-card__include"
       title={
         disabled
           ? "Left out of the commit today. The text is kept."
@@ -147,9 +141,48 @@ function IncludeInCommit({ which }: { which: BuiltInKey }) {
   );
 }
 
-/** The store-backed body of one toggleable prompt card: the prompt textarea
-    (muted while the prompt is off) plus both flag switches. Rendered only
-    inside the app context. */
+/** Copy shown in place of the field while a prompt is sent without a description. */
+const IMPROMPTU_COPY = "Impromptu \u2014 left as the default";
+
+/** The Impromptu | Write it segmented control. Write it means the prompt goes
+    out with a description the owner writes; Impromptu means without one. */
+function PromptMode({
+  name,
+  written,
+  disabled = false,
+  onChange,
+}: {
+  name: string;
+  written: boolean;
+  disabled?: boolean;
+  onChange: (written: boolean) => void;
+}) {
+  return (
+    <div class="prompt-seg" role="group" aria-label={`${name} description`}>
+      <button
+        type="button"
+        aria-pressed={!written}
+        disabled={disabled}
+        onClick={() => onChange(false)}
+      >
+        Impromptu
+      </button>
+      <button
+        type="button"
+        aria-pressed={written}
+        disabled={disabled}
+        onClick={() => onChange(true)}
+      >
+        Write it
+      </button>
+    </div>
+  );
+}
+
+/** The store-backed body of one toggleable prompt card: the segmented control
+    over the day-scoped skip flag (Impromptu = skip the description), the draft
+    textarea while Write it is on (muted while the prompt is off), and a quiet
+    include-in-commit switch. Rendered only inside the app context. */
 function ToggleablePromptBody({
   which,
   value,
@@ -161,19 +194,37 @@ function ToggleablePromptBody({
   onInput: (value: string) => void;
   onAutosave: () => void;
 }) {
+  const { controller } = useApp();
   const s = useAppState();
   const disabled = (s.daySetup.promptDisabled ?? ALL_INCLUDED)[which];
+  const skips = s.daySetup.descriptionSkips ?? NO_SKIPS;
+  const written = !skips[which];
+  /** Full-replace save: the map always carries both toggleable keys. */
+  const setWritten = (on: boolean) => {
+    void controller.savePromptSkips({ ...skips, [which]: !on });
+  };
   return (
     <>
-      <textarea
-        id={BUILT_IN_PROMPTS[which].id}
-        class={disabled ? "trow__muted" : undefined}
-        value={value}
-        onInput={(e) => onInput((e.target as HTMLTextAreaElement).value)}
-        onBlur={onAutosave}
+      <PromptMode
+        name={BUILT_IN_PROMPTS[which].label}
+        written={written}
+        disabled={disabled}
+        onChange={setWritten}
       />
-      <IncludeInCommit which={which} />
-      <SkipDescriptionToggle which={which} disabled={disabled} />
+      {written ? (
+        <textarea
+          id={BUILT_IN_PROMPTS[which].id}
+          class={disabled ? "trow__muted" : undefined}
+          value={value}
+          onInput={(e) => onInput((e.target as HTMLTextAreaElement).value)}
+          onBlur={onAutosave}
+        />
+      ) : (
+        <p class="prompt-card__impromptu">{IMPROMPTU_COPY}</p>
+      )}
+      <div class="prompt-card__foot">
+        <IncludeInCommit which={which} />
+      </div>
     </>
   );
 }
@@ -192,6 +243,7 @@ function BuiltInPromptCard(props: {
     <article class="prompt-card">
       <div class="prompt-card__labelrow">
         <label for={id}>{label}</label>
+        {inApp && <span class="prompt-card__dest">{"\u2192 Todoist"}</span>}
       </div>
       {inApp ? (
         <ToggleablePromptBody {...props} />
@@ -207,36 +259,42 @@ function BuiltInPromptCard(props: {
   );
 }
 
-/** The skip flag lives in the day-setup echo, so the toggle reads it from the
-    store. Mounted only inside the app context: without one, no toggle. A
-    prompt that is left out of the commit writes no description, so the control
-    is inert while its prompt is off. */
-function SkipDescriptionToggle({
-  which,
-  disabled = false,
-}: {
-  which: BuiltInKey;
-  disabled?: boolean;
+/** Reminder has no saved flag: Impromptu is simply no text typed, Write it
+    shows the field. The mode is presentational; it starts on Write it when a
+    draft already exists, and choosing Impromptu clears the draft. */
+function ReminderCard(props: {
+  value: string;
+  onInput: (value: string) => void;
+  onAutosave: () => void;
 }) {
-  const { controller } = useApp();
-  const s = useAppState();
-  const skips = s.daySetup.descriptionSkips ?? NO_SKIPS;
-  /** Full-replace save: the map always carries both toggleable keys. */
-  const setSkip = (on: boolean) => {
-    void controller.savePromptSkips({ ...skips, [which]: on });
+  const [picked, setPicked] = useState<boolean | null>(null);
+  const written = picked ?? props.value.trim() !== "";
+  const choose = (on: boolean) => {
+    setPicked(on);
+    if (!on && props.value !== "") {
+      props.onInput("");
+      props.onAutosave();
+    }
   };
   return (
-    <label class="capacities-setting-row">
-      <input
-        type="checkbox"
-        checked={skips[which]}
-        disabled={disabled}
-        onChange={(e) => setSkip((e.currentTarget as HTMLInputElement).checked)}
-      />
-      <span>
-        <strong>{SKIP_LABELS[which]}</strong>
-      </span>
-    </label>
+    <article class="prompt-card">
+      <div class="prompt-card__labelrow">
+        <label for="cap-intention">Reminder</label>
+      </div>
+      <PromptMode name="Reminder" written={written} onChange={choose} />
+      {written ? (
+        <textarea
+          id="cap-intention"
+          class="cap-intention"
+          placeholder="One thing to remind myself today"
+          value={props.value}
+          onInput={(e) => props.onInput((e.target as HTMLTextAreaElement).value)}
+          onBlur={props.onAutosave}
+        />
+      ) : (
+        <p class="prompt-card__impromptu">{IMPROMPTU_COPY}</p>
+      )}
+    </article>
   );
 }
 
@@ -352,21 +410,11 @@ export function PromptsCard(props: PromptsCardProps) {
             {poolOpen && <MicroPoolEditorHost onClose={() => setPoolOpen(false)} />}
           </article>
 
-          <article class="prompt-card">
-            <div class="prompt-card__labelrow">
-              <label for="cap-intention">Reminder</label>
-            </div>
-            <textarea
-              id="cap-intention"
-              class="cap-intention"
-              placeholder="One thing to remind myself today"
-              value={props.captures.intention}
-              onInput={(e) =>
-                props.onCapture("intention", (e.target as HTMLTextAreaElement).value)
-              }
-              onBlur={props.onAutosave}
-            />
-          </article>
+          <ReminderCard
+            value={props.captures.intention}
+            onInput={(value) => props.onCapture("intention", value)}
+            onAutosave={props.onAutosave}
+          />
           <BuiltInPromptCard
             which="forMeegy"
             value={props.captures.forMeegy}
