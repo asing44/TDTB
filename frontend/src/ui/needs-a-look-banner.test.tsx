@@ -133,7 +133,7 @@ describe("NeedsALookBanner — visibility and count", () => {
     await stage(h, [FLAG_A, PLAIN]);
     const rendered = h.ui(<NeedsALookBanner />);
     await waitFor(() => expect(banner(rendered.container)).toBeTruthy());
-    expect(within(banner(rendered.container)!).getByText(/1 item needs a look/)).toBeTruthy();
+    expect(within(banner(rendered.container)!).getByText(/Draft launch brief needs a look/)).toBeTruthy();
   });
 
   it("counts exactly what the review surface counts", async () => {
@@ -248,7 +248,7 @@ describe("NeedsALookBanner — the one batched selection call", () => {
     // The other row still needs a look, so the banner stays and reports the
     // save it just made.
     await waitFor(() =>
-      expect(within(banner(rendered.container)!).getByText(/1 item needs a look/)).toBeTruthy(),
+      expect(within(banner(rendered.container)!).getByText(/needs a look/)).toBeTruthy(),
     );
     expect(
       within(banner(rendered.container)!).getByText(

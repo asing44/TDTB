@@ -11716,3 +11716,64 @@ button.strip-cal {
 .cockpit:has(.queue) .tasktable:has(.queue__empty) .queue__empty {
   padding: 0;
 }
+
+/* Needs-a-look banner, slim form: a pill — "<title> needs a look · Okay to
+   plan" for one item; for several, one compact wrapping row of titles with
+   "+N more" and the single "Okay to plan all (N)". The long explanation stays
+   in the DOM (tooltip on the head, read by assistive tech) but is not drawn. */
+.cockpit:has(.queue) .capacities-look {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.cockpit:has(.queue) .capacities-look:has(.capacities-look__actions[data-single]) {
+  width: fit-content;
+  max-width: 100%;
+}
+.cockpit:has(.queue) .capacities-look__head {
+  flex: none;
+}
+.cockpit:has(.queue) .capacities-look__why {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cockpit:has(.queue) .capacities-look__list {
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 2px 14px;
+}
+.cockpit:has(.queue) .capacities-look__list > li:only-child::before {
+  content: "·";
+  color: var(--t-muted);
+}
+.cockpit:has(.queue) .capacities-look__list .btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.cockpit:has(.queue) .capacities-look__actions {
+  flex: none;
+}
+.cockpit:has(.queue) .capacities-look__actions[data-single] {
+  display: none;
+}
+.cockpit:has(.queue) .capacities-look__note,
+.cockpit:has(.queue) .capacities-look__error {
+  flex: 1 1 100%;
+}
+.cockpit:has(.queue) .capacities-look__list > li:only-child .btn {
+  font-weight: 600;
+}

@@ -31,6 +31,11 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The long explanation: a tooltip on the slim banner, still readable to
+    assistive tech, never an overflowing visible sentence. */
+const LOOK_WHY =
+  "Capacities flagged them and nothing is blocked — planning and committing stay available. Okay to plan adds a row to today's plan.";
+
 /** Titles listed inline before the rest fold into one "+M more" tail. */
 export const NEEDS_A_LOOK_LIST_CAP = 5;
 
@@ -114,6 +119,7 @@ export function NeedsALookBanner() {
 
   const shown = pending.slice(0, NEEDS_A_LOOK_LIST_CAP);
   const rest = pending.length - shown.length;
+  const single = pending.length === 1;
 
   const okayRows = async (rows: CapacitiesIntakeCandidate[]) => {
     if (!selections || rows.length === 0) return;
@@ -158,17 +164,18 @@ export function NeedsALookBanner() {
 
   return (
     <div class="capacities-rule__notice capacities-look" role="status" data-needs-a-look>
-      <p class="capacities-look__head">
+      <p class="capacities-look__head" title={LOOK_WHY}>
         <strong>
-          {pending.length} {pending.length === 1 ? "item needs" : "items need"} a look
+          {single
+            ? `${rowLabel(pending[0])} needs a look`
+            : `${pending.length} items need a look`}
         </strong>{" "}
-        Capacities flagged them and nothing is blocked — planning and committing
-        stay available. Okay to plan adds a row to today's plan.
+        <span class="capacities-look__why">{LOOK_WHY}</span>
       </p>
       <ul class="capacities-look__list">
         {shown.map((candidate) => (
           <li key={candidate.identity}>
-            <span class="capacities-look__name">{rowLabel(candidate)}</span>
+            {!single && <span class="capacities-look__name">{rowLabel(candidate)}</span>}
             <button
               class="btn"
               type="button"
@@ -182,7 +189,7 @@ export function NeedsALookBanner() {
         ))}
         {rest > 0 && <li class="capacities-look__more">+{rest} more</li>}
       </ul>
-      <div class="capacities-look__actions">
+      <div class="capacities-look__actions" data-single={single ? "" : undefined}>
         <button
           class="btn btn--primary"
           type="button"
