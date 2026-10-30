@@ -11049,42 +11049,42 @@ button.strip-cal {
 }
 
 /* ---- Lanes · Set up (owner design, 2026-10-29) ------------------------------
-   Restyles the Set up screen only: the whole block hangs off
-   `.cockpit:has(.day-setup-screen)`, so Plan tasks and the settings drawer keep
-   their own rules. Values come from the --t-* / --lane-* tokens in tokens.css;
+   Restyles the Set up screen (and, through `:is(...:has(.queue))`, the shared
+   shell, header, stepper and day strip on Plan): the block hangs off
+   `.cockpit:has(.day-setup-screen)`, so the settings drawer keeps its own rules. Values come from the --t-* / --lane-* tokens in tokens.css;
    this block adds no colour of its own. Soft card shadow, 16px cards, pill
    controls and 600/700 weights follow docs/ui-standards.md "Lanes surface". */
-.cockpit:has(.day-setup-screen),
-.cockpit:has(.day-setup-screen) .cockpit__main {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)),
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .cockpit__main {
   background: var(--t-canvas);
 }
-.cockpit:has(.day-setup-screen) .cockpit__main {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .cockpit__main {
   border-left: 0;
 }
 
 /* Page gutters: 56px body and footer, 36px header, as in the design. */
-.cockpit:has(.day-setup-screen) .cockpit__screen {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .cockpit__screen {
   padding: 32px 56px;
 }
-.cockpit:has(.day-setup-screen) .app-header {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-header {
   padding-inline: 36px;
 }
-.cockpit:has(.day-setup-screen) .footer--setup .footer__row {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .footer--setup .footer__row {
   padding-inline: 56px;
 }
 
 /* Header: 64px bar on a hairline, 18px/700 date, numbered circle stepper. */
-.cockpit:has(.day-setup-screen) .app-header {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-header {
   min-height: 64px;
   padding-block: 0;
   background: var(--t-canvas);
   border-bottom-color: var(--t-hairline);
 }
-.cockpit:has(.day-setup-screen) .app-header__day {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-header__day {
   font-size: 18px;
   font-weight: 700;
 }
-.cockpit:has(.day-setup-screen) .app-stepper__step {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__step {
   gap: 8px;
   padding: 4px 0;
   min-height: 0;
@@ -11092,7 +11092,7 @@ button.strip-cal {
   color: var(--t-muted);
   font-size: 13px;
 }
-.cockpit:has(.day-setup-screen) .app-stepper__mark {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -11104,40 +11104,40 @@ button.strip-cal {
   font-family: inherit;
   font-size: 11px;
 }
-.cockpit:has(.day-setup-screen) .app-stepper__step--active {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__step--active {
   background: transparent;
   color: var(--t-text);
   font-weight: 600;
 }
-.cockpit:has(.day-setup-screen) .app-stepper__step--active .app-stepper__mark {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__step--active .app-stepper__mark {
   background: var(--t-text);
   border-color: var(--t-text);
   color: var(--t-canvas);
 }
-.cockpit:has(.day-setup-screen) .app-stepper__step--done .app-stepper__mark {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__step--done .app-stepper__mark {
   border-color: var(--t-accent-strong);
 }
-.cockpit:has(.day-setup-screen) .app-stepper__sep {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .app-stepper__sep {
   width: 36px;
   height: 1.5px;
   background: var(--t-control-border);
 }
-.cockpit:has(.day-setup-screen) .header-pill {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .header-pill {
   border-color: var(--t-control-border);
   background: var(--t-card);
   color: var(--t-text);
   font-weight: 500;
 }
-.cockpit:has(.day-setup-screen) .health-pill {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .health-pill {
   border-color: transparent;
   background: transparent;
   padding-inline: 0;
   color: var(--t-muted);
 }
-.cockpit:has(.day-setup-screen) .health-pill--healthy {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .health-pill--healthy {
   color: var(--t-accent-strong);
 }
-.cockpit:has(.day-setup-screen) .health-pill--healthy::before {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .health-pill--healthy::before {
   content: "";
   width: 7px;
   height: 7px;
@@ -11203,75 +11203,75 @@ button.strip-cal {
 }
 
 /* Day strip: tinted tracks, ink-coloured lane names, 7px blocks. */
-.cockpit:has(.day-setup-screen) .day-strip__lane-label {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane-label {
   color: var(--t-muted);
   font-weight: 700;
 }
-.cockpit:has(.day-setup-screen) .day-strip__row:nth-child(2) .day-strip__lane-label {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__row:nth-child(2) .day-strip__lane-label {
   color: var(--lane-cal-ink);
 }
-.cockpit:has(.day-setup-screen) .day-strip__row:nth-child(3) .day-strip__lane-label {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__row:nth-child(3) .day-strip__lane-label {
   color: var(--lane-mint-ink);
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane-label--anchors {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane-label--anchors {
   color: var(--lane-anchor-ink);
 }
-.cockpit:has(.day-setup-screen) .day-strip__ticks {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__ticks {
   color: var(--t-muted);
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane {
   border-radius: var(--t-track-radius);
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane--calendar {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane--calendar {
   background: var(--lane-cal-tint);
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane--mint {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane--mint {
   background: var(--lane-mint-tint);
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane--mint-off {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane--mint-off {
   background: repeating-linear-gradient(
     135deg,
     var(--lane-mint-tint) 0 6px,
     color-mix(in srgb, var(--lane-mint-ink) 5%, var(--lane-mint-tint)) 6px 12px
   );
 }
-.cockpit:has(.day-setup-screen) .day-strip__lane--anchors {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .day-strip__lane--anchors {
   background: var(--lane-anchor-tint);
 }
-.cockpit:has(.day-setup-screen) .strip-cal,
-.cockpit:has(.day-setup-screen) .strip-anchor,
-.cockpit:has(.day-setup-screen) .strip-slot,
-.cockpit:has(.day-setup-screen) .strip-run {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-cal,
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-anchor,
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-slot,
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-run {
   border-radius: var(--t-block-radius);
 }
-.cockpit:has(.day-setup-screen) .strip-cal {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-cal {
   border-color: transparent;
   background: var(--lane-cal-block);
   color: var(--t-text);
   font-size: 12px;
 }
-.cockpit:has(.day-setup-screen) .strip-cal--work {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-cal--work {
   border: 1px solid var(--lane-mint-border);
   background: var(--lane-mint-block);
 }
-.cockpit:has(.day-setup-screen) .strip-anchor {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-anchor {
   border: 0;
   background: var(--lane-anchor-block);
   color: var(--t-text);
   font-size: 12px;
 }
-.cockpit:has(.day-setup-screen) .strip-anchor--not-counted,
-.cockpit:has(.day-setup-screen) .strip-anchor--skipped {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-anchor--not-counted,
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-anchor--skipped {
   border: 1px dashed var(--lane-anchor-off-border);
   background: transparent;
   color: var(--lane-anchor-off-ink);
 }
-.cockpit:has(.day-setup-screen) .strip-slot--selected,
-.cockpit:has(.day-setup-screen) .strip-run--selected {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-slot--selected,
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-run--selected {
   background: var(--lane-mint-block);
   color: var(--lane-mint-ink);
 }
-.cockpit:has(.day-setup-screen) .strip-slot--selected {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-slot--selected {
   border: 1px solid var(--lane-mint-border);
 }
 
@@ -11342,9 +11342,298 @@ button.strip-cal {
   font-size: 13px;
 }
 /* Lanes blocks follow the theme (derived dark fills), so inside labels do too. */
-.cockpit:has(.day-setup-screen) .strip-cal .strip-cal__label--inside {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-cal .strip-cal__label--inside {
   color: var(--t-text);
 }
-.cockpit:has(.day-setup-screen) .strip-cal--cancelled .strip-cal__label--inside {
+.cockpit:is(:has(.day-setup-screen), :has(.queue)) .strip-cal--cancelled .strip-cal__label--inside {
   color: var(--t-muted);
+}
+
+/* ---- Lanes · Plan (owner design, 2026-10-29) --------------------------------
+   Restyles the Plan screen only: everything below hangs off
+   `.cockpit:has(.queue)`, so Set up and the settings drawer are untouched.
+   Shell, header and day strip are shared with the Set up block above. Values
+   come from the --t-* / --lane-* tokens; chip hues stay in origin-tokens.css. */
+.cockpit:has(.queue) .cockpit__screen {
+  padding-bottom: 24px;
+}
+
+/* Page head: 28px/700 title, muted hint. */
+.cockpit:has(.queue) .queue__head h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.cockpit:has(.queue) .queue__head p {
+  color: var(--t-muted);
+  font-size: 14px;
+}
+.cockpit:has(.queue) .already-placed {
+  border: 0;
+  border-radius: var(--t-card-radius);
+  background: var(--t-card);
+  box-shadow: var(--t-card-shadow);
+}
+.cockpit:has(.queue) .already-placed__head h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Needs-a-look banner: a tinted pill-card, no border. */
+.cockpit:has(.queue) .capacities-look {
+  border: 0;
+  border-radius: 12px;
+  background: var(--lane-task-tint);
+  color: var(--lane-task-ink);
+}
+.cockpit:has(.queue) .capacities-look .btn {
+  border-radius: var(--t-pill-radius);
+}
+.cockpit:has(.queue) .capacities-look .btn--primary {
+  border: 0;
+  background: var(--t-accent-strong);
+  color: var(--t-on-accent);
+  font-weight: 600;
+}
+
+/* Group lanes: a tinted card with a 4px left rule in the group colour. */
+.cockpit:has(.queue) .tasktable {
+  --lane-ink: var(--t-muted);
+  --lane-tint: var(--lane-anchor-tint);
+  --lane-bar: var(--lane-anchor-bar);
+  padding: 12px 12px 12px 14px;
+  border-left: 4px solid var(--lane-bar);
+  border-radius: 12px;
+  background: var(--lane-tint);
+}
+.cockpit:has(.queue) .tasktable--critical {
+  --lane-ink: var(--lane-crit-ink);
+  --lane-tint: var(--lane-crit-tint);
+  --lane-bar: var(--lane-crit-bar);
+}
+.cockpit:has(.queue) .tasktable--fixed {
+  --lane-ink: var(--lane-cal-ink);
+  --lane-tint: var(--lane-cal-tint);
+  --lane-bar: var(--lane-cal-bar);
+}
+.cockpit:has(.queue) .tasktable--room {
+  --lane-ink: var(--lane-task-ink);
+  --lane-tint: var(--lane-task-tint);
+  --lane-bar: var(--t-accent);
+}
+.cockpit:has(.queue) .plan-grid__groups {
+  gap: 14px;
+}
+.cockpit:has(.queue) .band.band--lane {
+  padding: 0 4px;
+  border-left: 0;
+  align-items: baseline;
+}
+.cockpit:has(.queue) .band.band--lane .band__label {
+  color: var(--lane-ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.cockpit:has(.queue) .band.band--lane .band__note {
+  margin-left: auto;
+  color: var(--t-muted);
+}
+.cockpit:has(.queue) .tasktable__rows {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Task rows: white, 8px, hairline lift. */
+.cockpit:has(.queue) .queue__band .qrow.trow,
+.cockpit:has(.queue) .qrow.trow {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--t-card);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+.cockpit:has(.queue) .qrow__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.cockpit:has(.queue) .trow__state {
+  color: var(--t-muted);
+}
+
+/* Pill duration stepper: [-  1hr  +]. The range stays, transparent, over the
+   readout so dragging and keyboard still set the duration. */
+.cockpit:has(.queue) .dslider {
+  position: relative;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+}
+.cockpit:has(.queue) .dslider__top,
+.cockpit:has(.queue) .dslider__ctl {
+  display: contents;
+}
+.cockpit:has(.queue) .dslider__ctl > .dslider__step:first-child {
+  grid-column: 1;
+  grid-row: 1;
+}
+.cockpit:has(.queue) .dslider__ctl > .dslider__step:last-child {
+  grid-column: 3;
+  grid-row: 1;
+}
+.cockpit:has(.queue) .dslider__label {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cockpit:has(.queue) .dslider__range {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  opacity: 0;
+  cursor: ew-resize;
+  height: 100%;
+}
+.cockpit:has(.queue) .dslider__step {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--t-pill-radius);
+  background: transparent;
+  color: var(--t-muted);
+}
+.cockpit:has(.queue) .dslider__step:hover:not(:disabled) {
+  background: var(--t-seg);
+}
+.cockpit:has(.queue) .dslider:has(.dslider__range:focus-visible) {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+.cockpit:has(.queue) .dux-status {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  justify-content: center;
+  margin-top: 2px;
+}
+.cockpit:has(.queue) .dux-badge[data-state="source"] {
+  display: none;
+}
+
+/* Row actions: pill Mint, pill switch, round icon buttons. */
+.cockpit:has(.queue) .trow__mint {
+  border-color: var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+  padding-inline: 12px;
+}
+.cockpit:has(.queue) .trow__mint--on {
+  border-color: var(--lane-mint-border);
+  background: var(--lane-mint-block);
+  color: var(--lane-mint-ink);
+}
+.cockpit:has(.queue) .trow__switch {
+  width: 36px;
+  height: 20px;
+  border-radius: var(--t-pill-radius);
+}
+.cockpit:has(.queue) .trow__switch::after {
+  width: 14px;
+  height: 14px;
+}
+.cockpit:has(.queue) .trow__switch:checked::after {
+  left: 18px;
+}
+.cockpit:has(.queue) .trow__btn {
+  border-color: var(--t-control-border);
+  border-radius: 10px;
+  background: var(--t-card);
+}
+.cockpit:has(.queue) .trow__btn--primary {
+  border-color: var(--t-accent-strong);
+  background: var(--t-card);
+  color: var(--t-accent-strong);
+}
+.cockpit:has(.queue) .trow__btn--primary:hover:not(:disabled) {
+  background: var(--t-accent-subtle);
+}
+
+/* Not in plan: the grey lane. */
+.cockpit:has(.queue) .unassigned-today {
+  margin-top: 0;
+  padding: 12px 12px 12px 14px;
+  border-left: 4px solid var(--lane-anchor-bar);
+  border-radius: 12px;
+  background: var(--lane-anchor-tint);
+}
+.cockpit:has(.queue) .skipped-today__head {
+  border-left: 0;
+  padding-left: 4px;
+}
+.cockpit:has(.queue) .skipped-today__head h2 {
+  color: var(--lane-anchor-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Capacity card: white, 16px, soft shadow; the bar is a rounded track. */
+.cockpit:has(.queue) .cap-card {
+  border: 0;
+  border-radius: var(--t-card-radius);
+  background: var(--t-card);
+  box-shadow: var(--t-card-shadow);
+}
+.cockpit:has(.queue) .cap-card__headline {
+  font-weight: 700;
+}
+.cockpit:has(.queue) .cap-card__bar {
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cockpit:has(.queue) .cap-card__overflow {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--lane-crit-bar) 0 3px,
+    var(--lane-crit-tint) 3px 6px
+  );
+}
+.cockpit:has(.queue) .cap-card__mark {
+  background: var(--t-text);
+}
+
+/* Footer: 84px bar on a hairline, pill buttons, plain budget text. */
+.cockpit:has(.queue) .footer {
+  background: var(--t-canvas);
+  border-top-color: var(--t-hairline);
+}
+.cockpit:has(.queue) .footer__row {
+  min-height: 84px;
+  padding-block: 0;
+  padding-inline: 56px;
+}
+.cockpit:has(.queue) .footer .btn {
+  border: 1px solid var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+  color: var(--t-text);
+}
+.cockpit:has(.queue) .footer .btn--primary {
+  border: 0;
+  background: var(--t-accent-strong);
+  color: var(--t-on-accent);
+  font-weight: 600;
+}
+.cockpit:has(.queue) .footer .footer__budget {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--t-muted);
+  font-size: 13px;
 }

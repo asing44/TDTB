@@ -63,6 +63,9 @@
   --lane-habit: #f06fb4;
   --lane-habit-tint: #fdf0f7;
   --lane-habit-block: #f9d3e8;
+  --lane-crit-ink: #b42318;
+  --lane-crit-tint: #fdf1f1;
+  --lane-crit-bar: #e5484d;
 
   /* Semantic block colors — TDTB config Color Palette, verbatim hex.
      T24 2026-07-24: remapped to Adam's BusyCal day-view reference — gray
@@ -151,6 +154,9 @@
     --lane-habit: #f48cc3;
     --lane-habit-tint: #34202c;
     --lane-habit-block: #5a2f47;
+    --lane-crit-ink: #ff9d96;
+    --lane-crit-tint: #2b1a1a;
+    --lane-crit-bar: #d4545a;
   }
 }
 
@@ -201,6 +207,9 @@
   --lane-habit: #f06fb4;
   --lane-habit-tint: #fdf0f7;
   --lane-habit-block: #f9d3e8;
+  --lane-crit-ink: #b42318;
+  --lane-crit-tint: #fdf1f1;
+  --lane-crit-bar: #e5484d;
 }
 
 :root[data-theme="dark"] {
@@ -249,6 +258,9 @@
   --lane-habit: #f48cc3;
   --lane-habit-tint: #34202c;
   --lane-habit-block: #5a2f47;
+  --lane-crit-ink: #ff9d96;
+  --lane-crit-tint: #2b1a1a;
+  --lane-crit-bar: #d4545a;
 }
 
 * {
