@@ -11461,6 +11461,19 @@ button.strip-cal {
   color: var(--t-muted);
 }
 
+/* Pill duration column: wide enough for two 28px steppers plus "1hr 30min"
+   (9 mono chars) so the readout never touches the +/- ; below 1000px the
+   container tier hides the steppers and the readout stands alone. */
+@media (width > 1000px) {
+  .cockpit:has(.queue) .qrow.trow--dslider {
+    --trow-dur-w: 140px;
+  }
+}
+.cockpit:has(.queue) .dslider__label {
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+
 /* Pill duration stepper: [-  1hr  +]. The range stays, transparent, over the
    readout so dragging and keyboard still set the duration. */
 .cockpit:has(.queue) .dslider {
