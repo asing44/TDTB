@@ -44,6 +44,7 @@ from typing import Any
 
 import app_config
 import capacities_cache_io
+import capacities_intake
 from capacities_settings import canonical_exclusion_identity
 
 # ---------------------------------------------------------------------------
@@ -501,6 +502,74 @@ def expired_selections(
         if assignment.get("source_assigned") is False:
             expired.add(identity)
     return frozenset(expired)
+
+
+#: The tolerance ``capacities_intake`` already uses to decide that a set of type
+#: checks belongs to one full Refresh. The coverage rule below is the same
+#: question, so it reuses the same constant rather than defining a second one
+#: that could drift.
+_TYPE_COVERAGE_SKEW_SECONDS = capacities_intake._TYPE_CHECK_SKEW_SECONDS
+
+
+def absent_confirmed_selections(
+    selections: Iterable[SelectionRecord] | SelectionsRecord,
+    cached_rows: Iterable[Mapping[str, Any]],
+    type_check_times: Mapping[str, float] | None,
+) -> frozenset[str]:
+    """The stored identities a full refresh positively proved absent.
+
+    A selection whose identity matches no cached row is normally only a
+    ``not_cached`` notice: a cache gap must never delete owner data. This
+    helper narrows that to the one safe case — the latest published generation
+    *covered* the selection's structure, so an absent row means the object is
+    gone (closed, purchased, deleted, or unassigned in Capacities), not that
+    the cache never saw it.
+
+    ``type_check_times`` is the published snapshot's ``{structure_id: epoch
+    seconds}`` (as ``capacities_intake._type_warnings`` reads it). A structure
+    counts as covered when it is present in that mapping AND its check is not
+    materially older than the newest check in the same generation; a missing
+    entry, or one left behind by a single-type Rescan (or a retained type), is
+    not coverage.
+
+    Pure and read-only. An empty or missing ``type_check_times`` proves
+    nothing and returns an empty set. Rows are keyed by ``identity`` exactly
+    the way :func:`resolve_selections` reads them."""
+    if not type_check_times:
+        return frozenset()
+    checked: dict[str, float] = {}
+    for structure_id, checked_at in type_check_times.items():
+        if isinstance(checked_at, bool) or not isinstance(checked_at, (int, float)):
+            continue
+        checked[str(structure_id)] = float(checked_at)
+    if not checked:
+        return frozenset()
+    newest = max(checked.values())
+    if isinstance(selections, SelectionsRecord):
+        selections = selections.selections
+    cached_identities = {
+        row.get("identity")
+        for row in cached_rows
+        if isinstance(row, Mapping) and isinstance(row.get("identity"), str)
+    }
+
+    absent: set[str] = set()
+    for record in selections:
+        if isinstance(record, SelectionRecord):
+            identity = record.identity
+        elif isinstance(record, str):
+            identity = record
+        else:
+            raise ValueError("selections must contain SelectionRecord entries")
+        if identity in cached_identities:
+            continue
+        _space_id, structure_id = _identity_parts(identity)
+        checked_at = checked.get(structure_id)
+        if checked_at is None:
+            continue
+        if newest - checked_at <= _TYPE_COVERAGE_SKEW_SECONDS:
+            absent.add(identity)
+    return frozenset(absent)
 
 
 def resolve_selections(

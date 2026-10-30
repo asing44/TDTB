@@ -452,6 +452,98 @@ def test_expiry_selects_only_the_matching_identities():
 
 
 # ---------------------------------------------------------------------------
+# Confirmed absence: no cached row is only a real removal when the last full
+# refresh actually covered that structure.
+# ---------------------------------------------------------------------------
+
+CHECKED_TS = datetime(2026, 10, 10, 12, 0).timestamp()
+
+
+def test_absent_selection_expires_when_its_structure_was_just_checked():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    # Capacity's ``Project`` type was enumerated by the same full Refresh, so
+    # the missing row is real absence, not a cache gap.
+    assert cs.absent_confirmed_selections(
+        saved.selections, [], {"Project": CHECKED_TS},
+    ) == frozenset({IDENTITY})
+    # Pure: the helper never touches the store.
+    assert cs.load_selections(SPACE).selections == saved.selections
+
+
+def test_absent_selection_is_kept_when_its_structure_is_unchecked():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    assert cs.absent_confirmed_selections(
+        saved.selections, [], {"Task": CHECKED_TS},
+    ) == frozenset()
+
+
+def test_absent_selection_is_kept_when_its_check_is_materially_older():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    # A single-type Rescan refreshed ``Task`` only; ``Project``'s old check is
+    # carried forward and proves nothing about this generation.
+    assert cs.absent_confirmed_selections(
+        saved.selections,
+        [],
+        {"Project": CHECKED_TS - 600.0, "Task": CHECKED_TS},
+    ) == frozenset()
+
+
+def test_absent_selection_expires_inside_the_full_refresh_skew_window():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    # Types are checked one after another within one Refresh, so a sub-skew
+    # gap is the same generation and does count as coverage.
+    assert cs.absent_confirmed_selections(
+        saved.selections,
+        [],
+        {"Project": CHECKED_TS - 10.0, "Task": CHECKED_TS},
+    ) == frozenset({IDENTITY})
+
+
+@pytest.mark.parametrize("type_check_times", [{}, None])
+def test_absent_selection_is_kept_without_any_coverage_evidence(
+    type_check_times,
+):
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    assert cs.absent_confirmed_selections(
+        saved.selections, [], type_check_times,
+    ) == frozenset()
+
+
+def test_present_cached_row_is_never_confirmed_absent():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY), _entry(IDENTITY_2)],
+    )
+    absent = cs.absent_confirmed_selections(
+        saved.selections,
+        [_row(IDENTITY)],
+        {"Project": CHECKED_TS},
+    )
+    assert absent == frozenset({IDENTITY_2})
+
+
+# ---------------------------------------------------------------------------
 # U4 S4: GET/POST /capacities/selections (route level).
 #
 # The browser supplies only identities and flags. The server validates every

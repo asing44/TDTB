@@ -85,6 +85,7 @@ import capacities_intake  # noqa: E402
 import capacities_rules  # noqa: E402
 import capacities_selections  # noqa: E402
 import capacities_adapter  # noqa: E402
+import capacities_assignment  # noqa: E402
 import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
@@ -475,6 +476,36 @@ def _capacities_rules_payload(
     }
 
 
+def _published_generation_coverage(
+    space_id: str,
+) -> tuple[dict[str, float], frozenset[str]]:
+    """The installed Capacities generation's check times and member identities.
+
+    ``({}, frozenset())`` when no complete generation is installed, its
+    pointer is unusable, or the store cannot be opened: an unproven generation
+    is never coverage. An offline pointer read through the same refresh-state
+    store the direct intake reads, so no credential, no client, and no provider
+    call.
+    """
+    try:
+        store = capacities_builder.build_refresh_state(space_id)
+        snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
+    except Exception as exc:  # noqa: BLE001 — bounded local boundary
+        print(f"capacities generation read failed: {exc}", file=sys.stderr)
+        return {}, frozenset()
+    if snapshot is None:
+        return {}, frozenset()
+    return (
+        dict(snapshot.type_check_times),
+        frozenset(
+            capacities_assignment.CapacitiesIdentity(
+                space_id, member.type_key, member.object_id
+            ).qualified
+            for member in snapshot.members
+        ),
+    )
+
+
 def _promote_selected_capacities(
     today: date,
     pool_items: list[dict[str, Any]],
@@ -527,18 +558,43 @@ def _promote_selected_capacities(
         today, candidates, exclusion_policy,
     )
     expired = capacities_selections.expired_selections(pending, candidates)
-    if expired:
+    absent: frozenset[str] = frozenset()
+    if pending_identities - {
+        row.get("identity") for row in candidates
+    }:
+        # Only a pending identity with no cached row can be proved absent, so
+        # the generation pointer is read only when one actually is missing.
+        # Absence is real only when the last published generation covered that
+        # identity's structure (see ``absent_confirmed_selections``), and the
+        # generation's own members count as cached: under a non-direct row
+        # source (artifact or legacy mode) the rows here never came from the
+        # cache, so their absence must not read as absence from Capacities.
+        type_check_times, published = _published_generation_coverage(
+            source.space_id
+        )
+        absent = capacities_selections.absent_confirmed_selections(
+            pending,
+            [
+                *candidates,
+                *({"identity": identity} for identity in published),
+            ],
+            type_check_times,
+        )
+    removed = expired | absent
+    if removed:
         # Capacities-first: an owner selection whose Capacities object is no
-        # longer marked assigned expires at this refresh. The removal is
-        # persisted once, as a full replacement of every remaining stored
-        # record (including the ones already on the assigned surface), so the
-        # next build no longer sees it. A persistence failure never raises:
-        # promotion is still skipped and the notice still emits, and the next
-        # build retries the save. ``SelectionConflict`` is a
-        # ``SelectionStoreError``, so the one class covers a concurrent save.
+        # longer marked assigned expires at this refresh, and so does one the
+        # last full refresh proved gone (closed, purchased, deleted, or
+        # unassigned). Both kinds are removed by ONE save: a single full
+        # replacement of every remaining stored record (including the ones
+        # already on the assigned surface), so the next build no longer sees
+        # them. A persistence failure never raises: promotion is still skipped
+        # and the notice still emits, and the next build retries the save.
+        # ``SelectionConflict`` is a ``SelectionStoreError``, so the one class
+        # covers a concurrent save.
         remaining = [
             record for record in selections.selections
-            if record.identity not in expired
+            if record.identity not in removed
         ]
         try:
             capacities_selections.save_selections(
@@ -549,7 +605,7 @@ def _promote_selected_capacities(
         except (capacities_selections.SelectionStoreError, OSError):
             pass
         pending = tuple(
-            record for record in pending if record.identity not in expired
+            record for record in pending if record.identity not in removed
         )
     promoted, notices = capacities_selections.resolve_selections(
         pending,
@@ -562,7 +618,7 @@ def _promote_selected_capacities(
     )
     notices = [
         {"code": capacities_selections.NOTICE_EXPIRED, "identity": identity}
-        for identity in sorted(expired)
+        for identity in sorted(removed)
     ] + notices
     for row in promoted:
         # Server-owned basis marker (U4 rule-assigned admission): this row

@@ -24,6 +24,7 @@ import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
 import artifact_source as art  # noqa: E402
 import capacities_selections as sel  # noqa: E402
+import capacities_refresh_state as crs  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import runstate  # noqa: E402
 import shadow  # noqa: E402
@@ -540,6 +541,44 @@ def _seed_source(client) -> None:
     assert saved.status_code == 200, saved.text
 
 
+def _seed_source_structures(client, *structures) -> None:
+    """Save a source record mapping exactly ``structures``."""
+    saved = client.post(
+        "/settings/capacities/source/save",
+        headers=_auth(client),
+        json=_body(structures=list(structures)),
+    )
+    assert saved.status_code == 200, saved.text
+
+
+#: One full Refresh (every configured type checked within the skew window).
+PUBLISHED_TS = datetime(2026, 10, 9, 12, 0).timestamp()
+
+
+def _publish_generation(checked: dict[str, float]) -> None:
+    """Install one complete generation covering exactly the ``checked`` types.
+
+    A type absent from the mapping is one this generation did not check, and a
+    materially older check is a single-type Rescan; both prove no coverage."""
+    store = cb.build_refresh_state(SPACE)
+    store.install_generation(
+        crs.SnapshotEvidence(
+            scope_key="all",
+            revision=1,
+            required_types=tuple(sorted(checked)),
+            listings=tuple(
+                crs.TypeListing(
+                    type_key=type_id,
+                    object_ids=(),
+                    listing_checked_at=checked_at,
+                )
+                for type_id, checked_at in sorted(checked.items())
+            ),
+        ),
+        expected_generation=0,
+    )
+
+
 def _seed_selections(*records, space=SPACE, acknowledged=True) -> None:
     """Seed the selection store directly: ``(identity, rules_revision)`` pairs."""
     sel.save_selections(
@@ -670,6 +709,63 @@ class TestSelectionPromotionOnDigest:
         assert [record.identity for record in stored.selections] == [
             _identity("keep")
         ]
+        assert stored.revision == 1
+
+    def test_confirmed_absent_selection_is_removed_in_the_same_save(self, client):
+        _seed_source(client)
+        _seed_selections(
+            (_identity("keep"), 0), (_identity("gone"), 0), (_identity("done"), 0),
+        )
+        # One full Refresh enumerated ``RootTask``, so the missing ``gone`` row
+        # is real absence rather than a cache gap.
+        _publish_generation({"RootTask": PUBLISHED_TS})
+
+        digest = _digest(
+            client,
+            pool=[_cap_row("keep", source_assigned=False, assignment=True)],
+            # ``done`` is already on the assigned surface, so it is not
+            # pending; the removal must still keep its record.
+            assigned=[_cap_row("done")],
+        )
+
+        assert _names(digest["assigned"]) == ["done"]
+        assert _names(digest["suggested"]) == ["keep"]
+        removed_text = "was removed: its Capacities object is no longer assigned"
+        assert _notices_for(digest, _identity("keep")) == [
+            f"Capacities selection {_identity('keep')} {removed_text}"
+        ]
+        # Absence covers closed, purchased, deleted and unassigned objects, so
+        # both kinds carry the same notice text.
+        assert _notices_for(digest, _identity("gone")) == [
+            f"Capacities selection {_identity('gone')} {removed_text}"
+        ]
+
+        stored = sel.load_selections(SPACE)
+        assert [record.identity for record in stored.selections] == [
+            _identity("done")
+        ]
+        # ONE full replacement removed both kinds, not one save each.
+        assert stored.revision == 2
+
+    def test_not_cached_selection_survives_an_unchecked_structure(self, client):
+        _seed_source_structures(
+            client, _structure(), _structure(structure_id="Custom")
+        )
+        identity = _identity("gone", structure="Custom")
+        _seed_selections((identity, 0))
+        # The Refresh never enumerated ``Custom``: no cached row may still be
+        # a cache gap, so the selection keeps its existing notice.
+        _publish_generation({"RootTask": PUBLISHED_TS})
+
+        digest = _digest(client, pool=[])
+
+        assert _names(digest["assigned"]) == []
+        assert _notices_for(digest, identity) == [
+            f"Capacities selection {identity} was not promoted: "
+            "no cached Capacities row matches it"
+        ]
+        stored = sel.load_selections(SPACE)
+        assert [record.identity for record in stored.selections] == [identity]
         assert stored.revision == 1
 
     def test_promoted_row_still_hits_the_tag_exclusion_with_an_excluded_notice(
