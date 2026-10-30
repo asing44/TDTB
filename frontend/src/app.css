@@ -11777,3 +11777,67 @@ button.strip-cal {
 .cockpit:has(.queue) .capacities-look__list > li:only-child .btn {
   font-weight: 600;
 }
+
+/* Row leading controls (Lanes): the selection checkbox is a small outline
+   circle and Complete is a quiet outline circle — same two capabilities, the
+   shape the design uses for its one complete control. Selection still toggles
+   the batch set; Complete still completes. */
+.cockpit:has(.queue) .qrow.trow .trow__check {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--t-control-border);
+  border-radius: 50%;
+  background: transparent center / 12px no-repeat;
+  cursor: pointer;
+}
+.cockpit:has(.queue) .qrow.trow .trow__check:hover {
+  border-color: var(--t-accent-strong);
+}
+.cockpit:has(.queue) .qrow.trow .trow__check:checked {
+  border-color: var(--t-accent-strong);
+  background-color: var(--t-accent-strong);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-4.9' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.cockpit:has(.queue) .trow__acts > .trow__btn--primary.trow__btn--icon {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border: 1.5px solid color-mix(in srgb, var(--t-accent-strong) 60%, transparent);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--t-accent-strong);
+}
+.cockpit:has(.queue) .trow__acts > .trow__btn--primary.trow__btn--icon:hover:not(:disabled) {
+  border-color: var(--t-accent-strong);
+  background: var(--t-accent-subtle);
+}
+.cockpit:has(.queue) .trow__acts > .trow__btn--primary.trow__btn--icon:disabled {
+  border-color: var(--t-border);
+  color: var(--t-muted);
+}
+
+/* Row polish: controls sit on a fixed five-column track (Mint, switch,
+   Complete, calendar, expand) with an even 10px gap, so a row without a
+   calendar button keeps its chevron in the same column as every other row.
+   The lane heading gets room above the first row. */
+.cockpit:has(.queue) .trow__acts {
+  grid-template-columns: 52px 44px 32px 32px 32px;
+  gap: 10px;
+}
+.cockpit:has(.queue) .trow__acts > .trow__btn.trow__btn--icon:not(.trow__btn--primary) {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+.cockpit:has(.queue) .band.band--lane {
+  padding: 0 4px 2px;
+}
+.cockpit:has(.queue) .tasktable__rows {
+  gap: 8px;
+  margin-top: 12px;
+}
