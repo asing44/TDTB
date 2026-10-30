@@ -1,6 +1,7 @@
-/* tokens.css — calm DATA visual language (locked decision 5).
-   Teal accent, flat bordered surfaces, weights 400/500 only, no gradients or
-   shadows. Semantic block colors come verbatim from the live TDTB config
+/* tokens.css — calm DATA visual language (locked decision 5, revised for the
+   owner's Lanes design). Teal accent, bordered surfaces, weights 400/500 base
+   with 600/700 for headings and emphasis, one soft card shadow, no gradients.
+   Semantic block colors come verbatim from the live TDTB config
    `## Color Palette` (00 - META/Skill-Configs/tdtb-bridger.md). Theme is
    system-default with a persistent light/dark/system override that sets
    data-theme on <html>. */
@@ -29,6 +30,39 @@
   --t-border: #d9d7cd;
   --t-badge-neutral-bg: #d3d1c7;
   --t-badge-neutral-text: #444441;
+
+  /* Lanes surface set (owner design "Lanes", light). Page canvas, white card,
+     hairline rule, control border, segmented-control track, lane ink/tint/
+     block triples and the habit pair. Shared by Set up now and Plan later. */
+  --t-canvas: #fbfaf6;
+  --t-card: #ffffff;
+  --t-hairline: #ebe8df;
+  --t-control-border: #d9d7cd;
+  --t-seg: #f1efe8;
+  --t-seg-on: #ffffff;
+  --t-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --t-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --lane-cal-ink: #24648a;
+  --lane-cal-tint: #eef7fc;
+  --lane-cal-block: #cdebfa;
+  --lane-cal-bar: #7cc8f0;
+  --lane-anchor-ink: #5f5e5a;
+  --lane-anchor-tint: #f3f2ee;
+  --lane-anchor-block: #dcdad4;
+  --lane-anchor-off-border: #b5b2aa;
+  --lane-anchor-off-ink: #6b6862;
+  --lane-anchor-bar: #a9a6a0;
+  --lane-mint-ink: #8a5a00;
+  --lane-mint-tint: #fdf6ea;
+  --lane-mint-block: #fbe0b5;
+  --lane-mint-border: #f2a93b;
+  --lane-mint-bar: #f2a93b;
+  --lane-task-ink: #0f6e56;
+  --lane-task-tint: #f3faf6;
+  --lane-task-bar: #bfe6d4;
+  --lane-habit: #f06fb4;
+  --lane-habit-tint: #fdf0f7;
+  --lane-habit-block: #f9d3e8;
 
   /* Semantic block colors — TDTB config Color Palette, verbatim hex.
      T24 2026-07-24: remapped to Adam's BusyCal day-view reference — gray
@@ -64,6 +98,10 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 8px;
   --radius-sm: 5px;
+  --t-card-radius: 16px;
+  --t-track-radius: 10px;
+  --t-block-radius: 7px;
+  --t-pill-radius: 999px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -84,6 +122,35 @@
     --t-badge-neutral-bg: #3a3934;
     --t-badge-neutral-text: #c9c7c0;
     --c-template-anchored: #37373b;
+    --t-canvas: #141412;
+    --t-card: #1f1f1c;
+    --t-hairline: #2e2d29;
+    --t-control-border: #45443e;
+    --t-seg: #2b2a26;
+    --t-seg-on: #3a3934;
+    --t-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --t-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --lane-cal-ink: #8cc7ec;
+    --lane-cal-tint: #17262e;
+    --lane-cal-block: #1f4256;
+    --lane-cal-bar: #4f9fcc;
+    --lane-anchor-ink: #b5b3ab;
+    --lane-anchor-tint: #262623;
+    --lane-anchor-block: #3d3c37;
+    --lane-anchor-off-border: #6b6862;
+    --lane-anchor-off-ink: #a3a19a;
+    --lane-anchor-bar: #85837c;
+    --lane-mint-ink: #f0bf63;
+    --lane-mint-tint: #2b2312;
+    --lane-mint-block: #4d3a14;
+    --lane-mint-border: #c98a2a;
+    --lane-mint-bar: #d89529;
+    --lane-task-ink: #5fd4ae;
+    --lane-task-tint: #16261f;
+    --lane-task-bar: #2d5a49;
+    --lane-habit: #f48cc3;
+    --lane-habit-tint: #34202c;
+    --lane-habit-block: #5a2f47;
   }
 }
 
@@ -105,6 +172,35 @@
   --t-badge-neutral-bg: #d3d1c7;
   --t-badge-neutral-text: #444441;
   --c-template-anchored: #e5e7eb;
+  --t-canvas: #fbfaf6;
+  --t-card: #ffffff;
+  --t-hairline: #ebe8df;
+  --t-control-border: #d9d7cd;
+  --t-seg: #f1efe8;
+  --t-seg-on: #ffffff;
+  --t-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --t-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --lane-cal-ink: #24648a;
+  --lane-cal-tint: #eef7fc;
+  --lane-cal-block: #cdebfa;
+  --lane-cal-bar: #7cc8f0;
+  --lane-anchor-ink: #5f5e5a;
+  --lane-anchor-tint: #f3f2ee;
+  --lane-anchor-block: #dcdad4;
+  --lane-anchor-off-border: #b5b2aa;
+  --lane-anchor-off-ink: #6b6862;
+  --lane-anchor-bar: #a9a6a0;
+  --lane-mint-ink: #8a5a00;
+  --lane-mint-tint: #fdf6ea;
+  --lane-mint-block: #fbe0b5;
+  --lane-mint-border: #f2a93b;
+  --lane-mint-bar: #f2a93b;
+  --lane-task-ink: #0f6e56;
+  --lane-task-tint: #f3faf6;
+  --lane-task-bar: #bfe6d4;
+  --lane-habit: #f06fb4;
+  --lane-habit-tint: #fdf0f7;
+  --lane-habit-block: #f9d3e8;
 }
 
 :root[data-theme="dark"] {
@@ -124,6 +220,35 @@
   --t-badge-neutral-bg: #3a3934;
   --t-badge-neutral-text: #c9c7c0;
   --c-template-anchored: #37373b;
+  --t-canvas: #141412;
+  --t-card: #1f1f1c;
+  --t-hairline: #2e2d29;
+  --t-control-border: #45443e;
+  --t-seg: #2b2a26;
+  --t-seg-on: #3a3934;
+  --t-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --t-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --lane-cal-ink: #8cc7ec;
+  --lane-cal-tint: #17262e;
+  --lane-cal-block: #1f4256;
+  --lane-cal-bar: #4f9fcc;
+  --lane-anchor-ink: #b5b3ab;
+  --lane-anchor-tint: #262623;
+  --lane-anchor-block: #3d3c37;
+  --lane-anchor-off-border: #6b6862;
+  --lane-anchor-off-ink: #a3a19a;
+  --lane-anchor-bar: #85837c;
+  --lane-mint-ink: #f0bf63;
+  --lane-mint-tint: #2b2312;
+  --lane-mint-block: #4d3a14;
+  --lane-mint-border: #c98a2a;
+  --lane-mint-bar: #d89529;
+  --lane-task-ink: #5fd4ae;
+  --lane-task-tint: #16261f;
+  --lane-task-bar: #2d5a49;
+  --lane-habit: #f48cc3;
+  --lane-habit-tint: #34202c;
+  --lane-habit-block: #5a2f47;
 }
 
 * {

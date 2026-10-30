@@ -8,7 +8,8 @@ central files; change them there, not in components.
 | File | Owns |
 | --- | --- |
 | `frontend/src/origin-tokens.css` | Every chip colour: origin chips and Todoist label chips (light and dark) |
-| `frontend/src/tokens.css` | The theme: surfaces, text, state colours |
+| `frontend/src/tokens.css` | The theme: surfaces, text, state colours, and the shared Lanes tokens (`--t-*`, `--lane-*`) |
+| `frontend/src/app.css` | The "Lanes · Set up" block, scoped `.cockpit:has(.day-setup-screen)`; consumes the Lanes tokens |
 | `frontend/src/ui/settings-hub.css` | Settings hub spacing: `--hub-gap`, `--hub-pad` |
 
 ## Change a chip colour
@@ -65,3 +66,15 @@ Light value shown; the dark value is the same hue lightened 30%.
 | Weblink | teal | `--c-cap-weblink` | `#0f9aa8` |
 | Page | green | `--c-cap-page` | `#3aa04a` |
 | Whiteboard, Tag, Query | grey | `--c-cap-whiteboard / tag / query` | `#858a92` |
+
+## Lanes look (replaces the old locked rules)
+
+The old rules (no shadows, weights 400/500 only, small radii) no longer apply. Lanes, the owner's design, governs the Set up screen now and Plan later.
+
+- Cards: white surface, 16px radius, one soft shadow (`--t-card-shadow`), hairline `--t-hairline`. No other shadows except the segmented-control thumb (`--t-seg-shadow`).
+- Radii: card 16px, track 10px, block 7px, pills fully round (`--t-card-radius`, `--t-track-radius`, `--t-block-radius`, `--t-pill-radius`).
+- Weights: 400/500 for body, 600/700 for headings, lane labels and emphasis.
+- Controls are pills with a `--t-control-border`; segmented controls sit on `--t-seg` with a `--t-seg-on` thumb.
+- Each lane has an ink, tint and block triple: Calendar (`--lane-cal-*`), Anchors (`--lane-anchor-*`), Mint (`--lane-mint-*`), Tasks (`--lane-task-*`), plus the habit pair (`--lane-habit*`).
+- Dark is derived from light: every token has a dark value in `tokens.css` (system dark and forced dark). Text stays at least 4.5:1.
+- Still no gradients. Change a Lanes colour in `tokens.css` only, in both themes.

@@ -11047,3 +11047,297 @@ button.strip-cal {
   text-overflow: ellipsis;
   vertical-align: middle;
 }
+
+/* ---- Lanes · Set up (owner design, 2026-10-29) ------------------------------
+   Restyles the Set up screen only: the whole block hangs off
+   `.cockpit:has(.day-setup-screen)`, so Plan tasks and the settings drawer keep
+   their own rules. Values come from the --t-* / --lane-* tokens in tokens.css;
+   this block adds no colour of its own. Soft card shadow, 16px cards, pill
+   controls and 600/700 weights follow docs/ui-standards.md "Lanes surface". */
+.cockpit:has(.day-setup-screen),
+.cockpit:has(.day-setup-screen) .cockpit__main {
+  background: var(--t-canvas);
+}
+.cockpit:has(.day-setup-screen) .cockpit__main {
+  border-left: 0;
+}
+
+/* Page gutters: 56px body and footer, 36px header, as in the design. */
+.cockpit:has(.day-setup-screen) .cockpit__screen {
+  padding: 32px 56px;
+}
+.cockpit:has(.day-setup-screen) .app-header {
+  padding-inline: 36px;
+}
+.cockpit:has(.day-setup-screen) .footer--setup .footer__row {
+  padding-inline: 56px;
+}
+
+/* Header: 64px bar on a hairline, 18px/700 date, numbered circle stepper. */
+.cockpit:has(.day-setup-screen) .app-header {
+  min-height: 64px;
+  padding-block: 0;
+  background: var(--t-canvas);
+  border-bottom-color: var(--t-hairline);
+}
+.cockpit:has(.day-setup-screen) .app-header__day {
+  font-size: 18px;
+  font-weight: 700;
+}
+.cockpit:has(.day-setup-screen) .app-stepper__step {
+  gap: 8px;
+  padding: 4px 0;
+  min-height: 0;
+  background: transparent;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+.cockpit:has(.day-setup-screen) .app-stepper__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--t-control-border);
+  border-radius: 50%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 11px;
+}
+.cockpit:has(.day-setup-screen) .app-stepper__step--active {
+  background: transparent;
+  color: var(--t-text);
+  font-weight: 600;
+}
+.cockpit:has(.day-setup-screen) .app-stepper__step--active .app-stepper__mark {
+  background: var(--t-text);
+  border-color: var(--t-text);
+  color: var(--t-canvas);
+}
+.cockpit:has(.day-setup-screen) .app-stepper__step--done .app-stepper__mark {
+  border-color: var(--t-accent-strong);
+}
+.cockpit:has(.day-setup-screen) .app-stepper__sep {
+  width: 36px;
+  height: 1.5px;
+  background: var(--t-control-border);
+}
+.cockpit:has(.day-setup-screen) .header-pill {
+  border-color: var(--t-control-border);
+  background: var(--t-card);
+  color: var(--t-text);
+  font-weight: 500;
+}
+.cockpit:has(.day-setup-screen) .health-pill {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+  color: var(--t-muted);
+}
+.cockpit:has(.day-setup-screen) .health-pill--healthy {
+  color: var(--t-accent-strong);
+}
+.cockpit:has(.day-setup-screen) .health-pill--healthy::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--t-accent);
+}
+
+/* Cards: white, 16px, one soft shadow, no border. */
+.cockpit:has(.day-setup-screen) .setup-section,
+.cockpit:has(.day-setup-screen) .prompt-card {
+  border: 0;
+  border-radius: var(--t-card-radius);
+  background: var(--t-card);
+  box-shadow: var(--t-card-shadow);
+}
+.cockpit:has(.day-setup-screen) .day-setup-screen .setup-section {
+  padding: 20px 24px;
+}
+.cockpit:has(.day-setup-screen) .setup-section__head h3,
+.cockpit:has(.day-setup-screen) .your-day__title h3 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.cockpit:has(.day-setup-screen) .setup-section__hint {
+  color: var(--t-muted);
+  font-size: 13px;
+}
+
+/* Pill buttons and controls. */
+.cockpit:has(.day-setup-screen) .btn {
+  border: 1px solid var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background: var(--t-card);
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.cockpit:has(.day-setup-screen) .btn:not(:disabled):hover {
+  background: var(--t-seg);
+}
+.cockpit:has(.day-setup-screen) .btn--primary {
+  border: 0;
+  background: var(--t-accent-strong);
+  color: var(--t-on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 22px;
+}
+.cockpit:has(.day-setup-screen) .btn--primary:not(:disabled):hover {
+  background: var(--t-accent-text);
+  color: var(--t-card);
+}
+.cockpit:has(.day-setup-screen) .setup-section--your-day .frame-fields .field select,
+.cockpit:has(.day-setup-screen) .setup-section--your-day .frame-fields .field input {
+  border-color: var(--t-control-border);
+  border-radius: var(--t-pill-radius);
+  background-color: var(--t-card);
+}
+.cockpit:has(.day-setup-screen) .setup-section--your-day .frame-fields .field label {
+  color: var(--t-muted);
+}
+
+/* Day strip: tinted tracks, ink-coloured lane names, 7px blocks. */
+.cockpit:has(.day-setup-screen) .day-strip__lane-label {
+  color: var(--t-muted);
+  font-weight: 700;
+}
+.cockpit:has(.day-setup-screen) .day-strip__row:nth-child(2) .day-strip__lane-label {
+  color: var(--lane-cal-ink);
+}
+.cockpit:has(.day-setup-screen) .day-strip__row:nth-child(3) .day-strip__lane-label {
+  color: var(--lane-mint-ink);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane-label--anchors {
+  color: var(--lane-anchor-ink);
+}
+.cockpit:has(.day-setup-screen) .day-strip__ticks {
+  color: var(--t-muted);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane {
+  border-radius: var(--t-track-radius);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--calendar {
+  background: var(--lane-cal-tint);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint {
+  background: var(--lane-mint-tint);
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--mint-off {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--lane-mint-tint) 0 6px,
+    color-mix(in srgb, var(--lane-mint-ink) 5%, var(--lane-mint-tint)) 6px 12px
+  );
+}
+.cockpit:has(.day-setup-screen) .day-strip__lane--anchors {
+  background: var(--lane-anchor-tint);
+}
+.cockpit:has(.day-setup-screen) .strip-cal,
+.cockpit:has(.day-setup-screen) .strip-anchor,
+.cockpit:has(.day-setup-screen) .strip-slot,
+.cockpit:has(.day-setup-screen) .strip-run {
+  border-radius: var(--t-block-radius);
+}
+.cockpit:has(.day-setup-screen) .strip-cal {
+  border-color: transparent;
+  background: var(--lane-cal-block);
+  color: var(--t-text);
+  font-size: 12px;
+}
+.cockpit:has(.day-setup-screen) .strip-cal--work {
+  border: 1px solid var(--lane-mint-border);
+  background: var(--lane-mint-block);
+}
+.cockpit:has(.day-setup-screen) .strip-anchor {
+  border: 0;
+  background: var(--lane-anchor-block);
+  color: var(--t-text);
+  font-size: 12px;
+}
+.cockpit:has(.day-setup-screen) .strip-anchor--not-counted,
+.cockpit:has(.day-setup-screen) .strip-anchor--skipped {
+  border: 1px dashed var(--lane-anchor-off-border);
+  background: transparent;
+  color: var(--lane-anchor-off-ink);
+}
+.cockpit:has(.day-setup-screen) .strip-slot--selected,
+.cockpit:has(.day-setup-screen) .strip-run--selected {
+  background: var(--lane-mint-block);
+  color: var(--lane-mint-ink);
+}
+.cockpit:has(.day-setup-screen) .strip-slot--selected {
+  border: 1px solid var(--lane-mint-border);
+}
+
+/* Habits: pink pair for the counted state. */
+.cockpit:has(.day-setup-screen) .habits-card .setup-section__head {
+  align-items: center;
+}
+
+/* Morning prompts: heading row on the canvas, four white cards. */
+.cockpit:has(.day-setup-screen) .setup-section--prompts {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.cockpit:has(.day-setup-screen) .day-setup-screen .setup-section--prompts {
+  padding: 0;
+}
+.cockpit:has(.day-setup-screen) .setup-section--prompts .setup-section__head {
+  align-items: baseline;
+}
+.cockpit:has(.day-setup-screen) .setup-section--prompts .setup-section__head h3 {
+  font-size: 18px;
+}
+.cockpit:has(.day-setup-screen) .prompts-grid {
+  gap: 12px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card {
+  padding: 16px 18px;
+  gap: 10px;
+}
+.cockpit:has(.day-setup-screen) .prompt-card__labelrow label {
+  color: var(--t-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.cockpit:has(.day-setup-screen) .day-setup-screen .setup-section--prompts .prompt-card textarea,
+.cockpit:has(.day-setup-screen) .prompt-card__controls select,
+.cockpit:has(.day-setup-screen) .prompt-card__controls input {
+  border: 0;
+  border-bottom: 1.5px solid var(--t-control-border);
+  border-radius: 0;
+  background-color: transparent;
+}
+.cockpit:has(.day-setup-screen) .live-micro__custom-link,
+.cockpit:has(.day-setup-screen) .prompts-foot .custom-prompt__open,
+.cockpit:has(.day-setup-screen) .setup-section__head-action {
+  color: var(--t-accent-strong);
+}
+.cockpit:has(.day-setup-screen) .live-micro__custom-link:hover,
+.cockpit:has(.day-setup-screen) .prompts-foot .custom-prompt__open:hover {
+  color: var(--t-accent-text);
+}
+
+/* Footer: 84px bar on a hairline with the pill primary. */
+.cockpit:has(.day-setup-screen) .footer--setup {
+  background: var(--t-canvas);
+  border-top-color: var(--t-hairline);
+}
+.cockpit:has(.day-setup-screen) .footer--setup .footer__row {
+  min-height: 84px;
+  padding-block: 0;
+}
+.cockpit:has(.day-setup-screen) .footer--setup .footer__budget {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
