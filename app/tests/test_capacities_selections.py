@@ -365,6 +365,93 @@ def test_resolver_promotes_in_selection_order_and_stays_silent_when_current():
 
 
 # ---------------------------------------------------------------------------
+# Expiry: a stored selection must not outlive Capacities' Assigned marker.
+# ---------------------------------------------------------------------------
+
+def _assignment_row(identity: str, *, source_assigned=None, with_record=True) -> dict:
+    """A cached row carrying the adapter's compact ``capacities_assignment``."""
+    row = _row(identity)
+    if with_record:
+        row["capacities_assignment"] = {
+            "mode": "manual",
+            "reasons": [],
+            "source_assigned": source_assigned,
+            "excluded": False,
+        }
+    return row
+
+
+def test_explicit_capacities_negative_expires_the_selection():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    expired = cs.expired_selections(
+        saved.selections, [_assignment_row(IDENTITY, source_assigned=False)],
+    )
+    assert expired == frozenset({IDENTITY})
+    # Pure: the helper never touches the store.
+    assert cs.load_selections(SPACE).selections == saved.selections
+
+
+@pytest.mark.parametrize("source_assigned", [None, True])
+def test_unset_or_positive_assignment_never_expires(source_assigned):
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    assert cs.expired_selections(
+        saved.selections, [_assignment_row(IDENTITY, source_assigned=source_assigned)],
+    ) == frozenset()
+
+
+def test_missing_cached_row_never_expires_a_selection():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    # A cache gap must never delete owner data: it stays a not_cached notice.
+    assert cs.expired_selections(saved.selections, []) == frozenset()
+    assert cs.expired_selections(
+        saved.selections, [_assignment_row(IDENTITY_2, source_assigned=False)],
+    ) == frozenset()
+
+
+def test_row_without_an_assignment_record_never_expires_a_selection():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[_entry(IDENTITY)],
+    )
+    assert cs.expired_selections(
+        saved.selections, [_assignment_row(IDENTITY, with_record=False)],
+    ) == frozenset()
+
+
+def test_expiry_selects_only_the_matching_identities():
+    saved = cs.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[
+            _entry(IDENTITY),
+            _entry(IDENTITY_2),
+            _entry(f"capacities:{SPACE}:Project:obj-3"),
+        ],
+    )
+    expired = cs.expired_selections(
+        saved.selections,
+        [
+            _assignment_row(IDENTITY, source_assigned=False),
+            _assignment_row(IDENTITY_2, source_assigned=True),
+        ],
+    )
+    assert expired == frozenset({IDENTITY})
+
+
+# ---------------------------------------------------------------------------
 # U4 S4: GET/POST /capacities/selections (route level).
 #
 # The browser supplies only identities and flags. The server validates every

@@ -442,6 +442,14 @@ describe("Capacities selection notices (advisory)", () => {
     ).toBe("ok");
   });
 
+  it("does not let a removed selection hold sequencing", () => {
+    expect(
+      sourceHealthOf([
+        `Capacities selection ${id} was removed: its Capacities object is no longer assigned`,
+      ]),
+    ).toBe("ok");
+  });
+
   it("keeps unreadable selection records blocking", () => {
     expect(
       sourceHealthOf([

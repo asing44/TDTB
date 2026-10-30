@@ -1660,13 +1660,16 @@ const advisoryCapacitiesReviewNotice =
   /^Capacities review — \d+ unassigned candidate\(s\) not fully evaluated:/;
 
 /** A stored owner selection the intake did not promote (excluded, its type is
-    unmapped, or no cached row matches it) or promoted under older rules. The
-    server words it ``Capacities selection <identity> was not promoted: ...`` or ``... was promoted, but ...``.
+    unmapped, or no cached row matches it), promoted under older rules, or
+    removed because Capacities no longer marks the object assigned. The
+    server words it ``Capacities selection <identity> was not promoted: ...``,
+    ``... was promoted, but ...``, or ``... was removed: its Capacities object
+    is no longer assigned``.
     The object simply is not in today's plan; nothing failed to read, so it
     must not hold sequencing. The unreadable/malformed-record warnings use a
     different sentence and stay blocking. */
 const advisorySelectionNotice =
-  /^\s*Capacities selection \S+ was (?:not promoted: |promoted, but ).+$/;
+  /^\s*Capacities selection \S+ was (?:not promoted: |promoted, but |removed: ).+$/;
 
 /** Every warning that does NOT block commit or sequence. The list is explicit
     and closed: an unrecognised warning stays blocking, so a future server

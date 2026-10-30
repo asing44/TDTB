@@ -65,6 +65,10 @@ NOTICE_NOT_CACHED = "not_cached"
 #: The row was promoted, but the decision was made under a different rules
 #: revision than the caller's current one (a warning, not a removal).
 NOTICE_RULE_CHANGED = "rule_changed"
+#: The matched cached row carries an explicit Capacities negative for
+#: assignment (``source_assigned`` is ``False``): the owner's Capacities-first
+#: decision wins, so the caller removes the stored selection.
+NOTICE_EXPIRED = "expired"
 
 _TOP_KEYS = frozenset({"version", "revision", "space_id", "selections"})
 _SELECTION_KEYS = frozenset({"identity", "rules_revision", "acknowledged"})
@@ -443,6 +447,61 @@ def save_selections(
 # ---------------------------------------------------------------------------
 # Pure resolver
 # ---------------------------------------------------------------------------
+
+def expired_selections(
+    selections: Iterable[SelectionRecord] | SelectionsRecord,
+    cached_rows: Iterable[Mapping[str, Any]],
+) -> frozenset[str]:
+    """The stored identities whose owner selection has expired.
+
+    A selection has expired when the matched cached row says Capacities no
+    longer has it assigned.
+
+    Pure and read-only; the caller decides what to do with the result. The
+    owner works Capacities-first, so Capacities' ``Assigned`` marker is the
+    human decision and a TDTB selection must not outlive it.
+
+    A selection expires only when the cached row matched by ``identity``
+    carries ``capacities_assignment.source_assigned is False`` — an explicit
+    Capacities negative (for example an unticked ``Assigned`` checkbox). It
+    does NOT expire when:
+
+    * ``source_assigned`` is ``None`` or ``True`` (a Task with no assignment
+      declaration is ``None`` and must keep working);
+    * no cached row carries the identity (that stays a ``not_cached`` notice:
+      a cache gap must never delete owner data);
+    * the row carries no ``capacities_assignment`` record at all.
+
+    Rows are keyed by ``identity`` and read exactly the way
+    :func:`resolve_selections` reads them."""
+    if isinstance(selections, SelectionsRecord):
+        selections = selections.selections
+    rows_by_identity: dict[str, Mapping[str, Any]] = {}
+    for row in cached_rows:
+        if not isinstance(row, Mapping):
+            continue
+        identity = row.get("identity")
+        if isinstance(identity, str) and identity not in rows_by_identity:
+            rows_by_identity[identity] = row
+
+    expired: set[str] = set()
+    for record in selections:
+        if isinstance(record, SelectionRecord):
+            identity = record.identity
+        elif isinstance(record, str):
+            identity = record
+        else:
+            raise ValueError("selections must contain SelectionRecord entries")
+        row = rows_by_identity.get(identity)
+        if row is None:
+            continue
+        assignment = row.get("capacities_assignment")
+        if not isinstance(assignment, Mapping):
+            continue
+        if assignment.get("source_assigned") is False:
+            expired.add(identity)
+    return frozenset(expired)
+
 
 def resolve_selections(
     selections: Iterable[SelectionRecord] | SelectionsRecord,

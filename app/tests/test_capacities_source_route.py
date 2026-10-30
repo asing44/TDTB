@@ -498,7 +498,8 @@ def _identity(object_id, *, structure="RootTask", space=SPACE):
 
 def _cap_row(
     object_id, *, structure="RootTask", assigned=False, tags=(),
-    review_reasons=None, rule=None, basis=None,
+    review_reasons=None, rule=None, basis=None, source_assigned=None,
+    assignment=False,
 ):
     row = {
         "id": object_id, "name": object_id,
@@ -520,6 +521,15 @@ def _cap_row(
         row["capacities_rule"] = dict(rule)
     if basis is not None:
         row["capacities_assignment_basis"] = basis
+    if assignment:
+        # The adapter's compact assignment record; ``source_assigned`` is the
+        # Capacities-first signal expiry reads.
+        row["capacities_assignment"] = {
+            "mode": "manual",
+            "reasons": [],
+            "source_assigned": source_assigned,
+            "excluded": False,
+        }
     return row
 
 
@@ -603,6 +613,64 @@ class TestSelectionPromotionOnDigest:
         assert digest["assigned_count"] == 1
         assert digest["pool_count"] == 1
         assert "source_warnings" not in digest
+
+    def test_unassigned_in_capacities_expires_the_selection(self, client):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0), (_identity("done"), 0))
+
+        digest = _digest(
+            client,
+            pool=[_cap_row("keep", source_assigned=False, assignment=True)],
+            # ``done`` is already on the assigned surface, so it is not
+            # pending; the removal must still keep its record.
+            assigned=[_cap_row("done")],
+        )
+
+        # Capacities-first: the object is no longer marked assigned there, so
+        # the owner selection no longer promotes it and the record is gone.
+        assert _names(digest["assigned"]) == ["done"]
+        assert _names(digest["suggested"]) == ["keep"]
+        notices = _notices_for(digest, _identity("keep"))
+        assert notices == [
+            f"Capacities selection {_identity('keep')} was removed: "
+            "its Capacities object is no longer assigned"
+        ]
+
+        reloaded = sel.load_selections(SPACE)
+        assert [record.identity for record in reloaded.selections] == [
+            _identity("done")
+        ]
+        assert reloaded.revision == 2
+
+    def test_expired_selection_is_not_promoted_even_if_the_save_fails(
+        self, client, monkeypatch
+    ):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+
+        def _conflict(**_kwargs):
+            raise sel.SelectionConflict(expected_revision=0, current_revision=7)
+
+        monkeypatch.setattr(sel, "save_selections", _conflict)
+
+        digest = _digest(client, pool=[
+            _cap_row("keep", source_assigned=False, assignment=True),
+        ])
+
+        # A failed persistence never raises and never promotes; the notice
+        # still surfaces and the next build retries the removal.
+        assert _names(digest["assigned"]) == []
+        assert _names(digest["suggested"]) == ["keep"]
+        assert _notices_for(digest, _identity("keep")) == [
+            f"Capacities selection {_identity('keep')} was removed: "
+            "its Capacities object is no longer assigned"
+        ]
+
+        stored = sel.load_selections(SPACE)
+        assert [record.identity for record in stored.selections] == [
+            _identity("keep")
+        ]
+        assert stored.revision == 1
 
     def test_promoted_row_still_hits_the_tag_exclusion_with_an_excluded_notice(
         self, client

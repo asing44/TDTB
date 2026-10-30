@@ -201,6 +201,8 @@ _SELECTION_NOTICE_TEXT = {
         "was not promoted: no cached Capacities row matches it",
     capacities_selections.NOTICE_RULE_CHANGED:
         "was promoted, but its selection predates the current rules revision",
+    capacities_selections.NOTICE_EXPIRED:
+        "was removed: its Capacities object is no longer assigned",
 }
 _SELECTIONS_UNAPPLIED_WARNING = (
     "Capacities selections were not applied: a Capacities record is "
@@ -524,6 +526,31 @@ def _promote_selected_capacities(
     hard_excluded = _capacities_hard_excluded(
         today, candidates, exclusion_policy,
     )
+    expired = capacities_selections.expired_selections(pending, candidates)
+    if expired:
+        # Capacities-first: an owner selection whose Capacities object is no
+        # longer marked assigned expires at this refresh. The removal is
+        # persisted once, as a full replacement of every remaining stored
+        # record (including the ones already on the assigned surface), so the
+        # next build no longer sees it. A persistence failure never raises:
+        # promotion is still skipped and the notice still emits, and the next
+        # build retries the save. ``SelectionConflict`` is a
+        # ``SelectionStoreError``, so the one class covers a concurrent save.
+        remaining = [
+            record for record in selections.selections
+            if record.identity not in expired
+        ]
+        try:
+            capacities_selections.save_selections(
+                space_id=source.space_id,
+                expected_revision=selections.revision,
+                selections=remaining,
+            )
+        except (capacities_selections.SelectionStoreError, OSError):
+            pass
+        pending = tuple(
+            record for record in pending if record.identity not in expired
+        )
     promoted, notices = capacities_selections.resolve_selections(
         pending,
         candidates,
@@ -533,6 +560,10 @@ def _promote_selected_capacities(
         },
         hard_excluded=frozenset(hard_excluded),
     )
+    notices = [
+        {"code": capacities_selections.NOTICE_EXPIRED, "identity": identity}
+        for identity in sorted(expired)
+    ] + notices
     for row in promoted:
         # Server-owned basis marker (U4 rule-assigned admission): this row
         # reached the assigned surface through an explicit selection record,
