@@ -559,7 +559,7 @@ def test_projection_uses_the_app_effective_date_not_date_today(
     served only once the rollover moves the logical day to 10-10."""
     _save_record()
     _publish(
-        [_object("root-due", ROOT, assigned=True, due="2026-10-10")],
+        [_object("root-due", ROOT, assigned=False, due="2026-10-10")],
         structures=_contract(),
     )
     monkeypatch.setattr(ci, "date", _NoToday)
@@ -576,7 +576,7 @@ def test_default_clock_path_uses_the_effective_date(
 ):
     _save_record()
     _publish(
-        [_object("root-due", ROOT, assigned=True, due="2026-10-10")],
+        [_object("root-due", ROOT, assigned=False, due="2026-10-10")],
         structures=_contract(),
     )
     monkeypatch.setattr(ci, "date", _NoToday)
