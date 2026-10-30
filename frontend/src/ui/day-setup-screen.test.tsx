@@ -70,11 +70,12 @@ describe("U12 Set up day composition", () => {
     const r = h.ui(<App />);
     expect(r.getByRole("heading", { name: "Shape your day" })).toBeTruthy();
     expect(r.getByRole("heading", { name: "Morning prompts" })).toBeTruthy();
-    expect(r.queryByRole("heading", { name: "Anchors" })).toBeNull();    expect(
-      r.getByText("What already claims time today. Click an anchor to edit it; drag to move, drag its right edge to resize, or pick Mint sessions."),
+    expect(r.queryByRole("heading", { name: "Anchors" })).toBeNull();
+    expect(
+      r.getByText("What already claims time today. Tap an anchor to switch it off for today; drag to move, drag its edge to resize."),
     ).toBeTruthy();
     expect(r.getByTestId("day-strip")).toBeTruthy();
-    expect(r.getByRole("button", { name: /Continue to tasks/ })).toBeTruthy();
+    expect(r.getByRole("button", { name: /Continue to plan/ })).toBeTruthy();
   });
 
   it("keeps a duplicate calendar event whose counted copy is the work copy", () => {
@@ -173,13 +174,19 @@ describe("U12 Set up day composition", () => {
     expect(r.getByText(/Mint 7 of 8 sessions/)).toBeTruthy();
   });
 
-  it("opens the anchor popover from a strip block and the editor from Edit items", () => {
+  it("toggles an anchor from a strip block and opens the popover from its Edit affordance", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
-    const block = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
-    expect(block).toBeTruthy();
-    fireEvent.click(block);
+    const block = () => r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
+    expect(block()).toBeTruthy();
+    // Lanes: a tap switches the anchor off for today and opens no popover.
+    fireEvent.click(block());
     expect(h.store.getState().ui.editorAnchor).toBeNull();
+    expect(r.queryByRole("dialog", { name: "Sudsing" })).toBeNull();
+    expect(block().getAttribute("aria-pressed")).toBe("false");
+    expect(block().classList.contains("strip-anchor--skipped")).toBe(true);
+    // The Edit affordance beside the block is the way into the popover.
+    fireEvent.click(r.getByRole("button", { name: "Edit Sudsing" }));
     expect(r.getByRole("dialog", { name: "Sudsing" })).toBeTruthy();
     fireEvent.click(r.getByRole("button", { name: "Edit items" }));
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
@@ -227,7 +234,8 @@ describe("U12 Set up day composition", () => {
     expect(sh.classList.contains("strip-anchor--not-counted")).toBe(false);
     expect(sh.classList.contains("strip-anchor--movable")).toBe(true);
     // No outside-frame reason or "isn't counted" hint: the switch is on.
-    fireEvent.click(sh);
+    expect(sh.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(r.getByRole("button", { name: "Edit Showering" }));
     expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true");
     expect(r.queryByRole("note")).toBeNull();
   });
@@ -272,11 +280,11 @@ describe("U12 Set up day composition", () => {
     expect((row.querySelector(".all-blocks__status") as HTMLElement).textContent).toBe("counted");
   });
 
-  it("selects an anchor block when it is clicked", () => {
+  it("opens an anchor block from its Edit affordance, not a bare tap", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
     const block = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
-    fireEvent.click(block);
+    fireEvent.click(r.getByRole("button", { name: "Edit Sudsing" }));
     expect(block.classList.contains("strip-anchor--selected")).toBe(true);
     expect(r.getByRole("dialog", { name: "Sudsing" })).toBeTruthy();
   });
@@ -335,7 +343,7 @@ describe("U12 Set up day composition", () => {
     expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
   });
 
-  it("hides a skipped anchor from the strip and keeps it reachable via All blocks", () => {
+  it("keeps a skipped in-frame anchor drawn, and reachable via All blocks", () => {
     const h = screenHarness();
     const before = h.store.getState().daySetup;
     h.store.dispatch({
@@ -349,8 +357,12 @@ describe("U12 Set up day composition", () => {
       },
     });
     const r = h.ui(<App />);
-    // A skipped anchor is not drawn; the note keeps it reachable via All blocks.
-    expect(r.container.querySelector('[data-anchor-id="Sudsing"]')).toBeNull();
+    // Lanes: a switched-off anchor stays on the strip, dashed and struck
+    // through, so the same tap turns it back on; All blocks still lists it.
+    const block = () => r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement | null;
+    expect(block()).toBeTruthy();
+    expect(block()!.getAttribute("aria-pressed")).toBe("false");
+    expect(block()!.classList.contains("strip-anchor--skipped")).toBe(true);
     fireEvent.click(r.getByRole("button", { name: /hidden today/ }));
     expect(
       r.getByRole("switch", { name: "Count Sudsing today" }).getAttribute("aria-checked"),
@@ -470,7 +482,7 @@ describe("Planning 2a Morning prompts", () => {
     const h = screenHarness("fresh");
     const r = h.ui(<App />);
     expect(h.store.getState().daySetup.confirmed).toBe(false);
-    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    fireEvent.click(r.getByRole("button", { name: /Continue to plan/ }));
     await vi.waitFor(() => {
       expect(h.store.getState().ui.screen).toBe("plan");
     });
@@ -587,8 +599,8 @@ describe("anchor move and save to config", () => {
     await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:00"));
     fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowLeft", shiftKey: true });
     await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("17:00"));
-    fireEvent.click(strip(r, "Sudsing"));
-    // the click selects (the popover opens); the editor is reached from it
+    fireEvent.click(r.getByRole("button", { name: "Edit Sudsing" }));
+    // the Edit affordance selects (the popover opens); the editor is reached from it
     expect(h.store.getState().ui.editorAnchor).toBeNull();
     fireEvent.click(r.getByRole("button", { name: "Edit items" }));
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
@@ -937,7 +949,7 @@ describe("elapsed anchors default off and are assignable", () => {
     fireEvent.click(r.getByRole("button", { name: "Done" }));
     const block = () => r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement | null;
     // The popover Start field opens at the frame start and is editable.
-    fireEvent.click(block()!);
+    fireEvent.click(r.getByRole("button", { name: "Edit Morning Routine" }));
     const starts = r.getByLabelText("Starts") as HTMLInputElement;
     expect(starts.value).toBe("13:30");
     fireEvent.change(starts, { target: { value: "14:00" } });

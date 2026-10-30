@@ -16,7 +16,7 @@ function Host({ onSave, initial = EMPTY, variant = info }: { onSave: (v: HabitOv
 }
 const setup = (onSave = vi.fn().mockResolvedValue(undefined), extra: Partial<Parameters<typeof Host>[0]> = {}) => {
   const r = render(<Host onSave={onSave} {...extra} />);
-  const opener = r.getByRole('button', {name:'Review habits'});
+  const opener = r.getByRole('button', {name:'Pick habits'});
   opener.focus(); fireEvent.click(opener);
   return { r, onSave };
 };
@@ -97,7 +97,7 @@ it('editor applies presets, typed minutes, rejects out of range and resets', asy
 });
 it('Esc and backdrop close and focus returns to the opener', () => {
   const { r } = setup();
-  const opener = r.getByRole('button', {name:'Review habits'});
+  const opener = r.getByRole('button', {name:'Pick habits'});
   fireEvent.keyDown(r.getByRole('dialog'), {key:'Escape'});
   expect(r.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(opener);
@@ -137,7 +137,7 @@ const pending = () => vi.fn().mockReturnValue(new Promise<void>(() => {}));
 it('bulk stays natively enabled while saving and Esc closes from body or dialog', () => {
   for (const target of ['body', 'dialog'] as const) {
     const { r } = setup(pending());
-    const opener = r.getByRole('button', {name:'Review habits'});
+    const opener = r.getByRole('button', {name:'Pick habits'});
     const bulk = r.getByRole('button', {name:'Turn off all 3 habits'}) as HTMLButtonElement;
     bulk.focus(); fireEvent.click(bulk);
     expect(r.getByText('Saving…')).toBeTruthy();
@@ -158,7 +158,7 @@ it('a click on aria-disabled bulk while saving is ignored', () => {
 });
 it('stepper tap keeps focus on the stepper while saving and Esc still closes', () => {
   const { r } = setup(pending());
-  const opener = r.getByRole('button', {name:'Review habits'});
+  const opener = r.getByRole('button', {name:'Pick habits'});
   const inc = r.getByLabelText('Increase Reading minutes by 5') as HTMLButtonElement;
   inc.focus(); fireEvent.click(inc);
   expect(inc.disabled).toBe(false);

@@ -91,8 +91,8 @@ export function Footer() {
               {s.daySetup.confirmed
                 ? `Saved ${display12h(s.inputs.time.now)}`
                 : "Not saved yet"}
+              {s.ledger ? ` · ${s.ledger.remaining}/${s.ledger.cap} calls left` : ""}
             </span>
-            <DayBudgetChip />
           </div>
           <div class="footer__right">
             <button class="footer__undo" onClick={() => requestSetupUndo()}>
@@ -102,7 +102,7 @@ export function Footer() {
               class="btn btn--primary footer__continue"
               onClick={() => requestSetupContinue()}
             >
-              Continue to tasks →
+              Continue to plan →
             </button>
           </div>
         </div>

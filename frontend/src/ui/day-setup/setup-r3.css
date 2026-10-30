@@ -1,0 +1,127 @@
+/* Set up screen, round 3: quiet single-card timeline. Scoped to
+   .day-setup-screen and loaded after app.css. Amber values are the design
+   language's --amber-soft / --amber pairs (proposed, owner to confirm). */
+.day-setup-screen {
+  --r3-mint-fill: light-dark(#f3e6c7, #493a25);
+  --r3-mint-line: light-dark(#a87428, #e1b866);
+  --r3-mint-ink: light-dark(#6b4710, #f3e6c7);
+  --r3-anchor-fill: light-dark(#dedbd3, #3a3934);
+  --r3-anchor-ink: light-dark(#3a3934, #e8e6e0);
+}
+
+/* Anchors: flat grey blocks, struck-through and dashed when off today. */
+.day-setup-screen .strip-anchor {
+  background: var(--r3-anchor-fill);
+  color: var(--r3-anchor-ink);
+  border-radius: 4px;
+}
+.day-setup-screen .strip-anchor--not-counted,
+.day-setup-screen .strip-anchor--skipped {
+  background: transparent;
+  border: 1px dashed var(--t-control-border);
+  color: var(--t-muted);
+  opacity: 1;
+}
+.day-setup-screen .strip-anchor--not-counted .strip-anchor__name,
+.day-setup-screen .strip-anchor--skipped .strip-anchor__name {
+  text-decoration: line-through;
+}
+.day-setup-screen .strip-anchor[aria-pressed] { cursor: pointer; }
+.day-setup-screen .strip-anchor--movable { cursor: pointer; }
+
+/* Edit affordance: hidden until the block is hovered or focused. */
+.day-setup-screen .strip-anchor__edit {
+  position: absolute;
+  transform: translateX(-100%);
+  z-index: 3;
+  height: 16px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--t-control-border);
+  background: var(--t-card);
+  color: var(--t-text);
+  opacity: 0;
+}
+.day-setup-screen .strip-anchor:hover + .strip-anchor__edit,
+.day-setup-screen .strip-anchor:focus-visible + .strip-anchor__edit,
+.day-setup-screen .strip-anchor__edit:hover,
+.day-setup-screen .strip-anchor__edit:focus-visible {
+  opacity: 1;
+}
+
+/* Resize handles appear on hover only (no always-visible grips). */
+.day-setup-screen .strip-cal__resize { opacity: 0; }
+.day-setup-screen .strip-anchor:hover ~ .strip-cal__resize,
+.day-setup-screen .strip-cal:hover ~ .strip-cal__resize,
+.day-setup-screen .strip-cal__resize:hover,
+.day-setup-screen .strip-cal__resize:focus-visible { opacity: 1; }
+
+/* Mint: a chosen session is one soft amber block; open slots are ghosts that
+   appear on hover. */
+.day-setup-screen .strip-slot--selected {
+  background: var(--r3-mint-fill);
+  border: 1px solid var(--r3-mint-line);
+  border-radius: 5px;
+  box-shadow: none;
+  color: var(--r3-mint-ink);
+}
+.day-setup-screen .strip-slot--selected .strip-slot__label {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 24px;
+}
+.day-setup-screen .strip-slot--available {
+  background: transparent;
+  border: 1px dashed transparent;
+}
+.day-setup-screen .day-strip__lane--mint:hover .strip-slot--available,
+.day-setup-screen .strip-slot--available:focus-visible {
+  border-color: var(--r3-mint-line);
+  background: color-mix(in srgb, var(--r3-mint-fill) 45%, transparent);
+}
+
+/* Frame controls live behind "Adjust frame" below the card. */
+.day-setup-screen .setup-adjust { margin-top: 12px; }
+.day-setup-screen .setup-adjust__summary {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+.day-setup-screen .setup-adjust[open] .setup-adjust__summary { margin-bottom: 8px; }
+
+/* Mint slider and warnings: calm text under the card, not a banner. */
+.day-setup-screen .frame-summary {
+  background: transparent;
+  border: 0;
+  padding: 8px 0 0;
+  box-shadow: none;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+.day-setup-screen .field-warning {
+  background: transparent;
+  border: 0;
+  padding: 4px 0 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+
+/* Habits: one quiet row. */
+.day-setup-screen .habits-card__summary {
+  font-size: 13px;
+  color: var(--t-muted);
+  margin-right: auto;
+}
+.day-setup-screen .habits-card__pick { margin-left: auto; }
+
+/* Footer: left status is plain muted text. */
+.footer--setup .footer__saved { color: var(--t-muted); }

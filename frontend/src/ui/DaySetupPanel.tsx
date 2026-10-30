@@ -45,6 +45,7 @@ import { dayFrame } from "../model/dayFrame";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { displayAnchored } from "../model/calendarEvents";
 import { DayStrip } from "./day-setup/DayStrip";
+import "./day-setup/setup-r3.css";
 import { AnchorPopover, CalendarPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
 import { PromptsCard } from "./day-setup/PromptsCard";
 import { HabitsCard } from "./day-setup/HabitsCard";
@@ -695,6 +696,9 @@ export function DaySetupPanel({
             ? { start: source.start, end: source.end }
             : undefined,
         counted,
+        // Fully elapsed before the frame AND off: the strip hides it behind the
+        // note. A re-included elapsed anchor is drawn at the frame edge.
+        elapsed: placement.elapsed && !counted,
         // The override intent, independent of frame clipping; the popover's
         // Count today switch shows this, while `counted` stays for the strip.
         counting: on,
@@ -853,7 +857,7 @@ export function DaySetupPanel({
             <header class="setup-page-head">
               <h1 id="setup-sec-frame" class="setup-page-head__title">Shape your day</h1>
               <p class="setup-page-head__intro">
-                What already claims time today. Click an anchor to edit it; drag to move, drag its right edge to resize, or pick Mint sessions.
+                What already claims time today. Tap an anchor to switch it off for today; drag to move, drag its edge to resize.
               </p>
             </header>
             {micro.pendingConfirm && (
@@ -869,6 +873,28 @@ export function DaySetupPanel({
               data-settings-section="frame"
               aria-labelledby="setup-sec-frame"
             >
+              <DayStrip
+                frameStart={frameStart}
+                frameEnd={frameEnd}
+                sessions={availableMintSessions}
+                selectedIds={selectedMintSessionIds}
+                selectableIds={selectableMintSessionIds}
+                onSelectIds={(ids) => setMintSelection(ids)}
+                onToggleSession={toggleMintSession}
+                anchors={stripAnchors}
+                calendar={stripCalendar}
+                selectedAnchorId={selectedAnchor}
+                onSelectAnchor={(id) => setSelectedAnchor(id)}
+                onToggleAnchor={toggleAnchorSkip}
+                onMoveAnchor={(id, start) => moveBlock(id, start)}
+                onResizeEvent={resizeBlock}
+                resizeStepMin={STRIP_RESIZE_BLOCK_MIN}
+                resizeMaxMin={resizeMaxMin}
+                onShowAllBlocks={() => setAllBlocksOpen(true)}
+              />
+
+              <details class="setup-adjust" data-testid="setup-adjust">
+                <summary class="setup-adjust__summary">Adjust frame</summary>
               <div class="your-day__head">
                 <div class="your-day__title">
                   <button
@@ -940,25 +966,7 @@ export function DaySetupPanel({
                   </div>
                 </div>
               </div>
-
-              <DayStrip
-                frameStart={frameStart}
-                frameEnd={frameEnd}
-                sessions={availableMintSessions}
-                selectedIds={selectedMintSessionIds}
-                selectableIds={selectableMintSessionIds}
-                onSelectIds={(ids) => setMintSelection(ids)}
-                onToggleSession={toggleMintSession}
-                anchors={stripAnchors}
-                calendar={stripCalendar}
-                selectedAnchorId={selectedAnchor}
-                onSelectAnchor={(id) => setSelectedAnchor(id)}
-                onMoveAnchor={(id, start) => moveBlock(id, start)}
-                onResizeEvent={resizeBlock}
-                resizeStepMin={STRIP_RESIZE_BLOCK_MIN}
-                resizeMaxMin={resizeMaxMin}
-                onShowAllBlocks={() => setAllBlocksOpen(true)}
-              />
+              </details>
 
               {availableMintSessions.length > 0 && (
                 <div class="frame-summary" role="status">

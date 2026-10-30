@@ -135,7 +135,8 @@ describe("Day budget allowance", () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { screen: "setup" } });
     const r = h.ui(<Footer />);
-    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
+    // Lanes: the allowance rides the save-state line rather than a separate chip.
+    expect(r.getByText(/4\/4 calls left/)).toBeTruthy();
   });
 
   it("states unavailable rather than inventing a count when there is no ledger", () => {

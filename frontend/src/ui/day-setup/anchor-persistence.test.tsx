@@ -56,10 +56,10 @@ type R = ReturnType<ReturnType<typeof makeHarness>["ui"]>;
 const block = (r: R, id: string) =>
   r.container.querySelector(`[data-anchor-id="${id}"]`) as HTMLElement;
 
-/** Click the strip block and return the opened popover dialog. */
+/** Use the block's Edit affordance (a tap on the block itself toggles it) and return the opened popover dialog. */
 function openPopover(h: ReturnType<typeof screenHarness>, id = "Sudsing") {
   const r = h.ui(<App />);
-  fireEvent.click(block(r, id));
+  fireEvent.click(r.getByRole("button", { name: `Edit ${id}` }));
   const dialog = r.getByRole("dialog", { name: id });
   return { r, dialog };
 }
@@ -151,7 +151,7 @@ describe("Set up day screen anchor persistence (popover)", () => {
     fireEvent.input(start, { target: { value: "09:15" } });
     expect(start.value).toBe("09:15");
 
-    fireEvent.click(block(r, "Foods Breakfast"));
+    fireEvent.click(r.getByRole("button", { name: "Edit Foods Breakfast" }));
     expect(r.getByRole("dialog", { name: "Foods Breakfast" })).toBeTruthy();
 
     const sw = r.getByRole("switch", { name: "Count today" });

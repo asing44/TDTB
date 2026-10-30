@@ -169,6 +169,9 @@ export interface DayStripProps {
   anchors: StripAnchor[];
   /** Click / Enter / Space on a block selects it (the popover opens under it). */
   onSelectAnchor: (id: string) => void;
+  /** When given, a tap on an anchor toggles it off/on for today and the popover
+      moves to a small edit affordance beside the block. */
+  onToggleAnchor?: (id: string) => void;
   /** Today's calendar events, drawn on their own read-only lane. */
   calendar?: StripCalendarEvent[];
   /** Called once per completed move (pointer drop or arrow key) with the new
@@ -190,6 +193,17 @@ export interface DayStripProps {
   resizeMaxMin?: number;
   /** Opens the All blocks modal from the "N hidden today" note. */
   onShowAllBlocks?: () => void;
+}
+
+/** The visible label of a Mint slot: a chosen session reads "Mint session · 1h";
+    an unchosen ghost slot keeps its own name. */
+function slotText(session: { name: string; start: string; end: string }, selected: boolean): string {
+  if (!selected) return session.name;
+  const mins = toMinutes(session.end) - toMinutes(session.start);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const dur = mins <= 0 ? "" : h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`;
+  return dur ? `Mint session · ${dur}` : "Mint session";
 }
 
 export function DayStrip(props: DayStripProps) {
@@ -398,9 +412,13 @@ export function DayStrip(props: DayStripProps) {
   const onAnchorPointerCancel = (e: PointerEvent) => {
     if (anchorDrag.current) endAnchorDrag(e.currentTarget as HTMLElement, e.pointerId);
   };
-  const onAnchorClick = (id: string) => {
+  const onAnchorClick = (id: string, lane: "anchor" | "calendar" = "calendar") => {
     if (suppressAnchorClick.current) {
       suppressAnchorClick.current = false;
+      return;
+    }
+    if (lane === "anchor" && props.onToggleAnchor) {
+      props.onToggleAnchor(id);
       return;
     }
     props.onSelectAnchor(id);
@@ -600,8 +618,18 @@ export function DayStrip(props: DayStripProps) {
   // lists them); the open one stays so its popover keeps its anchor.
   const isHiddenAnchor = (anchor: StripAnchor) =>
     anchor.id !== props.selectedAnchorId && (!anchor.counted || anchor.elapsed === true);
+  // A tap-to-toggle row that sits inside the frame stays drawn while off
+  // (dashed and struck through) so the same tap switches it back on; rows the
+  // frame cannot reach still hide behind the "hidden today" note.
+  const skippedVisible = (anchor: StripAnchor) =>
+    props.onToggleAnchor !== undefined &&
+    anchor.reason === "skipped" &&
+    anchor.elapsed !== true &&
+    toMinutes(anchor.start) < endMin;
   const hiddenAnchors = props.anchors.filter(isHiddenAnchor).length;
-  const drawnAnchors = props.anchors.filter((anchor) => !isHiddenAnchor(anchor));
+  const drawnAnchors = props.anchors.filter(
+    (anchor) => !isHiddenAnchor(anchor) || skippedVisible(anchor),
+  );
   const floorMin = MIN_VISIBLE_W / pxPerMin;
   const placedAnchors = drawnAnchors
     .map((anchor) => ({
@@ -1057,7 +1085,7 @@ export function DayStrip(props: DayStripProps) {
                     data-state={state}
                     aria-hidden="true"
                   >
-                    <span class="strip-slot__label">{session.name}</span>
+                    <span class="strip-slot__label">{slotText(session, selected)}</span>
                   </span>
                 );
               }
@@ -1078,7 +1106,7 @@ export function DayStrip(props: DayStripProps) {
                   onKeyDown={(e) => onSlotKeyDown(e as unknown as KeyboardEvent, index)}
                   key={session.id}
                 >
-                  <span class="strip-slot__label">{session.name}</span>
+                  <span class="strip-slot__label">{slotText(session, selected)}</span>
                 </button>
               );
             })
@@ -1217,13 +1245,29 @@ export function DayStrip(props: DayStripProps) {
                   onKeyDown={(e) =>
                     onAnchorKeyDown(e as unknown as KeyboardEvent, anchorSubject(anchor), movable)
                   }
-                  onClick={() => onAnchorClick(anchor.id)}
+                  onClick={() => onAnchorClick(anchor.id, "anchor")}
+                  aria-pressed={props.onToggleAnchor ? anchor.counted : undefined}
                 >
                   {nameLabel}
                   {showMeta(anchor, visiblePx) && (
                     <span class="strip-anchor__meta">{metaText(anchor)}</span>
                   )}
                 </button>
+                {props.onToggleAnchor && !dragging && (
+                  <button
+                    type="button"
+                    class="strip-anchor__edit"
+                    style={{
+                      left: `${leftPct + widthPct}%`,
+                      top: `${ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH}px`,
+                    }}
+                    aria-label={`Edit ${anchor.name}`}
+                    title={`Edit ${anchor.name}`}
+                    onClick={() => props.onSelectAnchor(anchor.id)}
+                  >
+                    Edit
+                  </button>
+                )}
                 {resizable &&
                   !dragging &&
                   renderResizeHandle(anchorResizeSubject(anchor), {

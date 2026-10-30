@@ -1,7 +1,7 @@
 import { useRef, useState } from 'preact/hooks';
 import { habitsView, parseHabitMinutes, withHabitEntry } from '../../model/habits';
 import type { HabitOverrides, HabitsInfo } from '../../model/types';
-import { HabitsDrawer, blocksText, type HabitsSaveStatus } from './HabitsDrawer';
+import { HabitsDrawer, type HabitsSaveStatus } from './HabitsDrawer';
 
 const SAVE_FAILED = 'Could not save habits. Your previous settings were restored.';
 
@@ -37,8 +37,8 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
     return <section class="setup-section habits-card" aria-labelledby="setup-sec-habits">
       <div class="setup-section__head">
         <h3 id="setup-sec-habits">Habits</h3>
-        <span>{`${view.habitCount} ${view.habitCount === 1 ? 'habit' : 'habits'} · ${view.countedMinutes} min counted · ${blocksText(view.countedMinutes)}${off ? ` · ${off} off` : ''}`}</span>
-        <button type="button" class="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Review habits</button>
+        <span class="habits-card__summary">{`${view.rows.length - off} of ${view.rows.length} on · ${view.countedMinutes}m`}</span>
+        <button type="button" class="btn habits-card__pick" aria-haspopup="dialog" onClick={() => setOpen(true)}>Pick habits</button>
       </div>
       {open && <HabitsDrawer view={view} overrides={overrides}
         dateLabel={dateLabel ?? todayLabel()} status={status} error={error}

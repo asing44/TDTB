@@ -209,14 +209,14 @@ describe("overlap warning", () => {
 });
 
 describe("calendar Count today survives Continue (2026-10-15 stale draft)", () => {
-  it("keeps a popover Count today OFF through Continue to tasks", async () => {
+  it("keeps a popover Count today OFF through Continue to plan", async () => {
     const h = screenHarness();
     const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
     const { r } = open(h);
     fireEvent.click(r.getByRole("switch", { name: "Count today" }));
     await waitFor(() => expect(saved(h)?.skipToday).toBe(true));
     save.mockClear();
-    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    fireEvent.click(r.getByRole("button", { name: /Continue to plan/ }));
     await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
     expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(true);
     expect(saved(h)?.skipToday).toBe(true);
@@ -231,7 +231,7 @@ describe("calendar Count today survives Continue (2026-10-15 stale draft)", () =
     await waitFor(() => expect(saved(h)?.skipToday).toBe(true));
     fireEvent.click(r.getByRole("button", { name: "Done" }));
     save.mockClear();
-    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    fireEvent.click(r.getByRole("button", { name: /Continue to plan/ }));
     await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
     expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(true);
     expect(saved(h)?.skipToday).toBe(true);
@@ -247,7 +247,7 @@ describe("calendar Count today survives Continue (2026-10-15 stale draft)", () =
     fireEvent.click(sw());
     await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
     save.mockClear();
-    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    fireEvent.click(r.getByRole("button", { name: /Continue to plan/ }));
     await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
     expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(false);
     expect(saved(h)?.skipToday).toBe(false);
