@@ -11690,3 +11690,29 @@ button.strip-cal {
   color: var(--t-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* Empty lane: one slim line — the lane label with "nothing here" inline —
+   instead of a full-height tinted box. Pure CSS via :has(), no markup. */
+.cockpit:has(.queue) .tasktable:has(.queue__empty) {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-height: 40px;
+  padding-block: 8px;
+  box-sizing: border-box;
+}
+.cockpit:has(.queue) .tasktable:has(.queue__empty) .band.band--lane {
+  flex: none;
+  width: auto;
+  padding: 0 4px;
+}
+.cockpit:has(.queue) .tasktable:has(.queue__empty) .band__note {
+  display: none;
+}
+.cockpit:has(.queue) .tasktable:has(.queue__empty) .tasktable__rows {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+.cockpit:has(.queue) .tasktable:has(.queue__empty) .queue__empty {
+  padding: 0;
+}
