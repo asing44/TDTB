@@ -236,3 +236,25 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* The wide commit sheet keeps one pill close control in the top-right corner. */
+.drawer--commit .drawer__close {
+  top: 20px;
+  right: 22px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 13px;
+  line-height: 1;
+}
+.drawer--commit .drawer__close:hover,
+.drawer--commit .drawer__close:focus-visible {
+  background: var(--t-surface-2, var(--t-surface));
+  border-color: var(--t-muted);
+}
