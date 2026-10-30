@@ -351,3 +351,52 @@
   outline: 2px solid var(--c-habit, #f472b6);
   outline-offset: 2px;
 }
+
+/* --- Tidy pass (30 Oct, owner screenshot) -------------------------------- */
+/* The Mint controls are frame knobs: they live inside "Adjust frame" with the
+   other frame fields, so the card keeps one quiet summary line. */
+.day-setup-screen .setup-adjust .frame-summary {
+  margin-top: 8px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--t-hairline);
+  border-radius: 0;
+  background: transparent;
+  color: var(--t-muted);
+  font-size: 12px;
+  gap: 4px 14px;
+}
+.day-setup-screen .setup-adjust .frame-summary__mint { color: var(--t-text); font-weight: 500; }
+.day-setup-screen .setup-adjust .frame-summary__free { color: var(--t-muted); }
+
+/* Notes: one compact row under the strip. */
+.day-setup-screen .day-strip__notes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+  margin-top: 2px;
+}
+.day-setup-screen .day-strip__notes .day-strip__note,
+.day-setup-screen .day-strip__notes .day-strip__hidden-note {
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--t-muted);
+}
+.day-setup-screen .day-strip__notes .day-strip__hidden-note {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Less air around the disclosure so the card ends soon after the strip. */
+.day-setup-screen .setup-adjust { margin-top: 6px; }
+
+/* Lanes stay nearly card-coloured: only the blocks carry the colour. */
+.day-setup-screen .day-strip__lane--calendar {
+  background: color-mix(in srgb, var(--lane-cal-tint) 55%, var(--t-card));
+}
+.day-setup-screen .day-strip__lane--mint,
+.day-setup-screen .day-strip__lane--mint-off {
+  background: color-mix(in srgb, var(--lane-mint-tint) 45%, var(--t-card));
+}

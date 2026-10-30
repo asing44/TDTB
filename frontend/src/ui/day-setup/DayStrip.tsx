@@ -1355,19 +1355,22 @@ export function DayStrip(props: DayStripProps) {
         </div>
       </div>
 
-      {hiddenAnchors > 0 &&
-        (props.onShowAllBlocks && !props.readOnly ? (
-          <button type="button" class="day-strip__hidden-note" onClick={props.onShowAllBlocks}>
-            {hiddenAnchors} hidden today — All blocks
-          </button>
-        ) : (
-          <p class="day-strip__note">{hiddenAnchors} hidden today</p>
-        ))}
-
-      {hiddenSessions > 0 && (
-        <p class="day-strip__note">
-          {hiddenSessions} Mint block{hiddenSessions === 1 ? "" : "s"} outside the frame
-        </p>
+      {(hiddenAnchors > 0 || hiddenSessions > 0) && (
+        <div class="day-strip__notes">
+          {hiddenAnchors > 0 &&
+            (props.onShowAllBlocks && !props.readOnly ? (
+              <button type="button" class="day-strip__hidden-note" onClick={props.onShowAllBlocks}>
+                {hiddenAnchors} hidden today — All blocks
+              </button>
+            ) : (
+              <span class="day-strip__note">{hiddenAnchors} hidden today</span>
+            ))}
+          {hiddenSessions > 0 && (
+            <span class="day-strip__note">
+              {hiddenSessions} Mint block{hiddenSessions === 1 ? "" : "s"} outside the frame
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

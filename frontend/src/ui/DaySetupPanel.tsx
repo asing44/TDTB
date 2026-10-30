@@ -966,38 +966,38 @@ export function DaySetupPanel({
                   </div>
                 </div>
               </div>
-              </details>
-
               {availableMintSessions.length > 0 && (
                 <div class="frame-summary" role="status">
                   <span class="frame-summary__mint">
-                    Mint {selectedMintSessionIds.length} of {availableMintSessions.length} sessions ·{" "}
-                    {allotmentLabel}
-                  </span>
+                      Mint {selectedMintSessionIds.length} of {availableMintSessions.length} sessions ·{" "}
+                      {allotmentLabel}
+                    </span>
                   <span class="frame-summary__free">
-                    Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
-                  </span>
+                      Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
+                    </span>
                   <label class="frame-summary__blocks" for="setup-mint-blocks">
-                    <span>Mint blocks</span>
-                    <input
-                      id="setup-mint-blocks"
-                      type="range"
-                      class="field__range"
-                      min={0}
-                      max={mintSelectionMax}
-                      step={1}
-                      value={selectedMintSessionIds.length}
-                      aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
-                      onInput={(e) =>
-                        setMintSessionCount(Number((e.target as HTMLInputElement).value))
-                      }
-                    />
-                  </label>
+                      <span>Mint blocks</span>
+                      <input
+                        id="setup-mint-blocks"
+                        type="range"
+                        class="field__range"
+                        min={0}
+                        max={mintSelectionMax}
+                        step={1}
+                        value={selectedMintSessionIds.length}
+                        aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
+                        onInput={(e) =>
+                          setMintSessionCount(Number((e.target as HTMLInputElement).value))
+                        }
+                      />
+                    </label>
                   <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
                     Reset to config
                   </button>
                 </div>
               )}
+              </details>
+
               {allotmentError && (
                 <span class="field-error" role="alert">Use nonnegative 15-minute increments.</span>
               )}
