@@ -39,7 +39,7 @@ import {
   keyboardTargetMinutes,
   resizeTargetMinutes,
 } from "./anchorDrag";
-import { compactClock, compactHour, compactRange } from "./compactTime";
+import { compactClock, compactHour } from "./compactTime";
 import "../strip-resize.css";
 import "../day-strip-contrast.css";
 
@@ -852,7 +852,15 @@ export function DayStrip(props: DayStripProps) {
   });
   const runCaption = (run: { state: string; start: number; end: number }) => {
     const length = run.end - run.start;
-    if (run.state === "selected") return length >= 90 ? compactRange(run.start, run.end) : null;
+    if (run.state === "selected") {
+      if (length < 90) return null;
+      // A chosen Mint run is one session block, named by its length rather
+      // than by the wall clock (the popover/title carry the times).
+      const h = Math.floor(length / 60);
+      const m = length % 60;
+      const dur = h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`;
+      return `Mint session · ${dur}`;
+    }
     if (length >= 300) return "Blocked by Wall";
     return length >= 60 ? "Wall" : null;
   };

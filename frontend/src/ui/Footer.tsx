@@ -85,7 +85,6 @@ export function Footer() {
   if (onSetup && s.inputs) {
     return (
       <footer class="footer footer--setup" aria-label="Actions">
-        <FooterBanners />
         <div class="footer__row">
           <div class="footer__left">
             <span class="footer__saved" role="status">
@@ -94,6 +93,9 @@ export function Footer() {
                 : "Not saved yet"}
               {s.ledger ? ` · ${s.ledger.remaining}/${s.ledger.cap} calls left` : ""}
             </span>
+            {/* The alert roll-up rides the status line on Set up (as the
+                design draws "· 1 warning"), not as a floating pill. */}
+            <FooterBanners />
           </div>
           <div class="footer__right">
             <button class="footer__undo" onClick={() => requestSetupUndo()}>

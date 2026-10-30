@@ -125,3 +125,135 @@
 
 /* Footer: left status is plain muted text. */
 .footer--setup .footer__saved { color: var(--t-muted); }
+
+/* --- Owner review (30 Oct) ------------------------------------------------ */
+/* 1. Lanes read as faint tracks, not coloured bands: mix each tint back
+      toward the card so only the blocks carry colour. */
+.day-setup-screen .day-strip__lane--calendar {
+  background: color-mix(in srgb, var(--lane-cal-tint) 45%, var(--t-card));
+}
+.day-setup-screen .day-strip__lane--anchors {
+  background: color-mix(in srgb, var(--lane-anchor-tint) 55%, var(--t-card));
+}
+.day-setup-screen .day-strip__lane--mint {
+  background: color-mix(in srgb, var(--lane-mint-tint) 45%, var(--t-card));
+}
+.day-setup-screen .day-strip__lane--mint-off {
+  background: color-mix(in srgb, var(--lane-mint-tint) 30%, var(--t-card));
+}
+
+/* 2. A window anchor is one flat block; the dashed window track said nothing
+      the popover does not. */
+.day-setup-screen .strip-anchor__window { display: none; }
+
+/* 3. "Adjust frame" is a disclosure row at the card edge, not loose text. */
+.day-setup-screen .setup-adjust {
+  margin-top: 10px;
+  border-top: 1px solid var(--t-hairline);
+  padding-top: 6px;
+}
+.day-setup-screen .setup-adjust__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--t-muted);
+  list-style: none;
+  cursor: pointer;
+}
+.day-setup-screen .setup-adjust__summary::-webkit-details-marker { display: none; }
+.day-setup-screen .setup-adjust__summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+}
+.day-setup-screen .setup-adjust[open] .setup-adjust__summary::after {
+  transform: rotate(-135deg) translateY(-1px);
+}
+.day-setup-screen .setup-adjust[open] .setup-adjust__summary { margin-bottom: 6px; }
+
+/* 4. Mint summary: one muted line, thin quiet slider, reset on the right. */
+.day-setup-screen .frame-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 10px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--t-hairline);
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.day-setup-screen .frame-summary__mint { color: var(--t-text); }
+.day-setup-screen .frame-summary__free {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.day-setup-screen .frame-summary__blocks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.day-setup-screen .frame-summary__blocks .field__range {
+  width: 132px;
+  height: 14px;
+  accent-color: var(--t-muted);
+}
+.day-setup-screen .frame-summary__reset {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* 5. Strip notes: one compact muted row, the link still a link. */
+.day-setup-screen .day-strip__hidden-note,
+.day-setup-screen .day-strip__note {
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--t-muted);
+  text-align: left;
+}
+.day-setup-screen .day-strip__hidden-note {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 6. The page keeps room under the last card so the footer never covers it. */
+.day-setup-screen__stack { padding-bottom: 96px; }
+
+/* 7. The Set up footer puts the alert roll-up on the status line: the pill
+      reads like the design's "· 1 warning" instead of floating above the bar. */
+.footer--setup .footer__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.footer--setup .alert-pills { position: static; }
+.footer--setup .alert-pills__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.footer--setup .alert-pill {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+.footer--setup .alert-pill span[aria-hidden="true"] { margin-right: 4px; }
