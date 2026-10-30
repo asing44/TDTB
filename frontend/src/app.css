@@ -11654,7 +11654,7 @@ button.strip-cal {
 /* Set up — Allotment card: one stacked bar of where the day goes. */
 .allotment-card .setup-section__head .allotment-card__summary {
   margin-left: auto;
-  color: var(--t-text-2, var(--lane-anchor-ink));
+  color: var(--t-muted);
 }
 .allotment-card__bar {
   display: flex;
@@ -11687,6 +11687,6 @@ button.strip-cal {
   border-radius: 3px;
 }
 .allotment-card__value {
-  color: var(--t-text-2, var(--lane-anchor-ink));
+  color: var(--t-muted);
   font-variant-numeric: tabular-nums;
 }
