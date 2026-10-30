@@ -2759,7 +2759,8 @@ UNDEFINED_ASSIGNED_PROPERTY = "ghost-assigned"
 def _declaration_warning(structure_id=OVERRIDE_STRUCTURE):
     return (
         "ignored Capacities assignment declaration for structure "
-        f"{structure_id!r}: unknown property {UNDEFINED_ASSIGNED_PROPERTY!r}"
+        f"{structure_id!r}: unknown property {UNDEFINED_ASSIGNED_PROPERTY!r}; "
+        "no single 'Assigned' property was found, so choose one in Settings."
     )
 
 
@@ -2876,6 +2877,168 @@ def test_unknown_declaration_warns_once_for_multiple_projected_objects():
 
     assert len(result.items) == 3
     assert result.warnings.count(_declaration_warning()) == 1
+
+
+# -- a declaration whose property was renamed or recreated -------------------
+# Capacities lets an operator rename or recreate a property, which silently
+# invalidates a declaration that still names the old id (Press, Event, Project,
+# Print, Continual, Purchase all went that way). The adapter therefore recovers
+# by NAME, but only when the structure offers exactly one live boolean named
+# "Assigned"/"Assigned To Me": one candidate is unambiguous, several would be a
+# guess, so ambiguity keeps the ignore-and-warn behaviour.
+
+RENAMED_ASSIGNED_PROPERTY = "new-assigned"
+
+
+def _named_definition(prop_id, kind, name):
+    return {**_definition(prop_id, kind), "name": name}
+
+
+def _tolerance_provider(objects, *extra_definitions):
+    """Provider whose mapped custom structure also declares ``extra``."""
+    structures = [
+        {
+            **row,
+            "propertyDefinitions": [*row["propertyDefinitions"], *extra_definitions],
+        }
+        if row["id"] == OVERRIDE_STRUCTURE
+        else row
+        for row in _override_structures()
+    ]
+    return FakeProvider(
+        structures,
+        {(OVERRIDE_STRUCTURE, None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def _assigned_row(**properties):
+    return _override_object(
+        "project-1",
+        {
+            "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+            **properties,
+        },
+    )
+
+
+def test_dead_declaration_recovers_the_single_assigned_boolean_by_name():
+    # The declared id is gone, and exactly one live boolean is named
+    # "Assigned": it is used, so the operator's assignment works again and one
+    # bounded note explains what happened and how to make it permanent.
+    provider = _tolerance_provider(
+        [_assigned_row(**{RENAMED_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True)})],
+        _named_definition(RENAMED_ASSIGNED_PROPERTY, "boolean", "  assigned  "),
+    )
+
+    result = _override_adapter(
+        provider,
+        _override_mapping(assigned_property=UNDEFINED_ASSIGNED_PROPERTY),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+    assert result.warnings == [
+        "Capacities assignment declaration for structure "
+        f"{OVERRIDE_STRUCTURE!r} pointed at property "
+        f"{UNDEFINED_ASSIGNED_PROPERTY!r}, which no longer exists; using "
+        f"'assigned' ({RENAMED_ASSIGNED_PROPERTY!r}) instead. "
+        "Re-save Settings to keep it."
+    ]
+
+
+def test_dead_declaration_with_two_assigned_booleans_stays_ignored():
+    # Two live booleans are named "Assigned": picking either would be a guess,
+    # so the declaration is still ignored and the warning says what to do.
+    provider = _tolerance_provider(
+        [
+            _assigned_row(
+                **{
+                    "assigned-a": _prop("boolean", "boolean", True),
+                    "assigned-b": _prop("boolean", "boolean", True),
+                }
+            )
+        ],
+        _named_definition("assigned-a", "boolean", "Assigned"),
+        _named_definition("assigned-b", "boolean", "Assigned To Me"),
+    )
+
+    result = _override_adapter(
+        provider,
+        _override_mapping(assigned_property=UNDEFINED_ASSIGNED_PROPERTY),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is None
+    assert result.warnings == [
+        "ignored Capacities assignment declaration for structure "
+        f"{OVERRIDE_STRUCTURE!r}: unknown property "
+        f"{UNDEFINED_ASSIGNED_PROPERTY!r}; no single 'Assigned' property was "
+        "found, so choose one in Settings."
+    ]
+
+
+def test_live_declaration_is_untouched_by_the_name_fallback():
+    # The declared id still exists, so the declaration stays authoritative even
+    # though the structure also holds a boolean named "Assigned": no fallback
+    # and no warning.
+    provider = _tolerance_provider(
+        [
+            _assigned_row(
+                **{
+                    SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+                    RENAMED_ASSIGNED_PROPERTY: _prop("boolean", "boolean", False),
+                }
+            )
+        ],
+        _named_definition(RENAMED_ASSIGNED_PROPERTY, "boolean", "Assigned"),
+    )
+
+    result = _override_adapter(
+        provider,
+        _override_mapping(assigned_property=SETTINGS_ASSIGNED_PROPERTY),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+    assert result.warnings == []
+
+
+RENAMED_ASSIGNED_ON_PROPERTY = "new-assigned-on"
+
+
+def test_dead_assigned_on_declaration_recovers_the_single_property_by_name():
+    # The declared date id is gone and exactly one live DATE is named "Assigned
+    # On": it is read, so the date declaration works again, and the note says
+    # what to re-save.
+    provider = _tolerance_provider(
+        [
+            _assigned_on_object(
+                "project-1",
+                {
+                    "state": _active_state(),
+                    RENAMED_ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+                },
+            )
+        ],
+        _named_definition(RENAMED_ASSIGNED_ON_PROPERTY, "date", "Assigned On"),
+    )
+
+    result = _override_adapter(
+        provider,
+        _assigned_on_mapping(assigned_on_property=UNDEFINED_ASSIGNED_ON_PROPERTY),
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+    assert result.warnings == [
+        "Capacities Assigned On declaration for structure "
+        f"{OVERRIDE_STRUCTURE!r} pointed at property "
+        f"{UNDEFINED_ASSIGNED_ON_PROPERTY!r}, which no longer exists; using "
+        f"'Assigned On' ({RENAMED_ASSIGNED_ON_PROPERTY!r}) instead. "
+        "Re-save Settings to keep it."
+    ]
 
 
 # ---------------------------------------------------------------------------

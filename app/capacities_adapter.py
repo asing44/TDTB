@@ -371,6 +371,48 @@ def _definitions(row: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+#: Names a dead settings declaration may be recovered from. Recovery is by
+#: NAME because Capacities lets an operator rename or recreate a property, which
+#: invalidates a declaration that still names the old id. Matching is exact on
+#: the normalized (casefolded, whitespace-collapsed) name so "Assigned",
+#: "assigned", and "Assigned  To Me" all count, while "Assigned By" does not.
+_ASSIGNED_NAMES = frozenset({"assigned", "assigned to me"})
+_ASSIGNED_TYPES = frozenset({"boolean"})
+_ASSIGNED_ON_NAMES = frozenset({"assigned on"})
+_ASSIGNED_ON_TYPES = frozenset({"date", "datetime"})
+#: Bound on the quoted property name a declaration warning may carry.
+_PROPERTY_LABEL_MAX_CHARS = 40
+
+
+def _single_property_by_name(
+    definitions: dict[str, dict[str, Any]],
+    names: frozenset[str],
+    kinds: frozenset[str],
+) -> str | None:
+    """The one property whose type is in ``kinds`` and whose normalized name is
+    in ``names``; ``None`` for zero or several.
+
+    A name fallback is only safe when the structure offers exactly one
+    candidate: several candidates mean any choice would be a guess, so the
+    caller keeps its ignore-and-warn behaviour instead.
+    """
+    matches = [
+        prop_id
+        for prop_id, definition in definitions.items()
+        if _text(definition.get("type")) in kinds
+        and _normalized(definition.get("name")) in names
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _property_label(
+    definitions: dict[str, dict[str, Any]], prop_id: str, default: str
+) -> str:
+    """The quoted, length-bounded display name of ``prop_id`` for a warning."""
+    name = _text(definitions[prop_id].get("name"))[:_PROPERTY_LABEL_MAX_CHARS]
+    return f"'{name or default}'"
+
+
 def _label_options(definition: dict[str, Any]) -> set[str]:
     options = definition.get("labelSet") or []
     if not isinstance(options, list):
@@ -1476,15 +1518,77 @@ class CapacitiesAdapter:
             # declaration must never raise, fail the read, or change which
             # structures are enumerated: it is an assignment check only.
             if mapping.assigned_property and mapping.assigned_property not in definitions:
-                declaration_warnings.append(
-                    "ignored Capacities assignment declaration for structure "
-                    f"{sid!r}: unknown property {mapping.assigned_property!r}"
+                # Capacities lets an operator rename or recreate a property, and
+                # a rename breaks a declaration that still names the old id. The
+                # recovered mapping is deliberately narrow: exactly one live
+                # boolean named "Assigned"/"Assigned To Me" is unambiguous, so
+                # it is used and reported; zero or several mean guessing would
+                # be wrong, so the declaration stays ignored.
+                resolved = _single_property_by_name(
+                    definitions, _ASSIGNED_NAMES, _ASSIGNED_TYPES
                 )
-                mapping = replace(mapping, assigned_property=None)
+                if resolved is None:
+                    declaration_warnings.append(
+                        "ignored Capacities assignment declaration for structure "
+                        f"{sid!r}: unknown property {mapping.assigned_property!r}; "
+                        "no single 'Assigned' property was found, so choose one "
+                        "in Settings."
+                    )
+                    mapping = replace(mapping, assigned_property=None)
+                else:
+                    declaration_warnings.append(
+                        "Capacities assignment declaration for structure "
+                        f"{sid!r} pointed at property {mapping.assigned_property!r}, "
+                        "which no longer exists; using "
+                        f"{_property_label(definitions, resolved, 'Assigned')} "
+                        f"({resolved!r}) instead. Re-save Settings to keep it."
+                    )
+                    mapping = replace(mapping, assigned_property=resolved)
+            # The Assigned On declaration follows the same fail-open contract:
+            # unknown or non-date declarations are ignored with one bounded
+            # warning so the mapping's own seams keep working, and nothing
+            # changes which structures are enumerated. The same single
+            # "Assigned On" date property recovers a renamed declaration.
+            if (
+                mapping.assigned_on_property
+                and mapping.assigned_on_property not in definitions
+            ):
+                resolved = _single_property_by_name(
+                    definitions, _ASSIGNED_ON_NAMES, _ASSIGNED_ON_TYPES
+                )
+                if resolved is None:
+                    declaration_warnings.append(
+                        "ignored Capacities Assigned On declaration for structure "
+                        f"{sid!r}: unknown property {mapping.assigned_on_property!r}; "
+                        "no single 'Assigned On' property was found, so choose one "
+                        "in Settings."
+                    )
+                    mapping = replace(mapping, assigned_on_property=None)
+                else:
+                    declaration_warnings.append(
+                        "Capacities Assigned On declaration for structure "
+                        f"{sid!r} pointed at property {mapping.assigned_on_property!r}, "
+                        "which no longer exists; using "
+                        f"{_property_label(definitions, resolved, 'Assigned On')} "
+                        f"({resolved!r}) instead. Re-save Settings to keep it."
+                    )
+                    mapping = replace(mapping, assigned_on_property=resolved)
             # A settings declaration that overrode a DIFFERENT record-level
             # value shadows the operator's record mapping. The declaration
             # still wins, but the override is surfaced once as a bounded note
             # so a stale declaration cannot silently mask a record edit.
+            if (
+                mapping.assigned_on_property
+                and _text(definitions[mapping.assigned_on_property].get("type"))
+                not in _ASSIGNED_ON_TYPES
+            ):
+                declaration_warnings.append(
+                    "ignored Capacities Assigned On declaration for structure "
+                    f"{sid!r}: property {mapping.assigned_on_property!r} is not a date"
+                )
+                mapping = replace(mapping, assigned_on_property=None)
+            # Emitted AFTER declaration resolution so it names the property that
+            # is actually read.
             if (
                 mapping.assigned_on_record_property
                 and mapping.assigned_on_property
@@ -1497,27 +1601,6 @@ class CapacitiesAdapter:
                     f"{mapping.assigned_on_record_property!r}; using "
                     f"{mapping.assigned_on_property!r}"
                 )
-            # The Assigned On declaration follows the same fail-open contract:
-            # unknown or non-date declarations are ignored with one bounded
-            # warning so the mapping's own seams keep working, and nothing
-            # changes which structures are enumerated.
-            if (
-                mapping.assigned_on_property
-                and mapping.assigned_on_property not in definitions
-            ):
-                declaration_warnings.append(
-                    "ignored Capacities Assigned On declaration for structure "
-                    f"{sid!r}: unknown property {mapping.assigned_on_property!r}"
-                )
-                mapping = replace(mapping, assigned_on_property=None)
-            elif mapping.assigned_on_property and _text(
-                definitions[mapping.assigned_on_property].get("type")
-            ) not in {"date", "datetime"}:
-                declaration_warnings.append(
-                    "ignored Capacities Assigned On declaration for structure "
-                    f"{sid!r}: property {mapping.assigned_on_property!r} is not a date"
-                )
-                mapping = replace(mapping, assigned_on_property=None)
             if mapping.open_status_property and not mapping.open_status_values:
                 raise CapacitiesContractError(
                     f"mapping {sid!r} has no open status values",
