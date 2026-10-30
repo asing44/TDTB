@@ -177,7 +177,7 @@ describe("budget spent", () => {
     });
     const { getByText } = ui(<ActionDock />);
     expect(getByText(/Billed budget spent — manual layout stays available/)).toBeTruthy();
-    const btn = getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
+    const btn = getByText(/^Sequence (\d+h|\d+m).* →$/).closest("button") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
@@ -243,7 +243,7 @@ describe("sequence failure", () => {
     fireEvent.click(getByText(/1 blocking/).closest("button") as Element);
     expect(getByText(/judgment call timed out after 90s/)).toBeTruthy();
     // Manual recovery stays available: Sequence & commit again, budget permitting.
-    const btn = getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
+    const btn = getByText(/^Sequence (\d+h|\d+m).* →$/).closest("button") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
 });

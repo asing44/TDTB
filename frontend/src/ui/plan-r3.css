@@ -45,3 +45,13 @@
 .cap-card__headline--over {
   font-size: 26px;
 }
+/* p3: "Details" folds inline under the headline instead of a right-aligned row. */
+.cap-card__details {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  justify-self: start;
+  margin-top: 2px;
+}
+.cap-card__details[open] {
+  justify-self: stretch;
+}

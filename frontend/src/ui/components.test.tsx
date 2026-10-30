@@ -90,7 +90,7 @@ describe("ActionDock", () => {
     const { ui } = makeHarness("ready");
     const { getByText } = ui(<ActionDock />);
     // T12e: the block count being committed is part of the label.
-    expect(getByText(/^Sequence & commit \d+ blk$/)).toBeTruthy();
+    expect(getByText(/^Sequence (\d+h|\d+m).* →$/)).toBeTruthy();
     expect(getByText("1 billed call")).toBeTruthy();
   });
 
@@ -106,7 +106,7 @@ describe("ActionDock", () => {
     const { getByText } = ui(<ActionDock />);
     expect(store.getState().validation!.ok).toBe(false);
     expect(getByText(/blocking issue/)).toBeTruthy();
-    expect(getByText("Revalidate")).toBeTruthy();
+    expect(getByText("Revalidate · free")).toBeTruthy();
   });
 
   it("verified scenario shows the calm done state", () => {

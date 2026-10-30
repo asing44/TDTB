@@ -1,6 +1,6 @@
 /* Footer — U7 page frame (KTD11). The ActionDock, FooterBanners, and the
    readiness/source-refresh affordances are composed into one footer surface:
-   a left "← Day setup" back link on Plan tasks plus the blocked reason drawn
+   a left "← Set up" back link on Plan tasks plus the blocked reason drawn
    from the existing readiness logic, and the existing dock controls (primary
    action, billed-call note, approval flow) on the right.
 
@@ -48,13 +48,13 @@ export function footerBlockedReason(s: AppState): string | null {
     outside the collapsed Capacity Details in every footer variant, shows the
     accurate exhausted state, and states "unavailable" rather than inventing a
     count when no ledger has loaded. */
-export function DayBudgetChip() {
+export function DayBudgetChip({ compact = false }: { compact?: boolean } = {}) {
   const s = useAppState();
   const ledger = s.ledger;
   if (!ledger) {
     return (
       <span class="chip footer__budget" role="status" aria-label="Daily LLM call allowance">
-        Day budget: unavailable
+        {compact ? "Calls unavailable" : "Day budget: unavailable"}
       </span>
     );
   }
@@ -65,7 +65,8 @@ export function DayBudgetChip() {
       role="status"
       aria-label="Daily LLM call allowance"
     >
-      Day budget: {ledger.remaining}/{ledger.cap} calls left
+      {compact ? "" : "Day budget: "}
+      {ledger.remaining}/{ledger.cap} calls left
     </span>
   );
 }
@@ -122,7 +123,7 @@ export function Footer() {
                 store.dispatch({ type: "UI", patch: { screen: "setup", settingsPanel: null } })
               }
             >
-              ← Day setup
+              ← Set up
             </button>
           )}
           {blocked && (
@@ -130,7 +131,7 @@ export function Footer() {
               {blocked}
             </span>
           )}
-          <DayBudgetChip />
+          <DayBudgetChip compact={onPlan} />
         </div>
         <div class="footer__right">
           <ActionDock />
