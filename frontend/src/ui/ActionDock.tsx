@@ -74,6 +74,14 @@ function CopyPromptButton() {
     </>
   );
 }
+/** Planned blocks (30 min each) as "4h 10m" — the p3 primary label. */
+function planHm(blocks: number): string {
+  const mins = Math.round(Math.abs(blocks) * 30);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 export function ActionDock() {
   const s = useAppState();
   const { controller, store } = useApp();
@@ -188,14 +196,14 @@ export function ActionDock() {
               onClick={() => void controller.revalidate()}
               title="deterministic · free"
             >
-              Revalidate
-              <span class="btn__sub">deterministic · free</span>
+              Revalidate · free
             </button>
           )}
           <button
             class="btn btn--primary"
             onClick={() => void controller.autoSequence()}
             disabled={!canAutoSequence(s) || !sourcesHealthy}
+            aria-label={`Sequence and commit ${formatBlockAmount(spend)}, one billed call`}
             title={
               canAutoSequence(s) && sourcesHealthy
                 ? "One billed judgment call"
@@ -204,7 +212,7 @@ export function ActionDock() {
                   : "Requires confirmed setup and billed budget"
             }
           >
-            Sequence & commit {formatBlockAmount(spend)}
+            Sequence {planHm(spend)} →
             <span class="btn__sub">1 billed call</span>
           </button>
         </>

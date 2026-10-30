@@ -228,7 +228,13 @@ describe("U10 timeline — accounting actions reach the capacity card", () => {
       </>,
     );
     const headline = () => r.container.querySelector(".cap-card__headline")!.textContent ?? "";
-    const amount = () => parseInt(headline().match(/(\d+)\s*blk/)?.[1] ?? "NaN", 10);
+    // R3: the headline reads durations ("1h 30m"); 30 min = one block.
+    const amount = () => {
+      const m = headline().match(/(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:left|$)/);
+      const mins = headline().match(/(\d+)h/)?.[1] ?? "0";
+      const rest = headline().match(/(\d+)m/)?.[1] ?? "0";
+      return m ? (parseInt(mins, 10) * 60 + parseInt(rest, 10)) / 30 : NaN;
+    };
 
     // Open an anchor block in the timeline detail row and add counted time.
     fireEvent.click(r.getByRole("button", { name: /Sudsing/ }));

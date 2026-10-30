@@ -54,7 +54,7 @@ describe("U7 footer", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Footer />);
     const primary = r
-      .getByText(/^Sequence & commit \d+ blk$/)
+      .getByText(/^Sequence (\d+h|\d+m).* →$/)
       .closest("button") as HTMLButtonElement;
     expect(primary.disabled).toBe(false);
     expect(r.getByText("1 billed call")).toBeTruthy();
@@ -67,7 +67,7 @@ describe("U7 footer", () => {
     });
     const r = h.ui(<Footer />);
     const primary = r
-      .getByText(/^Sequence & commit \d+ blk$/)
+      .getByText(/^Sequence (\d+h|\d+m).* →$/)
       .closest("button") as HTMLButtonElement;
     expect(primary.disabled).toBe(true);
   });
@@ -82,7 +82,7 @@ describe("U7 footer", () => {
     const r = h.ui(<Footer />);
     expect(r.queryByText(/Can't sequence until sources are healthy\./)).toBeNull();
     const primary = r
-      .getByText(/^Sequence & commit \d+ blk$/)
+      .getByText(/^Sequence (\d+h|\d+m).* →$/)
       .closest("button") as HTMLButtonElement;
     expect(primary.disabled).toBe(false);
   });
@@ -90,7 +90,7 @@ describe("U7 footer", () => {
   it("shows the ← Day setup back link on Plan tasks and opens day setup", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Footer />);
-    const back = r.getByRole("button", { name: "← Day setup" });
+    const back = r.getByRole("button", { name: "← Set up" });
     fireEvent.click(back);
     expect(h.store.getState().ui.screen).toBe("setup");
   });
@@ -99,7 +99,7 @@ describe("U7 footer", () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { screen: "setup" } });
     const r = h.ui(<Footer />);
-    expect(r.queryByRole("button", { name: "← Day setup" })).toBeNull();
+    expect(r.queryByRole("button", { name: "← Set up" })).toBeNull();
   });
 
   it("keeps the Plan-only Copy prompt off the Set up day footer", () => {
@@ -119,7 +119,7 @@ describe("Day budget allowance", () => {
   it("shows the ledger allowance on the Plan footer", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Footer />);
-    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
+    expect(r.getByText("4/4 calls left")).toBeTruthy();
   });
 
   it("shows the exhausted state accurately in the warn style", () => {
@@ -127,7 +127,7 @@ describe("Day budget allowance", () => {
       sc.ledger = { ...sc.ledger, spent: 4, remaining: 0 };
     });
     const r = h.ui(<Footer />);
-    const chip = r.getByText("Day budget: 0/4 calls left");
+    const chip = r.getByText("0/4 calls left");
     expect(chip.className).toContain("chip--warn");
   });
 
