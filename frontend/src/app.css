@@ -11650,3 +11650,43 @@ button.strip-cal {
   color: var(--t-muted);
   font-size: 13px;
 }
+
+/* Set up — Allotment card: one stacked bar of where the day goes. */
+.allotment-card .setup-section__head .allotment-card__summary {
+  margin-left: auto;
+  color: var(--t-text-2, var(--lane-anchor-ink));
+}
+.allotment-card__bar {
+  display: flex;
+  height: 12px;
+  margin: 12px 0 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--t-surface-2);
+}
+.allotment-card__seg {
+  min-width: 0;
+}
+.allotment-card__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.allotment-card__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.allotment-card__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.allotment-card__value {
+  color: var(--t-text-2, var(--lane-anchor-ink));
+  font-variant-numeric: tabular-nums;
+}
