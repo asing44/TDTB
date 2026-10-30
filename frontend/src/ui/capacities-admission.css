@@ -1,0 +1,76 @@
+/* Capacities admission row (CapacitiesAdmissionRow.tsx): one mode select per
+   item type, the property picker it reveals, and the help/warning lines under
+   it. Product tokens only (--t-* / --state-*) so light and dark both follow. */
+
+.capacities-object-row.capacities-admission {
+  align-items: flex-start;
+}
+
+.capacities-admission__control {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  gap: 6px;
+}
+
+.capacities-admission__mode {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.capacities-admission__label {
+  color: var(--t-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.capacities-admission__control select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 12px;
+}
+
+.capacities-admission__control select:focus-visible {
+  border-color: var(--t-accent);
+  outline: 2px solid var(--c-selected);
+  outline-offset: 1px;
+}
+
+.capacities-admission__control select.capacities-admission__pick--missing {
+  border-color: var(--state-warning);
+}
+
+.capacities-admission__missing {
+  color: var(--state-warning);
+}
+
+.capacities-admission__pending {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capacities-admission__pending .capacities-admission__label {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.capacities-admission__warn {
+  color: var(--state-warning);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.capacities-admission__help {
+  color: var(--t-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

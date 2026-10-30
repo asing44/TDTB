@@ -9,6 +9,12 @@
    shell. */
 
 import { useEffect, useState } from "preact/hooks";
+import {
+  CapacitiesAdmissionRow,
+  admissionModeOf,
+  applyAdmissionMode,
+  type CapacitiesAdmissionMode,
+} from "./CapacitiesAdmissionRow";
 import { CapacitiesSourceEditor } from "./CapacitiesSourceEditor";
 import { CapacitiesRefreshPanel } from "./CapacitiesRefreshPanel";
 import { CapacitiesRulesEditor } from "./CapacitiesRulesEditor";
@@ -22,6 +28,7 @@ import {
 import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
+  CapacitiesCatalog,
   CapacitiesNativeTaskAutoPolicy,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
@@ -91,6 +98,16 @@ export function CapacitiesSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [horizonText, setHorizonText] = useState("");
   const [statusText, setStatusText] = useState("");
+  // Admission pickers read the same provider discovery the source mapping
+  // editor does. Nothing is fetched until the operator asks for it: the
+  // lookup is one token-guarded read, never a mount-time provider call.
+  const [catalog, setCatalog] = useState<CapacitiesCatalog | null>(null);
+  const [spaceId, setSpaceId] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  // A Requires mode has no declaration until a property is picked, so the draft
+  // alone cannot show it: the chosen mode is kept here until a property lands.
+  const [pendingModes, setPendingModes] = useState<Record<string, CapacitiesAdmissionMode>>({});
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const close = () => store.dispatch({ type: "UI", patch: { settingsPanel: null } });
 
   const loadSettings = async () => {
@@ -226,6 +243,81 @@ export function CapacitiesSettingsPanel({
       return { ...current, assignedOnStructures: next };
     });
   };
+
+  // One control per type: the mode decides which draft keys exist, and any
+  // Requires mode also switches the structure on. The property id travels
+  // with the mode so switching between the two Requires modes keeps the
+  // operator's pick when it still applies.
+  const setAdmission = (structureId: string, mode: CapacitiesAdmissionMode) => {
+    setPendingModes((current) => {
+      const next = { ...current };
+      if (mode === "assigned" || mode === "assignedOn") next[structureId] = mode;
+      else delete next[structureId];
+      return next;
+    });
+    setDraft((current) => {
+      if (!current) return current;
+      // Only the id already declared for THIS mode travels with the change: a
+      // checkbox property is never written into the date map, or the reverse.
+      const propertyId =
+        mode === "assigned"
+          ? (current.assignedStructures[structureId] ?? "")
+          : mode === "assignedOn"
+            ? (current.assignedOnStructures[structureId] ?? "")
+            : "";
+      return applyAdmissionMode(current, structureId, mode, propertyId);
+    });
+  };
+
+  const setAdmissionProperty = (
+    structureId: string,
+    mode: CapacitiesAdmissionMode,
+    propertyId: string,
+  ) => {
+    setPendingModes((current) => {
+      const next = { ...current };
+      if (propertyId === "") next[structureId] = mode;
+      else delete next[structureId];
+      return next;
+    });
+    setDraft((current) => {
+      if (!current) return current;
+      return applyAdmissionMode(current, structureId, mode, propertyId);
+    });
+  };
+
+  // Discovery needs the space id, which only the source mapping record
+  // carries. The read is tokenless and local; the discovery call behind it is
+  // the one the mapping editor already uses. A failure is reported beside the
+  // pickers and never replaces the declared ids.
+  const lookUpProperties = async () => {
+    if (discovering) return;
+    setDiscovering(true);
+    setDiscoveryError(null);
+    try {
+      let id = spaceId;
+      if (id === null) {
+        const read = await controller.loadCapacitiesSource();
+        id = read.source?.spaceId ?? "";
+        setSpaceId(id);
+      }
+      if (id === "") {
+        setDiscoveryError("Save your Capacities setup first, then look up properties.");
+        return;
+      }
+      setCatalog(await controller.discoverCapacitiesSource(id));
+    } catch (e) {
+      setDiscoveryError(messageOf(e));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const discoveredPropertiesOf = (structureId: string) =>
+    catalog === null
+      ? null
+      : (catalog.structures.find((structure) => structure.structureId === structureId)
+          ?.properties ?? []);
 
   // ``active_statuses`` is free text: the settings API exposes no status
   // inventory (the source mapping's per-structure status values never
@@ -390,7 +482,7 @@ export function CapacitiesSettingsPanel({
               <div class="setup-section__body">
                 <h4>Types with automatic task rules</h4>
                 <p class="capacities-settings__hint">
-                  Automatic task rules apply only to the types switched on here. The list comes from your Capacities setup (the same list as Bring in Active items), not from today's plan.
+                  Automatic task rules apply only to the types switched on here. The list comes from your Capacities setup (the same list as the per-type admission control below), not from today's plan.
                 </p>
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
@@ -489,19 +581,24 @@ export function CapacitiesSettingsPanel({
               </div>
             </section>
 
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-assigned">
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission-per-type">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-assigned">“Assigned to me” settings</h3>
-                {staleAssignedStructures.length > 0 && (
+                <h3 id="capacities-sec-admission-per-type">How each item type gets in</h3>
+                {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} not set up to appear
+                    {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length} saved {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length === 1 ? "structure" : "structures"} not set up to appear
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  For each type, name the Capacities property that marks an item as assigned to you: a date (the “Assigned to me” date) or an older checkbox. A date that falls on today puts the item in today's plan. A blank field sets nothing, and nothing here changes which types are read.
+                  One control per type says how its items get in. “Status only” brings in items whose status is Active. A Requires mode also brings the type in, and additionally needs a Capacities property: a date (the “Assigned to me” date, today or earlier) or an older checkbox. The list comes from your Capacities setup, not from today's plan.
                 </p>
+                {discoveryError !== null && (
+                  <div class="capacities-admission__warn" role="alert">
+                    {discoveryError}
+                  </div>
+                )}
                 {assignmentWarnings.length > 0 && (
                   <div class="capacities-exclusion-list">
                     <h4>Settings we skipped</h4>
@@ -533,61 +630,46 @@ export function CapacitiesSettingsPanel({
                     Your Capacities setup lists no types yet; saved settings are kept when you save.
                   </p>
                 ) : (
-                  <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
+                  <div class="capacities-object-list" role="group" aria-label="Capacities admission per item type">
                     {availableStructures.map((structureId) => {
-                      const title = structureTitleOf(structureId);
-                      const assignedOn = assignedOnStructures[structureId] ?? "";
+                      const mode = pendingModes[structureId] ?? admissionModeOf(draft, structureId);
+                      const declaredPropertyId =
+                        assignedOnStructures[structureId] ?? assignedStructures[structureId] ?? "";
                       return (
-                        <div class="capacities-object-row capacities-object-row--mapping" key={structureId}>
-                          <div class="capacities-object-row__identity">
-                            {title !== null && <strong>{title}</strong>}
-                            <code>{structureId}</code>
-                          </div>
-                          <div class="capacities-object-row__fields">
-                            <label class="capacities-object-row__field">
-                              <span class="capacities-object-row__field-label">“Assigned to me” date</span>
-                              <span class="capacities-object-row__field-row">
-                                <input
-                                  class="capacities-object-row__property"
-                                  type="text"
-                                  value={assignedOn}
-                                  placeholder="property id"
-                                  aria-label={`“Assigned to me” date for ${structureId}`}
-                                  onInput={(e) => setAssignedOnProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
-                                />
-                                <button
-                                  class="btn"
-                                  aria-label={`Clear “Assigned to me” date for ${structureId}`}
-                                  disabled={assignedOn === ""}
-                                  onClick={() => setAssignedOnProperty(structureId, "")}
-                                >
-                                  Clear
-                                </button>
-                              </span>
-                              <small class="capacities-object-row__field-help">
-                                Date-time property set in Capacities. An item counts as assigned when this is today or earlier; a future date is not assigned yet.
-                              </small>
-                            </label>
-                            <label class="capacities-object-row__field">
-                              <span class="capacities-object-row__field-label">Old “assigned” checkbox</span>
-                              <input
-                                class="capacities-object-row__property"
-                                type="text"
-                                value={assignedStructures[structureId] ?? ""}
-                                placeholder="property id"
-                                aria-label={`Old assigned checkbox for ${structureId}`}
-                                disabled={assignedOn !== ""}
-                                onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
-                              />
-                              <small class="capacities-object-row__field-help">
-                                Only used when no “Assigned to me” date is set.
-                                {assignedOn !== "" ? " Ignored while an “Assigned to me” date is set." : ""}
-                              </small>
-                            </label>
-                          </div>
-                        </div>
+                        <CapacitiesAdmissionRow
+                          key={structureId}
+                          structureId={structureId}
+                          title={structureTitleOf(structureId)}
+                          mode={mode}
+                          declaredPropertyId={declaredPropertyId}
+                          properties={discoveredPropertiesOf(structureId)}
+                          discovering={discovering}
+                          declaredButOff={
+                            declaredPropertyId !== "" &&
+                            !draft.activeStructures.includes(structureId)
+                          }
+                          onModeChange={(next) => setAdmission(structureId, next)}
+                          onPropertyChange={(propertyId) =>
+                            setAdmissionProperty(structureId, mode, propertyId)
+                          }
+                          onLookUp={() => void lookUpProperties()}
+                        />
                       );
                     })}
+                  </div>
+                )}
+                {staleActiveStructures.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Active-item types that are not set up to appear</h4>
+                    <p class="capacities-settings__hint">
+                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
+                    </p>
+                    {staleActiveStructures.map((structureId) => (
+                      <div class="capacities-exclusion-row" key={structureId}>
+                        <code>{structureId}</code>
+                        <button class="btn" onClick={() => toggleActiveStructure(structureId)}>Remove</button>
+                      </div>
+                    ))}
                   </div>
                 )}
                 {staleAssignedStructures.length > 0 && (
@@ -668,65 +750,6 @@ export function CapacitiesSettingsPanel({
                       <div class="capacities-exclusion-row" key={identity}>
                         <code>{identity}</code>
                         <button class="btn" onClick={() => toggleExclusion(identity)}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-active-pull">
-              <div class="setup-section__head">
-                <h3 id="capacities-sec-active-pull">Bring in Active items</h3>
-                {staleActiveStructures.length > 0 && (
-                  <span class="capacities-settings__revision">
-                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} not set up to appear
-                  </span>
-                )}
-              </div>
-              <div class="setup-section__body">
-                <p class="capacities-settings__hint">
-                  Choose which Capacities types bring in items whose status is Active. The list comes from your Capacities setup, not from today's plan.
-                </p>
-                {availableStructures.length === 0 ? (
-                  <p class="capacities-settings__empty">
-                    No Capacities types are set up yet. Save your Capacities setup before choosing which types bring in Active items.
-                  </p>
-                ) : (
-                  <div class="capacities-object-list" role="group" aria-label="Capacities types that bring in Active items">
-                    {availableStructures.map((structureId) => {
-                      const active = draft.activeStructures.includes(structureId);
-                      const title = structureTitleOf(structureId);
-                      return (
-                        <div class="capacities-object-row" key={structureId}>
-                          <div class="capacities-object-row__identity">
-                            {title !== null && <strong>{title}</strong>}
-                            <code>{structureId}</code>
-                          </div>
-                          <label class="capacities-object-row__toggle">
-                            <input
-                              type="checkbox"
-                              checked={active}
-                              aria-label={`Bring in Active items for ${structureId}`}
-                              onChange={() => toggleActiveStructure(structureId)}
-                            />
-                            <span>{active ? "Bringing in Active items" : "Not bringing in Active items"}</span>
-                          </label>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {staleActiveStructures.length > 0 && (
-                  <div class="capacities-exclusion-list">
-                    <h4>Active-item types that are not set up to appear</h4>
-                    <p class="capacities-settings__hint">
-                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
-                    </p>
-                    {staleActiveStructures.map((structureId) => (
-                      <div class="capacities-exclusion-row" key={structureId}>
-                        <code>{structureId}</code>
-                        <button class="btn" onClick={() => toggleActiveStructure(structureId)}>Remove</button>
                       </div>
                     ))}
                   </div>

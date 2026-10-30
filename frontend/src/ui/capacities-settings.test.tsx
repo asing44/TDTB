@@ -3,7 +3,7 @@ import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
 import { makeHarness } from "./test-harness";
 import { capacitiesSettingsToWire } from "../adapters/wire";
-import type { AssignedItem } from "../model/types";
+import type { AssignedItem, CapacitiesCatalogProperty } from "../model/types";
 
 afterEach(() => {
   cleanup();
@@ -34,6 +34,46 @@ function openWithCapacityRow() {
   fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
   return { h, rendered };
 }
+
+/** The admission picker is fed by the same provider discovery the source
+    mapping editor uses: one local read for the space id, one discovery call.
+    These stubs answer both so no test depends on the fixture's catalog. */
+function stubAdmissionDiscovery(
+  h: ReturnType<typeof makeHarness>,
+  properties: CapacitiesCatalogProperty[],
+) {
+  vi.spyOn(h.controller, "loadCapacitiesSource").mockResolvedValue({
+    source: { version: 1, revision: 1, spaceId: "space-1", structures: [] },
+    persisted: true,
+  });
+  return vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue({
+    spaceId: "space-1",
+    warnings: [],
+    structures: [{ structureId: "custom-project", title: "custom-project", properties }],
+  });
+}
+
+const BOOLEAN_PROPERTY: CapacitiesCatalogProperty = {
+  propertyId: "assigned-prop-id",
+  title: "Assigned",
+  type: "boolean",
+  writable: true,
+  labelOptions: [],
+};
+const DATE_PROPERTY: CapacitiesCatalogProperty = {
+  propertyId: "assigned-on-id",
+  title: "Assigned on",
+  type: "date",
+  writable: false,
+  labelOptions: [],
+};
+const TITLE_PROPERTY: CapacitiesCatalogProperty = {
+  propertyId: "title-prop",
+  title: "Name",
+  type: "title",
+  writable: true,
+  labelOptions: [],
+};
 
 describe("CapacitiesSettingsDrawer", () => {
   it("loads native rules and lists known Capacities identities without inventing inventory", async () => {
@@ -196,16 +236,17 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(Object.keys(body.active_structures).length).toBeGreaterThan(0);
   });
 
-  it("adds a checked available structure to the outgoing save body", async () => {
+  it("admitting a type as Status only adds it to the outgoing save body", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
-    const custom = rendered.getByRole("checkbox", {
-      name: "Bring in Active items for custom-project",
-    }) as HTMLInputElement;
-    expect(custom.checked).toBe(false);
-    fireEvent.click(custom);
-    expect(custom.checked).toBe(true);
+    // The row control is the only admission surface: re-query after each
+    // change (Preact re-renders the row, so an old node goes stale).
+    const select = () =>
+      rendered.getByLabelText("Admission for custom-project") as HTMLSelectElement;
+    expect(select().value).toBe("off");
+    fireEvent.change(select(), { target: { value: "status" } });
+    expect(select().value).toBe("status");
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
     fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
@@ -214,9 +255,11 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(capacitiesSettingsToWire(save.mock.calls[0][0]).active_structures).toEqual({
       "custom-project": true,
     });
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({});
+    expect(save.mock.calls[0][0].assignedOnStructures).toEqual({});
   });
 
-  it("unchecking an active structure removes it from the outgoing save body", async () => {
+  it("switching a type Off removes it from the outgoing save body", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
       version: 1,
@@ -242,14 +285,13 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
-    const custom = rendered.getByRole("checkbox", {
-      name: "Bring in Active items for custom-project",
-    }) as HTMLInputElement;
-    expect(custom.checked).toBe(true);
-    fireEvent.click(custom);
-    expect(custom.checked).toBe(false);
+    const select = () =>
+      rendered.getByLabelText("Admission for custom-project") as HTMLSelectElement;
+    expect(select().value).toBe("status");
+    fireEvent.change(select(), { target: { value: "off" } });
+    expect(select().value).toBe("off");
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
     fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
@@ -284,7 +326,7 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
     // The stale id is surfaced rather than hidden.
     expect(rendered.getByText(/Active-item types that are not set up to appear/)).toBeTruthy();
@@ -327,10 +369,14 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("Bring in Active items")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
-    expect(rendered.getByText(/No Capacities types are set up yet/)).toBeTruthy();
-    expect(rendered.queryByRole("checkbox", { name: /Bring in Active items for/ })).toBeNull();
+    expect(
+      rendered.getByText(
+        "Your Capacities setup lists no types yet; saved settings are kept when you save.",
+      ),
+    ).toBeTruthy();
+    expect(rendered.queryByLabelText(/^Admission for /)).toBeNull();
   });
 
   it("renders both admission keys, reusing the available-structure inventory", async () => {
@@ -363,7 +409,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
     // The structure list is the same source mapping the Active
     // pull editor already enumerates — no new discovery path.
-    expect(rendered.getByText(/same list as Bring in Active items/)).toBeTruthy();
+    expect(rendered.getByText(/same list as the per-type admission control/)).toBeTruthy();
     expect(
       (rendered.getByRole("checkbox", { name: "Native admission for custom-project" }) as HTMLInputElement).checked,
     ).toBe(true);
@@ -391,7 +437,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
   it("always sends the assignment declarations on an untouched save", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
     // Nothing in the declarations section was edited. The save route is a
     // full replacement, so the key must still ride along or the server would
@@ -406,14 +452,32 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(body.assigned_structures).toEqual({});
   });
 
-  it("declares a per-structure assignment property with a text input", async () => {
+  it("declares a per-structure assignment property through the picker", async () => {
     const { h, rendered } = openWithCapacityRow();
-    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
+    stubAdmissionDiscovery(h, [TITLE_PROPERTY, BOOLEAN_PROPERTY, DATE_PROPERTY]);
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
-    const input = rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement;
-    expect(input.value).toBe("");
-    fireEvent.input(input, { target: { value: "assigned-prop-id" } });
-    expect(input.value).toBe("assigned-prop-id");
+    fireEvent.change(rendered.getByLabelText("Admission for custom-project"), {
+      target: { value: "assigned" },
+    });
+    // No schema has been looked up yet: the row offers the lookup, not an
+    // empty picker.
+    expect(
+      rendered.queryByLabelText("Assignment property for custom-project"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Look up properties for custom-project")).toBeTruthy(),
+    );
+    fireEvent.click(rendered.getByLabelText("Look up properties for custom-project"));
+
+    const picker = () =>
+      rendered.getByLabelText("Assignment property for custom-project") as HTMLSelectElement;
+    await waitFor(() => expect(picker()).toBeTruthy());
+    // Only checkbox-kind properties are offered for the checkbox mode.
+    const offered = Array.from(picker().options).map((option) => option.value);
+    expect(offered).toEqual(["", "assigned-prop-id"]);
+    fireEvent.change(picker(), { target: { value: "assigned-prop-id" } });
+    expect(picker().value).toBe("assigned-prop-id");
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
     fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
@@ -421,9 +485,12 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({
       "custom-project": "assigned-prop-id",
     });
+    // The Requires mode also switched the type on: the old silent-no-op.
+    expect(save.mock.calls[0][0].activeStructures).toEqual(["custom-project"]);
+    expect(save.mock.calls[0][0].assignedOnStructures).toEqual({});
   });
 
-  it("clears a declaration when its field is emptied", async () => {
+  it("clears a declaration when the type goes Off", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
       version: 1,
@@ -449,16 +516,23 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
-    const input = rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement;
-    expect(input.value).toBe("old-prop");
-    fireEvent.input(input, { target: { value: "" } });
+    // A saved declaration reads back as its Requires mode, not as a raw id.
+    const select = () =>
+      rendered.getByLabelText("Admission for custom-project") as HTMLSelectElement;
+    expect(select().value).toBe("assigned");
+    expect(rendered.getByText("old-prop")).toBeTruthy();
+
+    fireEvent.change(select(), { target: { value: "off" } });
+    expect(select().value).toBe("off");
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
     fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({});
+    expect(save.mock.calls[0][0].assignedOnStructures).toEqual({});
+    expect(save.mock.calls[0][0].activeStructures).toEqual([]);
   });
 
   it("keeps a saved declaration outside the source mapping and round-trips it", async () => {
@@ -490,7 +564,7 @@ describe("CapacitiesSettingsDrawer", () => {
     // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(rendered.getByText("“Assigned to me” settings")).toBeTruthy());
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped. (The native and active
     // stale blocks use the same wording, so count rather than pick one.)
@@ -556,8 +630,12 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(rendered.queryByText(coverage)).toBeNull();
     // The declaration stays editable so the operator can correct it.
     expect(
-      (rendered.getByLabelText("Old assigned checkbox for custom-project") as HTMLInputElement).value,
-    ).toBe("assigned-prop");
+      within(
+        rendered.getByLabelText("Admission for custom-project").closest(
+          ".capacities-admission",
+        ) as HTMLElement,
+      ).getByText("assigned-prop"),
+    ).toBeTruthy();
   });
 
   it("keeps a saved native structure outside the source mapping and round-trips it", async () => {
@@ -657,11 +735,10 @@ describe("CapacitiesSettingsDrawer", () => {
     const { rendered } = openWithCapacityRow();
     const groupNames = [
       "Capacities structures admitted to the native Task Auto rules",
-      "Capacities structures with a declared assignment property",
-      "Capacities types that bring in Active items",
+      "Capacities admission per item type",
     ];
     await waitFor(() =>
-      expect(rendered.getByRole("group", { name: groupNames[2] })).toBeTruthy(),
+      expect(rendered.getByRole("group", { name: groupNames[1] })).toBeTruthy(),
     );
 
     for (const name of groupNames) {
@@ -669,23 +746,23 @@ describe("CapacitiesSettingsDrawer", () => {
       // The titled structure leads with its observed title...
       const title = group.getByText("Project");
       expect(title.tagName.toLowerCase()).toBe("strong");
-      // ...and the raw id stays visible beside it, in the same row.
-      const titledId = group.getByText("0d194525-c5a1-4af5-bb62-202b83006b5e");
+      // ...and the id stays visible beside it, in the same row. The admission
+      // row shortens a raw provider UUID; the native list keeps it whole.
+      const titledId = group.getByText(
+        name === "Capacities admission per item type"
+          ? "0d194525…"
+          : "0d194525-c5a1-4af5-bb62-202b83006b5e",
+      );
       expect(titledId.tagName.toLowerCase()).toBe("code");
       expect(title.parentElement).toBe(titledId.parentElement);
-      expect(titledId.parentElement?.textContent).toBe(
-        "Project0d194525-c5a1-4af5-bb62-202b83006b5e",
-      );
       // An untitled structure shows its id alone, never a blank label.
       const untitledId = group.getByText("custom-project");
       expect(untitledId.parentElement?.querySelector("strong")).toBeNull();
       expect(untitledId.parentElement?.textContent).toBe("custom-project");
     }
-    // The title is display-only: the accessible name still keys on the id.
+    // The title is display-only: admission still keys on the raw structure id.
     expect(
-      rendered.getByRole("checkbox", {
-        name: "Bring in Active items for 0d194525-c5a1-4af5-bb62-202b83006b5e",
-      }),
+      rendered.getByLabelText("Admission for Project"),
     ).toBeTruthy();
   });
 
@@ -763,5 +840,167 @@ describe("CapacitiesSettingsDrawer", () => {
     // and never borrows a title the drawer does not consider available.
     expect(rendered.getByText("legacy-structure")).toBeTruthy();
     expect(rendered.queryByText("Legacy Project")).toBeNull();
+  });
+
+  it("Requires Assigned date writes only the date map and switches the type on", async () => {
+    const h = makeHarness("ready");
+    stubAdmissionDiscovery(h, [TITLE_PROPERTY, BOOLEAN_PROPERTY, DATE_PROPERTY]);
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: {},
+      assignedOnStructures: {},
+      availableStructures: ["custom-project"],
+      structureTitles: {},
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
+
+    // The one-line help states the coupling that used to be silent.
+    expect(
+      rendered.getByText("Switching a type to a Requires mode also turns it on."),
+    ).toBeTruthy();
+
+    fireEvent.change(rendered.getByLabelText("Admission for custom-project"), {
+      target: { value: "assignedOn" },
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Look up properties for custom-project")).toBeTruthy(),
+    );
+    fireEvent.click(rendered.getByLabelText("Look up properties for custom-project"));
+
+    const picker = () =>
+      rendered.getByLabelText("Assignment property for custom-project") as HTMLSelectElement;
+    await waitFor(() => expect(picker()).toBeTruthy());
+    // Only date-kind properties are offered for the date mode.
+    expect(Array.from(picker().options).map((option) => option.value)).toEqual([
+      "",
+      "assigned-on-id",
+    ]);
+    fireEvent.change(picker(), { target: { value: "assigned-on-id" } });
+    expect(picker().value).toBe("assigned-on-id");
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].assignedOnStructures).toEqual({
+      "custom-project": "assigned-on-id",
+    });
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({});
+    expect(save.mock.calls[0][0].activeStructures).toEqual(["custom-project"]);
+  });
+
+  it("switching a date declaration to the checkbox mode moves no id across kinds", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["custom-project"],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: {},
+      assignedOnStructures: { "custom-project": "assigned-on-id" },
+      availableStructures: ["custom-project"],
+      structureTitles: {},
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
+
+    const select = () =>
+      rendered.getByLabelText("Admission for custom-project") as HTMLSelectElement;
+    expect(select().value).toBe("assignedOn");
+    fireEvent.change(select(), { target: { value: "assigned" } });
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    // The date declaration is cleared and nothing was invented for the
+    // checkbox map: a date property id is never offered as a checkbox.
+    expect(save.mock.calls[0][0].assignedOnStructures).toEqual({});
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({});
+    expect(save.mock.calls[0][0].activeStructures).toEqual(["custom-project"]);
+  });
+
+  it("keeps a declared property Capacities no longer lists, with a warning option", async () => {
+    const h = makeHarness("ready");
+    stubAdmissionDiscovery(h, [TITLE_PROPERTY, BOOLEAN_PROPERTY]);
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["custom-project"],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: { "custom-project": "gone-prop" },
+      assignedOnStructures: {},
+      availableStructures: ["custom-project"],
+      structureTitles: {},
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
+
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Look up properties for custom-project")).toBeTruthy(),
+    );
+    fireEvent.click(rendered.getByLabelText("Look up properties for custom-project"));
+    const picker = () =>
+      rendered.getByLabelText("Assignment property for custom-project") as HTMLSelectElement;
+    await waitFor(() => expect(picker()).toBeTruthy());
+
+    // The saved id is never silently dropped: it stays selected as a warning
+    // option the operator can replace or clear.
+    expect(picker().value).toBe("gone-prop");
+    expect(
+      Array.from(picker().options).some((option) =>
+        option.textContent?.includes("Missing in Capacities — pick another"),
+      ),
+    ).toBe(true);
+    expect(rendered.getByText(/Saved property gone-prop is missing in Capacities/)).toBeTruthy();
+
+    fireEvent.change(picker(), { target: { value: "assigned-prop-id" } });
+    expect(picker().value).toBe("assigned-prop-id");
+    expect(rendered.queryByText(/Saved property gone-prop is missing in Capacities/)).toBeNull();
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({
+      "custom-project": "assigned-prop-id",
+    });
   });
 });

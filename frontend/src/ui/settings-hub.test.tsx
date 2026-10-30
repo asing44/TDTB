@@ -182,9 +182,8 @@ describe("SettingsHub", () => {
     for (const heading of [
       "Automatic task rules",
       "What counts as active",
-      "“Assigned to me” settings",
+      "How each item type gets in",
       "Known Capacities items",
-      "Bring in Active items",
       "Capacities setup (technical details)",
     ]) {
       await waitFor(
