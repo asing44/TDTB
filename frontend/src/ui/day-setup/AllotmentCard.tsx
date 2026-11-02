@@ -13,11 +13,13 @@ interface Seg { key: string; label: string; blocks: number; color: string }
 
 /** Presentational Set up summary of where the day goes. Same numbers the
     Capacity card reads (store `capacity`); nothing is derived beyond free =
-    day capacity minus fixed time. */
+    day capacity minus fixed time, plus the shared clock time back (two
+    segments claiming the same minutes are one claim on the day). */
 export function AllotmentCard({ capacity }: { capacity: Capacity | null | undefined }) {
   if (!capacity) return null;
+  const shared = Math.max(0, capacity.overlap ?? 0);
   const fixed = capacity.fixed + capacity.mint + capacity.anchored + capacity.habits;
-  const free = Math.max(0, capacity.total - fixed);
+  const free = Math.max(0, capacity.total - fixed + shared);
   const segs: Seg[] = [
     { key: 'calendar', label: 'Calendar', blocks: capacity.fixed, color: 'var(--lane-cal-bar)' },
     { key: 'work', label: 'Work (Mint)', blocks: capacity.mint, color: 'var(--lane-mint-bar)' },
@@ -27,7 +29,8 @@ export function AllotmentCard({ capacity }: { capacity: Capacity | null | undefi
   ];
   const basis = Math.max(segs.reduce((n, s) => n + s.blocks, 0), 1);
   const summary = `${allotmentDuration(free)} left for tasks in a ${allotmentDuration(capacity.total)} day`;
-  const label = segs.map((s) => `${s.label} ${allotmentDuration(s.blocks)}`).join(' · ');
+  const label = segs.map((s) => `${s.label} ${allotmentDuration(s.blocks)}`).join(' · ')
+    + (shared > 0 ? ` · Shared ${allotmentDuration(shared)}` : '');
   return (
     <section class="setup-section allotment-card" aria-labelledby="setup-sec-allotment">
       <div class="setup-section__head">
@@ -49,6 +52,11 @@ export function AllotmentCard({ capacity }: { capacity: Capacity | null | undefi
           </li>
         ))}
       </ul>
+      {shared > 0 && (
+        <p class="allotment-card__shared">
+          {allotmentDuration(shared)} shared — counted once
+        </p>
+      )}
     </section>
   );
 }

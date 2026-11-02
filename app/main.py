@@ -3333,29 +3333,29 @@ def _spec_blocks(spec: dict[str, Any]) -> int:
     return 0
 
 
-def _calendar_union_blocks(
+def _calendar_intervals(
     busy_blocks: list[dict[str, Any]],
     frame_start: str,
     frame_end: str,
     capacity_class: str,
-) -> int:
-    """Ceiling block cost of one calendar class inside the active frame.
+) -> list[tuple[int, int]]:
+    """One calendar class's wall-clock intervals inside the active frame.
 
-    Overlapping meetings are unioned before rounding, so two work events that
-    share clock time consume that time once. Events wholly before/after the
-    frame and per-day ``skip_today`` rows cost zero.
+    Overlapping meetings are unioned before anyone rounds them to blocks, so
+    two events that share clock time consume that time once. Events wholly
+    before/after the frame and per-day ``skip_today`` rows contribute nothing.
     """
     start_hhmm = time_engine.to_hhmm(frame_start)
     end_hhmm = time_engine.to_hhmm(frame_end)
     if not start_hhmm or not end_hhmm:
-        return 0
+        return []
 
     def minute(hhmm: str) -> int:
         return int(hhmm[:2]) * 60 + int(hhmm[3:])
 
     frame_a, frame_b = minute(start_hhmm), minute(end_hhmm)
     if frame_b <= frame_a:
-        return 0
+        return []
 
     intervals: list[tuple[int, int]] = []
     for block in busy_blocks:
@@ -3373,20 +3373,24 @@ def _calendar_union_blocks(
         clipped_a, clipped_b = max(a, frame_a), min(b, frame_b)
         if clipped_b > clipped_a:
             intervals.append((clipped_a, clipped_b))
+    return capacity_mod.merge_intervals(intervals)
 
-    if not intervals:
-        return 0
-    intervals.sort()
-    union_minutes = 0
-    cur_a, cur_b = intervals[0]
-    for a, b in intervals[1:]:
-        if a <= cur_b:
-            cur_b = max(cur_b, b)
-        else:
-            union_minutes += cur_b - cur_a
-            cur_a, cur_b = a, b
-    union_minutes += cur_b - cur_a
-    return _blocks_of_minutes(union_minutes)
+
+def _calendar_union_blocks(
+    busy_blocks: list[dict[str, Any]],
+    frame_start: str,
+    frame_end: str,
+    capacity_class: str,
+) -> int:
+    """Ceiling block cost of one calendar class inside the active frame.
+
+    Overlapping meetings are unioned before rounding, so two work events that
+    share clock time consume that time once. Events wholly before/after the
+    frame and per-day ``skip_today`` rows cost zero.
+    """
+    return _blocks_of_minutes(capacity_mod.interval_minutes(
+        _calendar_intervals(busy_blocks, frame_start, frame_end, capacity_class)
+    ))
 
 
 def _anchored_frame_blocks(
@@ -3439,6 +3443,48 @@ def _anchored_frame_blocks(
     return min(blocks, _blocks_of_minutes(overlap))
 
 
+def _anchor_claim_window(
+    spec: dict[str, Any], frame_start: str, frame_end: str
+) -> tuple[tuple[int, int] | None, int]:
+    """(clock window, minutes needed) an anchored block claims on the clock.
+
+    The window is the time the anchor may occupy: a hard anchor claims from
+    its Start for its counted length, a flexible window (Start..End) may slide
+    anywhere inside that window. ``needed`` is the counted length in minutes.
+    An anchor with no parseable Start has no clock position — it still costs
+    capacity but can never share time with anything, so it claims no window.
+    """
+    blocks = _spec_blocks(spec)
+    if blocks <= 0:
+        return None, 0
+    start_hhmm = time_engine.to_hhmm(spec.get("Start")) or time_engine.to_hhmm(
+        spec.get("start"))
+    if start_hhmm is None:
+        return None, 0
+    frame_start_hhmm = time_engine.to_hhmm(frame_start)
+    frame_end_hhmm = time_engine.to_hhmm(frame_end)
+    if not frame_start_hhmm or not frame_end_hhmm:
+        return None, 0
+
+    def minute(hhmm: str) -> int:
+        return int(hhmm[:2]) * 60 + int(hhmm[3:])
+
+    frame_a, frame_b = minute(frame_start_hhmm), minute(frame_end_hhmm)
+    if frame_b <= frame_a:
+        return None, 0
+    need = blocks * 30
+    start_min = minute(start_hhmm)
+    end_hhmm = time_engine.to_hhmm(spec.get("End")) or time_engine.to_hhmm(
+        spec.get("end"))
+    limit = minute(end_hhmm) if end_hhmm else start_min + need
+    if limit <= start_min:
+        limit += 24 * 60
+    window = (max(start_min, frame_a), min(limit, frame_b))
+    if window[1] <= window[0]:
+        return None, 0
+    return window, min(need, window[1] - window[0])
+
+
 def _capacity_frame(
     config: dict[str, Any],
     day_setup: dict[str, Any],
@@ -3479,12 +3525,52 @@ def _capacity_frame(
     # Fixed capacity is the frame's covered clock time: overlapping meetings
     # share their interval once, and time already elapsed or past the hard
     # stop costs nothing, so the segment matches the visible timeline.
-    fixed_blk = _calendar_union_blocks(
+    fixed_iv = _calendar_intervals(
         busy_blocks, frame.anchor, frame.effective_eod, "fixed"
     )
-    anch_blk = sum(_anchored_frame_blocks(s, frame.anchor, frame.effective_eod)
-                   for s in anchored_specs.values()
-                   if not shadow._anchored_block_off(s))
+    fixed_blk = _blocks_of_minutes(capacity_mod.interval_minutes(fixed_iv))
+    work_iv = _calendar_intervals(
+        busy_blocks, frame.anchor, frame.effective_eod, "work"
+    )
+    work_busy_blk = _blocks_of_minutes(capacity_mod.interval_minutes(work_iv))
+    # Every segment keeps its own size, but the day only has so much clock. Walk
+    # the anchors in config order, let each one take the earliest time its
+    # window still leaves free, and the leftover clock is the day's real
+    # footprint — the difference is shared time, credited back once below.
+    clock_iv = capacity_mod.merge_intervals(fixed_iv + work_iv)
+    anch_blk = 0
+    # Only an anchor that actually lands on the clock can share time. One with
+    # no Start (or one the frame already left behind) still costs capacity but
+    # claims nothing, so it must never feed the credit below.
+    claimed_anch_blk = 0
+    for spec in anchored_specs.values():
+        if shadow._anchored_block_off(spec):
+            continue
+        blocks = _anchored_frame_blocks(spec, frame.anchor, frame.effective_eod)
+        anch_blk += blocks
+        window, needed = _anchor_claim_window(
+            spec, frame.anchor, frame.effective_eod
+        )
+        if window is None or needed <= 0:
+            continue
+        claimed_anch_blk += blocks
+        taken: list[tuple[int, int]] = []
+        for gap_a, gap_b in capacity_mod.free_spans(window, clock_iv):
+            if needed <= 0:
+                break
+            gap_end = min(gap_b, gap_a + needed)
+            taken.append((gap_a, gap_end))
+            needed -= gap_end - gap_a
+        if taken:
+            clock_iv = capacity_mod.merge_intervals(clock_iv + taken)
+    clock_blk = _blocks_of_minutes(capacity_mod.interval_minutes(clock_iv))
+    # Calendar fixed + work meetings + claimed anchors are the only clock-bound
+    # claims (the part of Mint that is a bare allotment is a reservation, not
+    # time). What those claims overstate against the real clock footprint is
+    # the shared time the day pays for once.
+    overlap_blk = max(
+        0, fixed_blk + work_busy_blk + claimed_anch_blk - clock_blk
+    )
     habits_blk, habits_note = _habits_segment(habits, day_setup.get("habits"))
     effective_today = today or effective_now.date()
     # Normalize persisted/legacy session selections at the capacity boundary
@@ -3520,9 +3606,6 @@ def _capacity_frame(
         and minting_setup.get("on") is not False
     ):
         allotted_work_blk = schedule.effective_minutes / external_sources.MINT_SESSION_MINUTES
-    work_busy_blk = _calendar_union_blocks(
-        busy_blocks, frame.anchor, frame.effective_eod, "work"
-    )
     mint_blk = max(allotted_work_blk, work_busy_blk)
     work_overflow_blk = max(0, work_busy_blk - allotted_work_blk)
     if float(mint_blk).is_integer():
@@ -3543,6 +3626,7 @@ def _capacity_frame(
         habits_note=habits_note,
         work_busy=work_busy_blk,
         work_overflow=work_overflow_blk,
+        overlap=overlap_blk,
     )
     return frame, cap
 
@@ -5575,6 +5659,7 @@ def create_app() -> FastAPI:
                 "habits": cap.habits, "mint": cap.mint,
                 "selected": cap.selected,
                 "buffer": cap.buffer,
+                "overlap": cap.overlap,
             },
             "total": cap.total,
             "free": cap.free,                    # signed, never clamped

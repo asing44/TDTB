@@ -101,11 +101,15 @@ function capacitySection(s: AppState): string[] {
   const budget = budgetTotal(s);
   const selected = localSelected(s);
   const remaining = budget - selected;
+  const shared = Math.max(0, cap.overlap ?? 0);
   const components = [
     `fixed ${formatBlockAmount(cap.fixed)}`,
     `anchored ${formatBlockAmount(cap.anchored)}`,
     `habits ${formatBlockAmount(cap.habits)}`,
     `mint ${formatBlockAmount(cap.mint)}`,
+    // Shared clock minutes are claimed by two segments and paid for once, so
+    // the model needs the credit named or the components over-spend the day.
+    ...(shared > 0 ? [`shared ${formatBlockAmount(shared)} counted once`] : []),
     `buffer ${formatBlockAmount(cap.buffer)}`,
   ].join(" · ");
   return [

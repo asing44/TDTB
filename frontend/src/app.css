@@ -5240,6 +5240,12 @@ body {
   height: 12px;
   background: var(--t-text);
 }
+/* Shared clock minutes: two fixed segments claim them, the day pays once. */
+.cap-card__shared {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
 /* The retired rail now lives inside the card's Details disclosure (U9). */
 .cap-card__details .rail {
   position: static;
@@ -11689,6 +11695,13 @@ button.strip-cal {
 .allotment-card__value {
   color: var(--t-muted);
   font-variant-numeric: tabular-nums;
+}
+/* Two fixed segments can claim the same clock minutes; name the amount that
+   is only paid for once instead of letting the legend and the day disagree. */
+.allotment-card__shared {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--t-muted);
 }
 
 /* Empty lane: one slim line — the lane label with "nothing here" inline —

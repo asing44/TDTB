@@ -109,7 +109,8 @@ class TestShape:
         body = r.json()
         assert set(body) >= {"segments", "total", "free", "over", "day_setup_echo"}
         assert set(body["segments"]) == {
-            "fixed", "anchored", "habits", "mint", "selected", "buffer"
+            "fixed", "anchored", "habits", "mint", "selected", "buffer",
+            "overlap",
         }
         # canonical readout strings come from the server too (skill: every
         # surface emits THESE strings) so T3 can delete label-building
@@ -351,5 +352,6 @@ class TestDisabledCalendarCapacity:
         assert set(body) >= {"segments", "total", "free", "over", "day_setup_echo"}
         assert set(body["segments"]) == {
             "fixed", "anchored", "habits", "mint", "selected", "buffer",
+            "overlap",
         }
         assert "calendar_decisions" not in body

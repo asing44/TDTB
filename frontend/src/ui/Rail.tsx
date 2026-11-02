@@ -19,6 +19,7 @@
 
 import { useAppState } from "./context";
 import { budgetTotal, localSelected } from "../store/allocatorView";
+import { creditedFixedDraw } from "../model/capacitySegments";
 import { AllocationPie } from "./AllocationPie";
 import { ReadinessStrip } from "./ReadinessStrip";
 import { display12h, formatBlockAmount } from "../model/time";
@@ -41,10 +42,16 @@ function BudgetCard() {
   if (!cap) return null;
 
   const spend = localSelected(s);
+  // Shared clock minutes are claimed by two fixed segments but paid for once:
+  // the numbers keep both sizes, the drawn bar sheds the credit so it still
+  // ends where the day ends.
+  const shared = Math.max(0, cap.overlap ?? 0);
+  const draw = creditedFixedDraw(cap);
   const budget = budgetTotal(s);
   const reserved = cap.total - cap.availableForSelection;
   const over = Math.max(0, spend - budget);
-  const usedAll = cap.fixed + cap.anchored + cap.habits + cap.mint + cap.buffer + spend;
+  const usedAll =
+    cap.fixed + cap.anchored + cap.habits + cap.mint + cap.buffer + spend - shared;
   const basis = Math.max(usedAll, cap.total, 1);
   const seg = (blocks: number) => `${(Math.max(0, blocks) / basis) * 100}%`;
   const overflow = Math.max(0, usedAll - cap.total);
@@ -55,6 +62,7 @@ function BudgetCard() {
     `Mint ${formatBlockAmount(cap.mint)}`,
     `Selected ${formatBlockAmount(spend)}`,
     `Buffer ${formatBlockAmount(cap.buffer)}`,
+    ...(shared > 0 ? [`Shared ${formatBlockAmount(shared)}`] : []),
     `Free ${formatBlockAmount(cap.free)}`,
     `Total ${formatBlockAmount(cap.total)}`,
   ].join(" · ");
@@ -101,8 +109,8 @@ function BudgetCard() {
       <p class="rail-capacity__note">Every chosen task is additive before Commit live.</p>
       <div class="rail-budget__barwrap">
         <div class="rail-budget__bar" role="img" aria-label={capacityLabel}>
-          <div style={{ width: seg(cap.fixed), background: "var(--c-event)" }} />
-          <div style={{ width: seg(cap.anchored), background: "var(--c-anchored)" }} />
+          <div style={{ width: seg(draw.fixed), background: "var(--c-event)" }} />
+          <div style={{ width: seg(draw.anchored), background: "var(--c-anchored)" }} />
           <div style={{ width: seg(cap.habits), background: "var(--c-habit)" }} />
           <div style={{ width: seg(cap.mint), background: "var(--c-minting)" }} />
           <div class="rail-budget__buffer" style={{ width: seg(cap.buffer) }} />

@@ -1389,6 +1389,7 @@ export function projectCapacity(wire: Wire): Capacity {
     counters: String(wire.counters ?? ""),
     workBusy: Number(wire.work_busy ?? wire.workBusy ?? 0),
     workOverflow: Number(wire.work_overflow ?? wire.workOverflow ?? 0),
+    overlap: segment(wire, "overlap"),
   };
 }
 

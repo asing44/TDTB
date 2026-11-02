@@ -11,6 +11,7 @@
 
 import type { Capacity } from "./types";
 import { formatBlockAmount } from "./time";
+import { creditedFixedDraw } from "./capacitySegments";
 
 export interface PieSlice {
   key: string;
@@ -133,6 +134,14 @@ export function pieSlices(
         : Number(cap[seg.key] ?? 0),
     ),
   }));
+  // Shared clock minutes are claimed by two fixed segments but paid for once
+  // (`creditedFixedDraw`): the wedges must still partition the circle, so the
+  // fixed slices are the drawn, credited sizes.
+  const draw = creditedFixedDraw(cap);
+  for (const slice of values) {
+    if (slice.key === "fixed") slice.blocks = draw.fixed;
+    else if (slice.key === "anchored") slice.blocks = draw.anchored;
+  }
   const allocated = values.reduce((sum, v) => sum + v.blocks, 0);
   // Exhausted days (PI-CHART-02): at EOD the server reports total=0 yet the
   // day's segments still exist. A zero-total day with allocations renders

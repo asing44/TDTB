@@ -64,6 +64,37 @@ describe("U9 capacity headline card", () => {
     expect(container.querySelector(".cap-card__mark")).toBeTruthy();
   });
 
+  it("shared clock time is counted once, so the day is not over-counted", () => {
+    // Two fixed segments claim the same 4 blocks. The card must charge the day
+    // once for them and name the shared amount instead of hiding it.
+    const h = makeHarness("ready", (sc) => {
+      const cap = sc.inputs.capacity!;
+      sc.inputs.capacity = {
+        ...cap,
+        fixed: 4,
+        anchored: 4,
+        mint: 0,
+        habits: 0,
+        overlap: 4,
+        total: 20,
+        free: 20 - (4 + 4 - 4),
+        availableForSelection: 20 - (4 + 4 - 4),
+      };
+    });
+    const s = h.store.getState();
+    const { getByText, container } = h.ui(<CapacityCard />);
+    const remaining = Math.max(0, 20 - (4 + 4 - 4) - localSelected(s));
+    expect(getByText(`${formatBlockAmount(remaining)} left`)).toBeTruthy();
+    expect(container.querySelector(".cap-card__shared")!.textContent).toContain(
+      "counted once",
+    );
+  });
+
+  it("no shared time means no shared note", () => {
+    const { container } = makeHarness("ready").ui(<CapacityCard />);
+    expect(container.querySelector(".cap-card__shared")).toBeNull();
+  });
+
   it("unknown capacity is named explicitly, never rendered as zero or over (KTD7)", () => {
     const h = makeHarness("ready", (sc) => {
       (sc.inputs as { capacity: unknown }).capacity = null;

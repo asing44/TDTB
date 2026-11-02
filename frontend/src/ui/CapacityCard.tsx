@@ -23,6 +23,7 @@ import { useAppState } from "./context";
 import { useState } from "preact/hooks";
 import { includedItems } from "../store/store";
 import { localSelected, trimForState } from "../store/allocatorView";
+import { creditedFixedDraw } from "../model/capacitySegments";
 import { display12h } from "../model/time";
 import { Rail } from "./Rail";
 import "./plan-r3.css";
@@ -62,7 +63,12 @@ export function CapacityCard() {
   }
 
   const tasks = localSelected(s);
-  const fixedTime = cap.fixed + cap.mint + cap.anchored + cap.habits;
+  // Two fixed segments can claim the same clock minutes (a meeting over an
+  // anchor). The day pays for those minutes once, so the shared amount comes
+  // back out of the fixed total before anything is subtracted from the day.
+  const sharedTime = Math.max(0, cap.overlap ?? 0);
+  const fixedTime = cap.fixed + cap.mint + cap.anchored + cap.habits - sharedTime;
+  const draw = creditedFixedDraw(cap);
   const allocated = fixedTime + tasks;
   const total = cap.total;
   const over = Math.max(0, allocated - total);
@@ -90,15 +96,20 @@ export function CapacityCard() {
       : `Fixed time uses ${formatBlockAmount(fixedTime)} of the day.`;
 
   const segments: Segment[] = [
-    { key: "calendar", label: "Calendar", blocks: cap.fixed, token: "--c-event" },
+    { key: "calendar", label: "Calendar", blocks: draw.fixed, token: "--c-event" },
     { key: "work", label: "Work (Mint)", blocks: cap.mint, token: "--c-minting" },
-    { key: "anchors", label: "Anchors", blocks: cap.anchored, token: "--c-anchored" },
+    { key: "anchors", label: "Anchors", blocks: draw.anchored, token: "--c-anchored" },
     { key: "habits", label: "Habits", blocks: cap.habits, token: "--c-habit" },
     { key: "selected", label: "Tasks", blocks: solidTasks, token: "--c-selected" },
   ];
 
+  // The legend keeps the engine's own sizes (a shared block is still an anchor
+  // block); only the drawn widths shed the credit.
   const legend: Segment[] = [
-    ...segments.slice(0, 4),
+    { key: "calendar", label: "Calendar", blocks: cap.fixed, token: "--c-event" },
+    { key: "work", label: "Work (Mint)", blocks: cap.mint, token: "--c-minting" },
+    { key: "anchors", label: "Anchors", blocks: cap.anchored, token: "--c-anchored" },
+    { key: "habits", label: "Habits", blocks: cap.habits, token: "--c-habit" },
     { key: "selected", label: "Tasks", blocks: tasks, token: "--c-selected" },
   ];
 
@@ -170,6 +181,12 @@ export function CapacityCard() {
           <span class="cap-card__capacity-mark" aria-hidden="true" />
           Marker = end of day{frame ? ` · ${frame}` : ""}
         </p>
+        {sharedTime > 0 && (
+          <p class="cap-card__shared">
+            {formatBlockAmount(sharedTime)} shared by two fixed segments —
+            counted once
+          </p>
+        )}
       </div>
       <section
         class="cap-card__issues"

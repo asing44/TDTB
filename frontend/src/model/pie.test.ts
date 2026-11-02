@@ -102,6 +102,17 @@ describe("pieSlices", () => {
     for (const s of slices) expect(s.fraction).toBeCloseTo(1 / 3);
   });
 
+  it("shared clock minutes are credited once so wedges still partition the day", () => {
+    // fixed 2 and anchored 4 share 2 blocks: the day holds 4 fixed blocks, not 6.
+    const slices = pieSlices(cap({ overlap: 2 }), 50, 50, 40);
+    const byKey = Object.fromEntries(slices.map((s) => [s.key, s.blocks]));
+    expect(byKey.anchored).toBe(2);
+    expect(byKey.fixed).toBe(2);
+    expect(byKey.unallocated).toBe(12);
+    const sum = slices.reduce((n, s) => n + s.fraction, 0);
+    expect(sum).toBeCloseTo(1);
+  });
+
   it("localSelected overrides the server's selected, tracking the sliders", () => {
     const slice = pieSlices(cap(), 50, 50, 40, 9).find((s) => s.key === "selected");
     expect(slice?.blocks).toBe(9);

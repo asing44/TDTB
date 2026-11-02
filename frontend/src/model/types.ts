@@ -373,6 +373,10 @@ export interface Capacity {
   workBusy?: number;
   /** Work-busy blocks beyond the configured work allotment. */
   workOverflow?: number;
+  /** Clock blocks claimed by more than one fixed-time segment (calendar,
+      meetings, anchors). Already returned to `free`/task room — subtract it
+      before re-summing the segments, never count it twice. */
+  overlap?: number;
 }
 
 export interface Ledger {

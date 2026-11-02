@@ -105,8 +105,15 @@ describe("projectCapacity — both wire shapes", () => {
   it("a missing segment lands as 0, never undefined or NaN", () => {
     const cap = projectCapacity({});
     for (const key of ["total", "fixed", "anchored", "habits", "mint", "selected",
-                       "buffer", "free", "availableForSelection"] as const) {
+                       "buffer", "free", "availableForSelection", "overlap"] as const) {
       expect(cap[key]).toBe(0);
     }
+  });
+
+  it("carries the shared-clock overlap from either wire shape", () => {
+    const nested = projectCapacity({ segments: { overlap: 3 } } as never);
+    expect(nested.overlap).toBe(3);
+    const flat = projectCapacity({ overlap: 2 } as never);
+    expect(flat.overlap).toBe(2);
   });
 });
