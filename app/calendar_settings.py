@@ -482,6 +482,7 @@ def migrate_legacy_disabled(
     entries: Iterable[str],
     inventory: Iterable[Mapping[str, Any]],
     titles: Mapping[str, str] | None = None,
+    locked_on_ids: Iterable[str] = (),
 ) -> tuple[CalendarSettingsRead, list[str]]:
     """One-time idempotent migration off the retired config list.
 
@@ -496,6 +497,9 @@ def migrate_legacy_disabled(
     ``(read, unresolved_entries)``.
     """
     resolved, unresolved = resolve_legacy_entries(entries, inventory)
+    # Own-write calendars are locked ON: a legacy entry never switches one off.
+    locked = {str(i) for i in locked_on_ids}
+    resolved = [identifier for identifier in resolved if identifier not in locked]
     read = read_settings()
     if read.persisted or not resolved:
         return read, unresolved

@@ -4542,9 +4542,9 @@ def create_app() -> FastAPI:
             return {"ok": False, "error": "stale"}
         return {"ok": True, "acknowledged": True}
 
-    def _calendar_inventory_view() -> tuple[
-        list[dict[str, Any]], set[str], str, list[str]
-    ]:
+    def _calendar_inventory_view(
+        *, strict: bool = False
+    ) -> tuple[list[dict[str, Any]], set[str], str, list[str]]:
         """(inventory rows, own-write ids, status, warnings) for Settings.
 
         Read-only: it builds the store through the same application seam
@@ -4601,6 +4601,18 @@ def create_app() -> FastAPI:
             )
             own_ids = {str(value) for value in resolved.values()}
         except Exception:  # noqa: BLE001 — no titles → nothing locked
+            if strict:
+                # A save must not guess which calendars are locked ON.
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "calendar_locks_unverifiable",
+                        "message": (
+                            "TDTB's own calendars could not be identified, so "
+                            "calendar settings were not saved. Retry shortly."
+                        ),
+                    },
+                )
             own_ids = set()
         return rows, own_ids, "ok", []
 
@@ -4665,8 +4677,25 @@ def create_app() -> FastAPI:
                 "warnings": warnings,
             }
         try:
+            own_ids = {
+                str(v) for v in calendar_bridge.resolve_titles_to_ids(
+                    calendar_bridge.normalize_title_map(config.get("Calendar Titles")),
+                    calendars_fn() or [],
+                )[0].values()
+            }
+        except Exception:  # noqa: BLE001 — locks unknown: keep legacy fallback
+            warnings.append(
+                "Legacy disabled-calendar config still applies: TDTB's own "
+                "calendars could not be identified, so it was not migrated"
+            )
+            return {
+                "off_ids": [],
+                "legacy_disabled": legacy or None,
+                "warnings": warnings,
+            }
+        try:
             migrated, unresolved = calendar_settings.migrate_legacy_disabled(
-                entries=legacy, inventory=inventory
+                entries=legacy, inventory=inventory, locked_on_ids=own_ids
             )
         except (calendar_settings.CalendarSettingsStoreError, OSError) as exc:
             print(f"calendar settings migration failed: {exc}", file=sys.stderr)
@@ -5251,7 +5280,27 @@ def create_app() -> FastAPI:
         ``expected_revision`` is a 409, malformed existing storage is a 409, an
         invalid row is a 422, and a lock/read/write failure is a 500 — every
         failure path preserves the original bytes."""
-        _rows, own_ids, _status, _warnings = _calendar_inventory_view()
+        rows, own_ids, _status, _warnings = _calendar_inventory_view(strict=True)
+        # A first save before any planning read must not silently retire the
+        # legacy config list: carry it over first. The save below then sees a
+        # newer revision and returns 409, so the owner reloads and sees it.
+        try:
+            if not calendar_settings.read_settings().persisted and rows:
+                cfg = config_reader.read_config()
+                sections = dict(cfg.config.sections) if cfg.config else {}
+                legacy = sorted(calendar_bridge.normalize_disabled_calendars(
+                    sections.get("Disabled Calendars")
+                ))
+                if legacy:
+                    calendar_settings.migrate_legacy_disabled(
+                        entries=legacy,
+                        inventory=[
+                            {"id": r["id"], "title": r["title"]} for r in rows
+                        ],
+                        locked_on_ids=own_ids,
+                    )
+        except Exception as exc:  # noqa: BLE001 — migration is best effort here
+            print(f"calendar legacy pre-save migration skipped: {exc}", file=sys.stderr)
         try:
             saved = calendar_settings.save_settings(
                 expected_revision=body.expected_revision,

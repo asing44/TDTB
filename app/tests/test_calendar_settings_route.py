@@ -273,6 +273,52 @@ class TestLegacyMigration:
         assert [row.id for row in cs.read_settings().settings.calendars] == ["CAL-P"]
 
 
+class TestEdgeCases:
+    def test_first_save_before_planning_read_migrates_legacy_list(self):
+        _write_config({"disabled": ["Personal"]})
+        client = _client(FakeCalendarStore())
+        response = client.post(
+            "/settings/calendars/save", headers=_auth(client),
+            json=_save_body(calendars=[]),
+        )
+        # The migration landed first, so the stale save is refused and the
+        # legacy entry is carried into the store rather than silently retired.
+        assert response.status_code == 409
+        stored = cs.read_settings()
+        assert [(r.id, r.enabled) for r in stored.settings.calendars] == [
+            ("CAL-P", False)
+        ]
+
+    def test_legacy_entry_for_own_write_calendar_is_not_migrated_off(self):
+        _write_config({
+            "titles": [{"Logical name": "blocks", "BusyCal title": "TDTB Blocks"}],
+            "disabled": ["TDTB Blocks", "Personal"],
+        })
+        client = _client(FakeCalendarStore([_event("Dentist", "CAL-P")]))
+        client.get("/plan-inputs")
+        stored = cs.read_settings()
+        assert [(r.id, r.enabled) for r in stored.settings.calendars] == [
+            ("CAL-P", False)
+        ]
+
+    def test_save_refuses_when_own_calendars_cannot_be_identified(self, monkeypatch):
+        _write_config()
+        client = _client(FakeCalendarStore())
+
+        def boom(*_a, **_k):
+            raise RuntimeError("titles unresolved")
+
+        monkeypatch.setattr(main_mod.calendar_bridge, "resolve_titles_to_ids", boom)
+        response = client.post(
+            "/settings/calendars/save", headers=_auth(client),
+            json=_save_body(calendars=[
+                {"id": "CAL-OWN", "title": "TDTB Blocks", "enabled": False}
+            ]),
+        )
+        assert response.status_code == 503
+        assert not cs.settings_path().exists()
+
+
 class TestRouteAgreement:
     def test_plan_inputs_and_capacity_preview_pass_the_same_off_ids(
         self, monkeypatch
