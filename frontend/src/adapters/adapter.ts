@@ -27,6 +27,8 @@ import type {
   Ledger,
   PlanInputs,
   SequenceRow,
+  CalendarSettings,
+  CalendarSettingsDraft,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -249,6 +251,12 @@ export interface Adapter {
   /** POST /settings/exclusions/save — one token-guarded non-billed full
       replacement of the local tag-exclusion policy. */
   saveTagExclusionSettings(draft: TagExclusionSettingsDraft): Promise<TagExclusionSettings>;
+  /** GET /settings/calendars — per-calendar on/off defaults plus the advisory
+      live calendar inventory. */
+  loadCalendarSettings(): Promise<CalendarSettings>;
+  /** POST /settings/calendars/save — one token-guarded non-billed full
+      replacement of the per-calendar policy; a stale revision is a 409. */
+  saveCalendarSettings(draft: CalendarSettingsDraft): Promise<CalendarSettings>;
   /** POST /duration-memory/save — one token-guarded non-billed mutation
       (duration-memory MVP). Strict value validation happens BEFORE the call;
       the adapter never rounds, truncates, snaps, or coerces. */

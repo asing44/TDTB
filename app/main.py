@@ -89,6 +89,7 @@ import capacities_assignment  # noqa: E402
 import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
+import calendar_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
 import todoist_exclusions  # noqa: E402
 import app_config  # noqa: E402
@@ -2224,6 +2225,39 @@ class ExclusionSettingsSaveRequest(BaseModel):
 
     expected_revision: StrictInt
     exclusions: ExclusionDimensionsRequest
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
+class CalendarSettingRequest(BaseModel):
+    """One calendar row in POST /settings/calendars/save.
+
+    ``id`` is the stable EventKit ``calendarIdentifier``; ``title`` is a
+    presentation snapshot; ``enabled`` is the owner's on/off default. The row
+    is closed: unknown keys are rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr
+    title: StrictStr = ""
+    enabled: StrictBool
+
+
+class CalendarSettingsSaveRequest(BaseModel):
+    """Full-replacement body for POST /settings/calendars/save.
+
+    ``expected_revision`` drives the server-side stale-write check; ``version``
+    and the new ``revision`` are server-owned and deliberately absent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    calendars: list[CalendarSettingRequest]
 
     @field_validator("expected_revision")
     @classmethod
@@ -4508,6 +4542,161 @@ def create_app() -> FastAPI:
             return {"ok": False, "error": "stale"}
         return {"ok": True, "acknowledged": True}
 
+    def _calendar_inventory_view() -> tuple[
+        list[dict[str, Any]], set[str], str, list[str]
+    ]:
+        """(inventory rows, own-write ids, status, warnings) for Settings.
+
+        Read-only: it builds the store through the same application seam
+        ``/plan-inputs`` uses and never writes. A missing/failing store degrades
+        to an ``unavailable`` status plus one bounded warning so the saved
+        settings still answer. ``own_write`` ids come from the ``Calendar
+        Titles`` config resolved against the live inventory — those calendars
+        are locked ON.
+        """
+        build = app.state.build_calendar_store
+        if build is None:
+            return [], set(), "unavailable", [
+                "Calendar inventory unavailable (no EventKit store seam)"
+            ]
+        try:
+            store = build({})
+        except Exception as exc:  # noqa: BLE001 — inventory boundary degrades
+            return [], set(), "unavailable", [
+                f"Calendar inventory unavailable ({exc})"
+            ]
+        if store is None:
+            return [], set(), "unavailable", [
+                "Calendar inventory unavailable (no EventKit store/grant)"
+            ]
+        calendars_fn = getattr(store, "calendars", None)
+        if not callable(calendars_fn):
+            return [], set(), "unavailable", [
+                "Calendar inventory unavailable (store exposes no calendars)"
+            ]
+        try:
+            calendars = calendars_fn()
+        except Exception as exc:  # noqa: BLE001 — inventory boundary degrades
+            return [], set(), "unavailable", [
+                f"Calendar inventory read failed ({exc})"
+            ]
+        rows: list[dict[str, Any]] = []
+        for cal in calendars or []:
+            identifier = getattr(cal, "identifier", None)
+            if not identifier:
+                continue
+            rows.append({
+                "id": str(identifier),
+                "title": str(getattr(cal, "title", "") or ""),
+                "source": str(getattr(cal, "source", "") or ""),
+                "writable": bool(getattr(cal, "writable", False)),
+            })
+        rows.sort(key=lambda row: row["id"])
+        try:
+            config = config_reader.read_config()
+            sections = dict(config.config.sections) if config.config else {}
+            resolved, _missing = calendar_bridge.resolve_titles_to_ids(
+                calendar_bridge.normalize_title_map(sections.get("Calendar Titles")),
+                calendars or [],
+            )
+            own_ids = {str(value) for value in resolved.values()}
+        except Exception:  # noqa: BLE001 — no titles → nothing locked
+            own_ids = set()
+        return rows, own_ids, "ok", []
+
+    def _calendar_filter(
+        config: dict[str, Any], store: Any
+    ) -> dict[str, Any]:
+        """The per-calendar on/off filter both plan routes pass to the calendar
+        reader: ``{off_ids, legacy_disabled, warnings}``.
+
+        The app-owned store is authoritative once it exists. While it is still
+        absent, the retired ``Disabled Calendars`` config list is migrated ONCE
+        (idempotent) against the live inventory; if the inventory is unreadable,
+        or nothing in the list resolves, the legacy list keeps being honored as
+        a fallback until a migration can complete. Reads and writes here stay
+        local — no provider call.
+        """
+        warnings: list[str] = []
+        legacy_raw = config.get("Disabled Calendars")
+        legacy = sorted(calendar_bridge.normalize_disabled_calendars(legacy_raw))
+        try:
+            read = calendar_settings.read_settings()
+        except (calendar_settings.CalendarSettingsStoreError, OSError) as exc:
+            print(f"calendar settings read failed: {exc}", file=sys.stderr)
+            return {
+                "off_ids": [],
+                "legacy_disabled": legacy or None,
+                "warnings": [
+                    "Calendar settings could not be read; the existing file "
+                    "was preserved and every calendar stays on"
+                ],
+            }
+        if read.persisted:
+            return {
+                "off_ids": read.settings.off_ids(),
+                "legacy_disabled": None,
+                "warnings": warnings,
+            }
+        if not legacy:
+            return {"off_ids": [], "legacy_disabled": None, "warnings": warnings}
+        calendars_fn = getattr(store, "calendars", None) if store is not None else None
+        inventory: list[dict[str, Any]] = []
+        inventory_ok = callable(calendars_fn)
+        if inventory_ok:
+            try:
+                for cal in calendars_fn() or []:
+                    identifier = getattr(cal, "identifier", None)
+                    if identifier:
+                        inventory.append({
+                            "id": str(identifier),
+                            "title": str(getattr(cal, "title", "") or ""),
+                        })
+            except Exception:  # noqa: BLE001 — migration boundary degrades
+                inventory_ok = False
+        if not inventory_ok or not inventory:
+            warnings.append(
+                "Legacy disabled-calendar config still applies: the calendar "
+                "inventory is unreadable, so it could not be migrated"
+            )
+            return {
+                "off_ids": [],
+                "legacy_disabled": legacy or None,
+                "warnings": warnings,
+            }
+        try:
+            migrated, unresolved = calendar_settings.migrate_legacy_disabled(
+                entries=legacy, inventory=inventory
+            )
+        except (calendar_settings.CalendarSettingsStoreError, OSError) as exc:
+            print(f"calendar settings migration failed: {exc}", file=sys.stderr)
+            warnings.append(
+                "Legacy disabled-calendar config still applies: migrating it "
+                "to calendar settings failed"
+            )
+            return {
+                "off_ids": [],
+                "legacy_disabled": legacy or None,
+                "warnings": warnings,
+            }
+        if not migrated.persisted:
+            warnings.append(
+                "Legacy disabled-calendar config still applies: no entry "
+                "resolved to a live calendar ("
+                + ", ".join(unresolved[:5])
+                + ")"
+            )
+            return {
+                "off_ids": [],
+                "legacy_disabled": legacy or None,
+                "warnings": warnings,
+            }
+        return {
+            "off_ids": migrated.settings.off_ids(),
+            "legacy_disabled": None,
+            "warnings": warnings,
+        }
+
     def _tag_catalog() -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
 
@@ -5005,6 +5194,120 @@ def create_app() -> FastAPI:
             ) from exc
         return {"settings": saved.as_dict(), "persisted": True}
 
+    @app.get("/settings/calendars")
+    def get_calendar_settings() -> dict:
+        """Tokenless local read of the per-calendar on/off policy.
+
+        Reads exactly one state file (or reports the all-on default when it is
+        absent) and writes nothing — not even a migration: the retired config
+        list is migrated by the planning read, so a GET can never create state
+        as a side effect. The calendar inventory is advisory UI metadata; an
+        unreadable inventory degrades to a status + warning and never hides the
+        saved settings. Malformed/unsupported storage fails closed with a
+        bounded 500 and leaves the bytes untouched."""
+        try:
+            result = calendar_settings.read_settings()
+        except (calendar_settings.CalendarSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute path.
+            print(f"calendar settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "calendar_settings_storage_error",
+                    "message": (
+                        "Calendar settings storage could not be read; the "
+                        "existing file was preserved."
+                    ),
+                },
+            ) from exc
+        inventory, own_ids, status, warnings = _calendar_inventory_view()
+        rows = [
+            {
+                **row,
+                "locked": "own_write" if row["id"] in own_ids else None,
+                "effective_enabled": (
+                    True
+                    if row["id"] in own_ids
+                    else result.settings.is_enabled(row["id"])
+                ),
+            }
+            for row in inventory
+        ]
+        return {
+            "settings": result.settings.as_dict(),
+            "persisted": result.persisted,
+            "inventory": rows,
+            "inventory_status": status,
+            "warnings": warnings,
+        }
+
+    @app.post("/settings/calendars/save", dependencies=[Depends(require_token)])
+    def post_calendar_settings_save(body: CalendarSettingsSaveRequest) -> dict:
+        """Explicit, full-replacement save of the per-calendar policy.
+
+        The complete list is supplied; ``version`` and the new ``revision`` are
+        server-owned. Own-write calendars (TDTB's own zone calendars) are locked
+        ON: a request that asks for one to be off is stored ON. A stale
+        ``expected_revision`` is a 409, malformed existing storage is a 409, an
+        invalid row is a 422, and a lock/read/write failure is a 500 — every
+        failure path preserves the original bytes."""
+        _rows, own_ids, _status, _warnings = _calendar_inventory_view()
+        try:
+            saved = calendar_settings.save_settings(
+                expected_revision=body.expected_revision,
+                calendars=[
+                    calendar_settings.CalendarSetting(
+                        id=entry.id, title=entry.title, enabled=entry.enabled
+                    )
+                    for entry in body.calendars
+                ],
+                locked_on_ids=own_ids,
+            )
+        except calendar_settings.CalendarSettingsConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "calendar_settings_conflict",
+                    "message": (
+                        "Calendar settings changed since they were read; "
+                        "reload and retry."
+                    ),
+                },
+            ) from exc
+        except calendar_settings.CalendarSettingsFormatError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "calendar_settings_storage_error",
+                    "message": (
+                        "Calendar settings storage is malformed or "
+                        "unsupported; the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "calendar_settings_invalid",
+                    "message": "Calendar settings payload is invalid.",
+                },
+            ) from exc
+        except (calendar_settings.CalendarSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute path.
+            print(f"calendar settings save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "calendar_settings_storage_error",
+                    "message": (
+                        "Calendar settings could not be saved; the existing "
+                        "file was preserved."
+                    ),
+                },
+            ) from exc
+        return {"settings": saved.as_dict(), "persisted": True}
+
     @app.get("/plan-inputs")
     def get_plan_inputs() -> dict:
         """T16: read-only assembly of the {digest, config, anchored_blocks}
@@ -5038,9 +5341,13 @@ def create_app() -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
-            # Issue #6: canonical config section for disabled calendars,
-            # so route-level exclusions become diagnosable via calendar_decisions.
-            "calendar_disabled": config.get("Disabled Calendars"),
+            # Calendar settings (owner-managed per-calendar on/off defaults) is
+            # the ONLY calendar disable surface: the config ``Disabled
+            # Calendars`` key is retired here and left unset. The one exception
+            # is the unmigrated fallback the settings read itself reports
+            # (inventory unreadable, or nothing in the legacy list resolved).
+            "calendar_disabled": None,
+            "calendar_disabled_ids": [],
             # Unit 1: the user-chosen list of calendars whose all-day events
             # become schedulable plan rows instead of all-day strip entries.
             "schedulable_all_day": config.get("Schedulable All-Day Calendars"),
@@ -5217,9 +5524,16 @@ def create_app() -> FastAPI:
                     ext_cfg = {**ext_cfg, "calendar_ids": resolved}
                 except Exception:  # noqa: BLE001 — no titles → no own-write exclusion
                     pass
+            cal_filter = _calendar_filter(config, store)
+            ext_cfg = {
+                **ext_cfg,
+                "calendar_disabled_ids": cal_filter["off_ids"],
+                "calendar_disabled": cal_filter["legacy_disabled"],
+            }
             busy_blocks, w_cal, calendar_decisions = (
                 external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
+            w_cal = [*cal_filter["warnings"], *w_cal]
             # Unit 1: opted-in all-day events are schedulable plan rows, not
             # busy walls. Split them out of the busy frame, then drop any row
             # already committed as a timed event on TDTB's own Blocks
@@ -5597,9 +5911,13 @@ def create_app() -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
-            # Issue #6: canonical config section for disabled calendars,
-            # so route-level exclusions become diagnosable via calendar_decisions.
-            "calendar_disabled": config.get("Disabled Calendars"),
+            # Calendar settings (owner-managed per-calendar on/off defaults) is
+            # the ONLY calendar disable surface: the config ``Disabled
+            # Calendars`` key is retired here and left unset. The one exception
+            # is the unmigrated fallback the settings read itself reports
+            # (inventory unreadable, or nothing in the legacy list resolved).
+            "calendar_disabled": None,
+            "calendar_disabled_ids": [],
             # Unit 1: keep the frame consistent with /plan-inputs — an opted-in
             # all-day event leaves the busy frame instead of riding the strip
             # (its all-day cost was already zero capacity).
@@ -5619,6 +5937,12 @@ def create_app() -> FastAPI:
                     ext_cfg = {**ext_cfg, "calendar_ids": resolved}
                 except Exception:  # noqa: BLE001 — no titles → no own-write exclusion
                     pass
+            cal_filter = _calendar_filter(config, store)
+            ext_cfg = {
+                **ext_cfg,
+                "calendar_disabled_ids": cal_filter["off_ids"],
+                "calendar_disabled": cal_filter["legacy_disabled"],
+            }
             busy_blocks, _w_cal = external_sources.fetch_calendar_busy(
                 store, ext_cfg, today
             )

@@ -40,9 +40,11 @@
    The empty state is still the whole point of the section: when every sourced
    row is in today's plan, there is nothing to render. */
 
+import { HideFromViewButton } from "./HideFromView";
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import {
+  SOURCE_LABEL as DRAWER_SOURCE_LABEL,
   drawerTierGroups,
   type DrawerFacts,
   type DrawerSourceGroup,
@@ -60,7 +62,7 @@ import {
   type AppState,
   type SkippedTodayRow,
 } from "../store/store";
-import { ADD_TO_PLAN_LABEL, AssignSwitch, MintToggle, rowId } from "./TaskRow";
+import { ADD_TO_PLAN_LABEL, AssignSwitch, MintToggle, rowId, rowKey } from "./TaskRow";
 import { DurationCell, SkippedRow } from "./SkippedToday";
 import { DurationSlider } from "./DurationSlider";
 import { DurationStatus } from "./DurationStatus";
@@ -72,18 +74,10 @@ import type { AssignedItem } from "../model/types";
 import "./drawer-groups.css";
 import "./drawer-rows.css";
 
-const SOURCE_LABEL: Record<string, string> = {
-  todoist: "Todoist",
-  capacities: "Capacities",
-  calendar: "Calendar",
-};
+const SOURCE_LABEL: Record<string, string> = DRAWER_SOURCE_LABEL;
 
 function sourceKey(source: string): string {
   return SOURCE_LABEL[source] ? source : "other";
-}
-
-function rowKey(identity: string): string {
-  return identity.replace(/[^A-Za-z0-9_-]+/g, "-");
 }
 
 /** The badge a mid-day arrival wears. Its title says what "new" means; the
@@ -199,6 +193,7 @@ function LocalRow({
           offLabel={ADD_TO_PLAN_LABEL}
           caption={ADD_TO_PLAN_LABEL}
         />
+        {item && <HideFromViewButton id={item.id} name={item.name} />}
         {item && (
           <button
             type="button"
@@ -496,7 +491,8 @@ export function UnassignedToday({
   structureTitles?: Record<string, string>;
 }) {
   const s = useAppState();
-  const rows = assignmentRows(s).unassigned;
+  const hidden = new Set(s.ui.hiddenIds);
+  const rows = assignmentRows(s).unassigned.filter((row) => !hidden.has(row.id));
   if (rows.length === 0) return null;
   const local = rows.filter((row) => row.origin === "local");
   const removed = rows.filter((row) => row.origin === "journal-unassign");

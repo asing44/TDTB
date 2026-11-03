@@ -144,3 +144,38 @@ describe("FixtureAdapter", () => {
     ).toEqual(["Magic Mirror", "Press"]);
   });
 });
+
+describe("calendar settings (fixture)", () => {
+  it("starts all-on with an inventory that includes a locked calendar", async () => {
+    const a = new FixtureAdapter("ready");
+    const s = await a.loadCalendarSettings();
+    expect(s.persisted).toBe(false);
+    expect(s.calendars).toEqual([]);
+    expect(s.inventory.some((c) => c.locked === "own_write")).toBe(true);
+  });
+
+  it("saves a full replacement, bumps the revision, and keeps locked calendars on", async () => {
+    const a = new FixtureAdapter("ready");
+    const s = await a.loadCalendarSettings();
+    const locked = s.inventory.find((c) => c.locked)!;
+    const saved = await a.saveCalendarSettings({
+      expectedRevision: 0,
+      calendars: [
+        { id: "cal-work", title: "Work", enabled: false },
+        { id: locked.id, title: locked.title, enabled: false },
+      ],
+    });
+    expect(saved.revision).toBe(1);
+    expect(saved.persisted).toBe(true);
+    expect(saved.calendars.find((c) => c.id === locked.id)!.enabled).toBe(true);
+    expect(saved.calendars.find((c) => c.id === "cal-work")!.enabled).toBe(false);
+  });
+
+  it("rejects a stale revision", async () => {
+    const a = new FixtureAdapter("ready");
+    await a.saveCalendarSettings({ expectedRevision: 0, calendars: [] });
+    await expect(a.saveCalendarSettings({ expectedRevision: 0, calendars: [] })).rejects.toThrow(
+      /changed since/,
+    );
+  });
+});

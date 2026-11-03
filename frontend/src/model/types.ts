@@ -231,6 +231,44 @@ export interface TagExclusionSettingsDraft {
   todoist: TodoistExclusionEntry[];
 }
 
+/** One saved per-calendar default. `id` is the stable EventKit calendar
+    identifier; `title` is a display snapshot taken at save time. */
+export interface CalendarSetting {
+  id: string;
+  title: string;
+  enabled: boolean;
+}
+
+/** One live calendar from the advisory inventory. `locked: "own_write"` marks
+    TDTB's own writable zone calendars, which are always on. */
+export interface CalendarInventoryEntry {
+  id: string;
+  title: string;
+  source: string;
+  writable: boolean;
+  locked: "own_write" | null;
+  effectiveEnabled: boolean;
+}
+
+/** The versioned per-calendar policy plus the advisory live inventory. A
+    calendar with no saved entry is on. The save response carries no
+    inventory, so a saved record reuses the last loaded one. */
+export interface CalendarSettings {
+  version: number;
+  revision: number;
+  persisted: boolean;
+  calendars: CalendarSetting[];
+  inventory: CalendarInventoryEntry[];
+  inventoryStatus: "ok" | "unavailable";
+  warnings: string[];
+}
+
+/** Full replacement body for the calendar-settings save route. */
+export interface CalendarSettingsDraft {
+  expectedRevision: number;
+  calendars: CalendarSetting[];
+}
+
 /** Digest diagnostics for the Todoist exclusion stage (server envelope).
     Advisory and tolerant: a malformed block is dropped, never fabricated. */
 export interface TodoistExclusionPolicy {

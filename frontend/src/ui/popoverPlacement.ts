@@ -65,7 +65,15 @@ export function computePopoverPlacement(
             ? "up"
             : "down";
   const available = placement === "up" ? above : below;
-  const maxHeight = Math.max(0, Math.min(panel.height, available));
+  // When neither side fits the whole panel, let it overlap the trigger and
+  // use the full viewport height rather than scroll a clipped sliver.
+  const fits = available >= panel.height;
+  const maxHeight = fits
+    ? panel.height
+    : Math.max(
+        0,
+        Math.min(panel.height, viewport.height - 2 * POPOVER_EDGE),
+      );
   const desiredTop =
     placement === "up"
       ? trigger.top - POPOVER_GAP - maxHeight

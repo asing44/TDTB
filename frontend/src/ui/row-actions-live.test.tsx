@@ -142,6 +142,7 @@ describe("collapsed row: direct verbs", () => {
       "Complete",
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
+      "Hide Press from view",
     ]);
     // Source removal and Delete are not direct controls, and the transitional
     // More menu that used to hold them is gone.
@@ -167,6 +168,7 @@ describe("collapsed row: direct verbs", () => {
       "Complete",
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
+      "Hide Press from view",
     ]);
   });
 });

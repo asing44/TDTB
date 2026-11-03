@@ -18,6 +18,7 @@ import { CapacitiesUnknownReview } from "./CapacitiesUnknownReview";
 import { CapacitiesRulesEditor } from "./CapacitiesRulesEditor";
 import { CapacitiesSettingsPanel } from "./CapacitiesSettingsPanel";
 import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
+import { CalendarSettingsPanel } from "./CalendarSettingsPanel";
 import { CapacitiesPlanPreview } from "./CapacitiesPlanPreview";
 import { CapacitiesStructureList } from "./CapacitiesStructureList";
 import { usePlanData, type PlanData } from "./planPreview";
@@ -32,7 +33,7 @@ export const HUB_ENTRIES: ReadonlyArray<{
   hint: string;
 }> = [
   { id: "freshness", label: "Is my data up to date?", hint: "Todoist, calendar and Capacities, plus Refresh now" },
-  { id: "plan", label: "What shows up in my plan?", hint: "Which items appear, and tags you hide" },
+  { id: "plan", label: "What shows up in my plan?", hint: "Which items appear, calendars, and tags you hide" },
   { id: "missing", label: "Why is something missing?", hint: "A short checklist" },
   { id: "day", label: "Change my day setup", hint: "Hours, sessions, anchored blocks, captures" },
   { id: "repair", label: "Repair connections", hint: "Only if something looks wrong" },
@@ -95,6 +96,7 @@ function PlanBody({ here }: { here: boolean }) {
     <>
       <CapacitiesPlanPreview data={data} />
       <TagExclusionSettingsPanel active={here} onSettings={setSavedTags} />
+      <CalendarSettingsPanel active={here} />
       <Fold title="Fine-tune by item type" note="rarely needed" live={here} keepMounted>
         {(foldOpen) => (
           <>

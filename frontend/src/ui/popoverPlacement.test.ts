@@ -41,7 +41,7 @@ describe("computePopoverPlacement", () => {
     expect(p.maxHeight).toBe(500);
   });
 
-  it("clamps a too-tall panel to the larger side and the top edge", () => {
+  it("lets a panel that fits neither side use the full viewport height", () => {
     const p = computePopoverPlacement(trigger(350, 20), viewport(900, 400), {
       width: 340,
       height: 500,
@@ -49,7 +49,7 @@ describe("computePopoverPlacement", () => {
     expect(p.placement).toBe("up");
     expect(p.top).toBe(POPOVER_EDGE);
     expect(p.top + p.maxHeight).toBeLessThanOrEqual(400 - POPOVER_EDGE);
-    expect(p.maxHeight).toBe(350 - POPOVER_EDGE - POPOVER_GAP);
+    expect(p.maxHeight).toBe(400 - 2 * POPOVER_EDGE);
   });
 
   it("clamps horizontally so the panel stays inside the viewport", () => {

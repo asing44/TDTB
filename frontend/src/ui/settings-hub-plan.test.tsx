@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { SettingsShell } from "./SettingsShell";
+import { HUB_ENTRIES } from "./SettingsHub";
 import { makeHarness } from "./test-harness";
 import type {
   AssignedItem,
@@ -192,6 +193,34 @@ describe("hub · Tasks I hid", () => {
     const section = heading.closest("section") as HTMLElement;
     expect(within(section).getByText("2 hidden")).toBeTruthy();
     expect(within(section).getByText("Press Save tag exclusions to apply.")).toBeTruthy();
+  });
+
+  it("mounts the calendar defaults beside the tag exclusions and saves on request", async () => {
+    const { h, rendered } = openPlan();
+    const save = vi.spyOn(h.controller, "saveCalendarSettings");
+    const toggle = await waitFor(() =>
+      rendered.getByRole("switch", { name: "Include Work by default" }),
+    );
+    const list = rendered.getByRole("list", { name: "Calendars" });
+    // The fixture inventory has three unlocked, unsaved calendars.
+    expect(within(list).getAllByText("New")).toHaveLength(3);
+    fireEvent.click(toggle);
+    fireEvent.click(rendered.getByRole("button", { name: "Save calendars" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: 0,
+      calendars: [
+        { id: "cal-work", title: "Work", enabled: false },
+        { id: "cal-family", title: "Family", enabled: true },
+        { id: "cal-holidays", title: "US Holidays", enabled: true },
+        { id: "cal-tdtb-focus", title: "TDTB Focus", enabled: true },
+      ],
+    });
+    await waitFor(() => expect(within(list).queryAllByText("New")).toHaveLength(0));
+  });
+
+  it("the plan entry hint mentions calendars", () => {
+    expect(HUB_ENTRIES.find((e) => e.id === "plan")!.hint).toMatch(/calendars/);
   });
 
   it("a tag edit preserves the hidden-task list in the saved body", async () => {

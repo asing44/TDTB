@@ -80,7 +80,7 @@ const SOURCE_ORDER: readonly DrawerSourceKey[] = [
   "other",
 ];
 
-const SOURCE_LABEL: Record<DrawerSourceKey, string> = {
+export const SOURCE_LABEL: Record<DrawerSourceKey, string> = {
   todoist: "Todoist",
   capacities: "Capacities",
   calendar: "Calendar",

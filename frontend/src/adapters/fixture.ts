@@ -47,6 +47,8 @@ import type {
   PlanInputs,
   SequenceRow,
   ShadowDiff,
+  CalendarSettings,
+  CalendarSettingsDraft,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -389,6 +391,20 @@ export class FixtureAdapter implements Adapter {
     structureTitles: {
       "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
     },
+  };
+  private calendarSettings: CalendarSettings = {
+    version: 1,
+    revision: 0,
+    persisted: false,
+    calendars: [],
+    inventory: [
+      { id: "cal-work", title: "Work", source: "iCloud", writable: true, locked: null, effectiveEnabled: true },
+      { id: "cal-family", title: "Family", source: "iCloud", writable: true, locked: null, effectiveEnabled: true },
+      { id: "cal-holidays", title: "US Holidays", source: "Subscribed", writable: false, locked: null, effectiveEnabled: true },
+      { id: "cal-tdtb-focus", title: "TDTB Focus", source: "iCloud", writable: true, locked: "own_write", effectiveEnabled: true },
+    ],
+    inventoryStatus: "ok",
+    warnings: [],
   };
   private tagExclusionSettings: TagExclusionSettings = {
     version: 1,
@@ -1127,6 +1143,32 @@ export class FixtureAdapter implements Adapter {
       catalog: structuredClone(this.tagExclusionSettings.catalog),
     };
     return structuredClone(this.tagExclusionSettings);
+  }
+
+  async loadCalendarSettings(): Promise<CalendarSettings> {
+    await wait(LATENCY_MS);
+    return structuredClone(this.calendarSettings);
+  }
+
+  async saveCalendarSettings(draft: CalendarSettingsDraft): Promise<CalendarSettings> {
+    await wait(LATENCY_MS);
+    if (draft.expectedRevision !== this.calendarSettings.revision) {
+      throw new Error(
+        `Calendar settings changed since they were read (stored revision ${this.calendarSettings.revision}, expected ${draft.expectedRevision})`,
+      );
+    }
+    const locked = new Set(
+      this.calendarSettings.inventory.filter((c) => c.locked !== null).map((c) => c.id),
+    );
+    this.calendarSettings = {
+      ...this.calendarSettings,
+      revision: this.calendarSettings.revision + 1,
+      persisted: true,
+      calendars: draft.calendars
+        .map((c) => ({ ...c, enabled: locked.has(c.id) ? true : c.enabled }))
+        .sort((a, b) => (a.id < b.id ? -1 : 1)),
+    };
+    return structuredClone(this.calendarSettings);
   }
 
   async saveMicroAdventure(_pick: MicroIdea | null): Promise<void> {

@@ -335,9 +335,12 @@ class TestPlanInputsCalendarDecisions:
 
         decisions = {d["title"]: d for d in body["calendar_decisions"]}
 
-        # Disabled calendar event: excluded with reason code.
+        # The config 'Disabled Calendars' entry is migrated once into the
+        # app-owned calendar settings store, so the exclusion now carries the
+        # settings reason code (`excluded_calendar_off` replaced
+        # `excluded_disabled_calendar` for the same event).
         assert decisions["Yoga"]["decision"] == "excluded"
-        assert decisions["Yoga"]["reason_code"] == "excluded_disabled_calendar"
+        assert decisions["Yoga"]["reason_code"] == "excluded_calendar_off"
 
         # Unknown calendar event: unresolved and warned with title/ID.
         mystery = decisions["Mystery"]

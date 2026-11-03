@@ -78,6 +78,10 @@ import type {
   SequenceRow,
   TagCatalog,
   TagCatalogTag,
+  CalendarInventoryEntry,
+  CalendarSetting,
+  CalendarSettings,
+  CalendarSettingsDraft,
   TagExclusionIdentity,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
@@ -3099,4 +3103,133 @@ export function projectCalendarDrift(raw: Wire): CalendarDrift {
     })),
     checkedAt: typeof raw.checkedAt === "string" ? raw.checkedAt : "",
   };
+}
+
+function calendarSettingsError(detail: string): Error {
+  return new Error(`invalid calendar settings response: ${detail}`);
+}
+
+function exactKeys(raw: Record<string, unknown>, keys: string[]): boolean {
+  const own = Object.keys(raw);
+  return own.length === keys.length && keys.every((key) => key in raw);
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Project GET/POST /settings/calendars[/save]. Malformed input throws; the
+    client never turns a bad response into a plausible all-on default. The save
+    response has no inventory, so the caller passes the last loaded one. */
+export function projectCalendarSettings(
+  wire: Wire,
+  inventoryFallback?: Pick<CalendarSettings, "inventory" | "inventoryStatus" | "warnings">,
+): CalendarSettings {
+  const raw = wire?.settings;
+  if (!isPlainObject(raw)) throw calendarSettingsError("missing settings object");
+  if (typeof wire.persisted !== "boolean") {
+    throw calendarSettingsError("persisted must be a boolean");
+  }
+  if (!exactKeys(raw, ["version", "revision", "calendars"])) {
+    throw calendarSettingsError("settings has unknown or missing keys");
+  }
+  if (raw.version !== 1) throw calendarSettingsError("version is unsupported");
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
+    throw calendarSettingsError("revision must be a nonnegative safe integer");
+  }
+  if (!Array.isArray(raw.calendars)) throw calendarSettingsError("calendars must be an array");
+  const seen = new Set<string>();
+  const calendars: CalendarSetting[] = raw.calendars.map((entry: unknown) => {
+    if (!isPlainObject(entry) || !exactKeys(entry, ["id", "title", "enabled"])) {
+      throw calendarSettingsError("calendar entries have unknown or missing keys");
+    }
+    if (typeof entry.id !== "string" || entry.id.trim() === "") {
+      throw calendarSettingsError("calendar entry id is malformed");
+    }
+    if (typeof entry.title !== "string") throw calendarSettingsError("calendar entry title is malformed");
+    if (typeof entry.enabled !== "boolean") {
+      throw calendarSettingsError("calendar entry enabled must be a boolean");
+    }
+    if (seen.has(entry.id)) throw calendarSettingsError("duplicate calendar id");
+    seen.add(entry.id);
+    return { id: entry.id, title: entry.title, enabled: entry.enabled };
+  });
+
+  let inventory: CalendarInventoryEntry[];
+  let inventoryStatus: "ok" | "unavailable";
+  let warnings: string[];
+  if (wire.inventory === undefined && wire.inventory_status === undefined && wire.warnings === undefined) {
+    inventory = inventoryFallback?.inventory ?? [];
+    inventoryStatus = inventoryFallback?.inventoryStatus ?? "unavailable";
+    warnings = inventoryFallback?.warnings ?? [];
+  } else {
+    if (wire.inventory_status !== "ok" && wire.inventory_status !== "unavailable") {
+      throw calendarSettingsError("inventory_status is unsupported");
+    }
+    inventoryStatus = wire.inventory_status;
+    if (!Array.isArray(wire.inventory)) throw calendarSettingsError("inventory must be an array");
+    if (!Array.isArray(wire.warnings) || wire.warnings.some((w: unknown) => typeof w !== "string")) {
+      throw calendarSettingsError("warnings must be an array of strings");
+    }
+    warnings = [...wire.warnings];
+    const inventoryIds = new Set<string>();
+    inventory = wire.inventory.map((row: unknown) => {
+      if (
+        !isPlainObject(row) ||
+        !exactKeys(row, ["id", "title", "source", "writable", "locked", "effective_enabled"])
+      ) {
+        throw calendarSettingsError("inventory rows have unknown or missing keys");
+      }
+      if (typeof row.id !== "string" || row.id.trim() === "") {
+        throw calendarSettingsError("inventory row id is malformed");
+      }
+      if (typeof row.title !== "string" || typeof row.source !== "string") {
+        throw calendarSettingsError("inventory row title/source is malformed");
+      }
+      if (typeof row.writable !== "boolean" || typeof row.effective_enabled !== "boolean") {
+        throw calendarSettingsError("inventory row flags must be booleans");
+      }
+      if (row.locked !== null && row.locked !== "own_write") {
+        throw calendarSettingsError("inventory row locked is unsupported");
+      }
+      if (inventoryIds.has(row.id)) throw calendarSettingsError("duplicate inventory id");
+      inventoryIds.add(row.id);
+      return {
+        id: row.id,
+        title: row.title,
+        source: row.source,
+        writable: row.writable,
+        locked: row.locked,
+        effectiveEnabled: row.effective_enabled,
+      };
+    });
+  }
+  return {
+    version: 1,
+    revision: raw.revision,
+    persisted: wire.persisted,
+    calendars,
+    inventory,
+    inventoryStatus,
+    warnings,
+  };
+}
+
+/** Build the full-replacement body for POST /settings/calendars/save. */
+export function calendarSettingsToWire(draft: CalendarSettingsDraft): Wire {
+  if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
+    throw new Error("expectedRevision must be a nonnegative safe integer");
+  }
+  const seen = new Set<string>();
+  const calendars = draft.calendars.map((entry) => {
+    if (typeof entry.id !== "string" || entry.id.trim() === "") {
+      throw new Error("calendar id is malformed");
+    }
+    if (typeof entry.title !== "string") throw new Error("calendar title is malformed");
+    if (typeof entry.enabled !== "boolean") throw new Error("calendar enabled must be a boolean");
+    if (seen.has(entry.id)) throw new Error("duplicate calendar id");
+    seen.add(entry.id);
+    return { id: entry.id, title: entry.title, enabled: entry.enabled };
+  });
+  return { expected_revision: draft.expectedRevision, calendars };
 }

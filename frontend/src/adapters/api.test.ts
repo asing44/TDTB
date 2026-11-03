@@ -1327,3 +1327,81 @@ describe("KTD1 re-assign route (POST /runtime-actions/reassign)", () => {
     });
   });
 });
+
+describe("calendar settings routes", () => {
+  function calendarWire(revision = 2) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision,
+        calendars: [{ id: "cal-a", title: "Work", enabled: false }],
+      },
+      inventory: [
+        { id: "cal-a", title: "Work", source: "iCloud", writable: true, locked: null, effective_enabled: false },
+      ],
+      inventory_status: "ok",
+      warnings: [],
+    };
+  }
+
+  it("loads settings and inventory with a plain GET", async () => {
+    route("/settings/calendars", calendarWire());
+    const a = new ApiAdapter();
+
+    const loaded = await a.loadCalendarSettings();
+
+    expect(loaded.revision).toBe(2);
+    expect(loaded.inventory[0].effectiveEnabled).toBe(false);
+    expect(calls.map((c) => c.path)).toEqual(["/settings/calendars"]);
+    expect(calls.every((c) => c.init?.method === undefined)).toBe(true);
+  });
+
+  it("saves the full replacement with the token and keeps the loaded inventory", async () => {
+    route("/settings/calendars", calendarWire());
+    route("/settings/calendars/save", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 3,
+        calendars: [{ id: "cal-a", title: "Work", enabled: true }],
+      },
+    });
+    const a = new ApiAdapter();
+    const loaded = await a.loadCalendarSettings();
+
+    const saved = await a.saveCalendarSettings({
+      expectedRevision: loaded.revision,
+      calendars: [{ id: "cal-a", title: "Work", enabled: true }],
+    });
+
+    expect(saved.revision).toBe(3);
+    expect(saved.inventory).toHaveLength(1);
+    expect(postBody("/settings/calendars/save")).toEqual({
+      expected_revision: 2,
+      calendars: [{ id: "cal-a", title: "Work", enabled: true }],
+    });
+    const post = calls.find((c) => c.path === "/settings/calendars/save");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+  });
+
+  it("surfaces a stale revision as ApiError 409", async () => {
+    route(
+      "/settings/calendars/save",
+      { detail: { code: "calendar_settings_conflict", message: "changed since read" } },
+      409,
+    );
+    const a = new ApiAdapter();
+
+    const err = await a.saveCalendarSettings({ expectedRevision: 0, calendars: [] }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.message).toContain("changed since read");
+  });
+
+  it("rejects a malformed load instead of defaulting", async () => {
+    route("/settings/calendars", { persisted: true, settings: { version: 1, revision: 0 } });
+    await expect(new ApiAdapter().loadCalendarSettings()).rejects.toThrow(/calendar settings/);
+  });
+});

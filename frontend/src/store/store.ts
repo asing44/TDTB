@@ -422,6 +422,11 @@ export interface AppState {
         collapsed. A single id (not a set) is what makes "expanding another
         collapses the first" true by construction. */
     expandedId: string | null;
+    /** Session-only "hide from view" ids. Never persisted. A hidden row is
+        out of the plan math too (see rowIsIncluded): VIEW_HIDDEN drops its
+        staged row, placement and pins, so capacity and sequencing ignore it
+        until Show all clears the list. */
+    hiddenIds: string[];
     /** Task-actions F3: checkbox selection, independent of expansion. Row ids
         in the order they were selected; empty means nothing is selected. */
     selection: string[];
@@ -496,7 +501,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null, expandedId: null, selection: [] },
+  ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null, expandedId: null, hiddenIds: [], selection: [] },
   drafts: {},
   rowUndo: {},
   batch: emptyBatch,
@@ -595,6 +600,9 @@ export type Action =
   | { type: "ROW_MOVED"; id: string; start: string }
   | { type: "ROW_PLACED"; id: string; start: string } // exact editor: queue -> staged sequence
   | { type: "ROW_UNPLACED"; id: string }
+  | { type: "VIEW_HIDDEN"; id: string }
+  | { type: "VIEW_HIDDEN_CLEARED" }
+  | { type: "VIEW_UNHIDDEN"; id: string }
   | { type: "ROW_PIN_RESET"; id: string }
   | { type: "VALIDATED"; validation: Validation }
   | { type: "SHADOW_START" }
@@ -714,6 +722,41 @@ function dirtySeq(s: AppState): Pick<AppState, "seqPhase" | "validation"> {
   return s.seqPhase === "valid" || s.seqPhase === "dirty"
     ? { seqPhase: "dirty", validation: null }
     : { seqPhase: s.seqPhase, validation: s.validation };
+}
+
+/** The trio every plan-content edit owes the rest of the store: revoke any
+    accepted defects (LD 24), mark a valid or dirty sequence dirty so it is
+    revalidated, and stale a current shadow. Spread it from any case that
+    changes what the plan holds, so a new edit cannot forget one of the three. */
+function contentEdit(
+  s: AppState,
+): Pick<
+  AppState,
+  | "acceptedDefects"
+  | "seqPhase"
+  | "validation"
+  | "shadowPhase"
+  | "liveArmed"
+  | "shadowError"
+  | "shadowErrorKind"
+> {
+  return { acceptedDefects: null, ...dirtySeq(s), ...staleShadow(s) };
+}
+
+/** Everything that leaves with a row that left the plan: its staged work row
+    (zone rows are backdrop and stay), its placement, and both pin ledgers. */
+function withoutRows(
+  s: AppState,
+  ids: ReadonlySet<string>,
+): Pick<AppState, "sequence" | "placements" | "pinnedRows" | "pendingPinnedRows"> {
+  const placements = { ...s.placements };
+  for (const id of ids) delete placements[id];
+  return {
+    sequence: s.sequence?.filter((row) => row.kind === "zone" || !ids.has(row.id)) ?? null,
+    placements,
+    pinnedRows: s.pinnedRows.filter((row) => !ids.has(row.id)),
+    pendingPinnedRows: s.pendingPinnedRows.filter((row) => !ids.has(row.id)),
+  };
 }
 
 export function reducer(s: AppState, a: Action): AppState {
@@ -929,9 +972,7 @@ export function reducer(s: AppState, a: Action): AppState {
         placements,
         pinnedRows,
         pendingPinnedRows,
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
+        ...contentEdit(s),
       };
     }
     case "PLAN_MEMBERSHIP_SET": {
@@ -956,9 +997,7 @@ export function reducer(s: AppState, a: Action): AppState {
         return {
           ...s,
           planMembership,
-          acceptedDefects: null,
-          ...dirtySeq(s),
-          ...staleShadow(s),
+          ...contentEdit(s),
         };
       }
       // Same pruning as OVERRIDE_SET's exclusion path, resolved through the
@@ -969,19 +1008,11 @@ export function reducer(s: AppState, a: Action): AppState {
           .filter((item) => membershipKeyOf(item) === a.identity)
           .map((item) => item.id),
       );
-      const removed = (id: string) => ids.has(id);
-      const placements = { ...s.placements };
-      for (const id of ids) delete placements[id];
       return {
         ...s,
         planMembership,
-        sequence: s.sequence?.filter((row) => row.kind === "zone" || !removed(row.id)) ?? null,
-        placements,
-        pinnedRows: s.pinnedRows.filter((row) => !removed(row.id)),
-        pendingPinnedRows: s.pendingPinnedRows.filter((row) => !removed(row.id)),
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
+        ...withoutRows(s, ids),
+        ...contentEdit(s),
       };
     }
     case "TIME_ADJUSTMENT_SET": {
@@ -1005,9 +1036,7 @@ export function reducer(s: AppState, a: Action): AppState {
         pinnedRows: a.allow
           ? removeNativeAutoPin(s.pinnedRows, item)
           : mergeNativeTimedPins(s.pinnedRows, s.inputs!, timeAdjustmentOptIns, includedIds),
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
+        ...contentEdit(s),
       };
     }
     case "MINT_OVERLAP_SET": {
@@ -1023,15 +1052,46 @@ export function reducer(s: AppState, a: Action): AppState {
       return {
         ...s,
         mintOverlapOptIns,
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
+        ...contentEdit(s),
       };
     }
     case "ROW_EXPANDED":
       // One row at a time: opening another row replaces the id, so there is
       // never a second panel to reconcile.
       return { ...s, ui: { ...s.ui, expandedId: a.id } };
+    case "VIEW_HIDDEN":
+    {
+      if (s.ui.hiddenIds.includes(a.id)) return s;
+      // Hiding leaves the plan math like an exclusion does: the staged work
+      // row, its placement and its pin go with it, and the plan re-queues.
+      return {
+        ...s,
+        ui: {
+          ...s.ui,
+          hiddenIds: [...s.ui.hiddenIds, a.id],
+          selection: s.ui.selection.filter((id) => id !== a.id),
+          expandedId: s.ui.expandedId === a.id ? null : s.ui.expandedId,
+        },
+        ...withoutRows(s, new Set([a.id])),
+        ...contentEdit(s),
+      };
+    }
+    case "VIEW_UNHIDDEN":
+      return s.ui.hiddenIds.includes(a.id)
+        ? {
+            ...s,
+            ui: { ...s.ui, hiddenIds: s.ui.hiddenIds.filter((id) => id !== a.id) },
+            ...contentEdit(s),
+          }
+        : s;
+    case "VIEW_HIDDEN_CLEARED":
+      return s.ui.hiddenIds.length === 0
+        ? s
+        : {
+            ...s,
+            ui: { ...s.ui, hiddenIds: [] },
+            ...contentEdit(s),
+          };
     case "ROW_SELECTED": {
       const selected = s.ui.selection;
       if (a.selected === selected.includes(a.id)) return s;
@@ -1201,9 +1261,7 @@ export function reducer(s: AppState, a: Action): AppState {
       return {
         ...s,
         pendingPinnedRows: s.pendingPinnedRows.filter((r) => r.id !== a.id),
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
+        ...contentEdit(s),
       };
     case "VALIDATED": {
       // A clean deterministic revalidation is the manual recovery path from
@@ -1601,7 +1659,9 @@ function includedIdsForInputs(
   if (!inputs) return new Set();
   return new Set(
     inputs.assigned
-      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault))
+      .filter((item) =>
+        rowIsIncluded(item, overrides[item.id], membership, membershipDefault, s.ui.hiddenIds),
+      )
       .map((item) => item.id),
   );
 }
@@ -1794,7 +1854,11 @@ function rowIsIncluded(
   override: TodayOverride | undefined,
   membership: Record<string, boolean>,
   membershipDefault: MembershipDefault,
+  hidden: readonly string[] = [],
 ): boolean {
+  // Session-only hide-from-view: a hidden row is out of the plan math too, so
+  // capacity and sequencing never count what the operator cannot see.
+  if (hidden.includes(item.id)) return false;
   if (override && override.included === false) return false;
   const explicit = membership[membershipKeyOf(item)];
   if (explicit !== undefined) return explicit;
@@ -1808,13 +1872,32 @@ export function isItemIncluded(s: AppState, item: AssignedItem): boolean {
     s.overrides[item.id],
     s.planMembership,
     s.membershipDefault,
+    s.ui.hiddenIds,
   );
+}
+
+/** One id → item lookup per `assigned` array. The row selectors below run once
+    per row per render, so a `.find` each made the queue quadratic; the map is
+    built once and shared until inputs are replaced (the array identity). */
+const assignedIndex = new WeakMap<readonly AssignedItem[], Map<string, AssignedItem>>();
+
+export function assignedItem(s: AppState, id: string): AssignedItem | undefined {
+  const rows = s.inputs?.assigned;
+  if (!rows) return undefined;
+  let index = assignedIndex.get(rows);
+  if (!index) {
+    index = new Map();
+    // First row wins, as `.find` did, if an id ever repeats.
+    for (const row of rows) if (!index.has(row.id)) index.set(row.id, row);
+    assignedIndex.set(rows, index);
+  }
+  return index.get(id);
 }
 
 /** The inclusion seam by row id. A row the queue no longer carries has no
     stable identity to consult, so it keeps the legacy override-only answer. */
 export function isIncluded(s: AppState, id: string): boolean {
-  const item = s.inputs?.assigned.find((i) => i.id === id);
+  const item = assignedItem(s, id);
   if (!item) return s.overrides[id]?.included !== false;
   return isItemIncluded(s, item);
 }
@@ -1822,7 +1905,7 @@ export function isIncluded(s: AppState, id: string): boolean {
 // -- selectors ---------------------------------------------------------------
 
 export function queueState(s: AppState, id: string): QueueState {
-  const item = s.inputs?.assigned.find((i) => i.id === id);
+  const item = assignedItem(s, id);
   if (!item) return "needs-placement";
   const override = s.overrides[id];
   if (!isItemIncluded(s, item)) return "excluded";
@@ -1859,7 +1942,7 @@ export function includedItems(s: AppState) {
 }
 
 export function effectiveBlocks(s: AppState, id: string): number {
-  const item = s.inputs?.assigned.find((i) => i.id === id);
+  const item = assignedItem(s, id);
   if (!item) return 0;
   return s.overrides[id]?.blocks ?? item.blocks;
 }
@@ -1870,7 +1953,7 @@ export function effectiveBlocks(s: AppState, id: string): number {
     bar. Null when the row is gone from today's queue (a skipped or completed
     row has no draft and no batch eligibility). */
 export function rowFactsOf(s: AppState, id: string): RowFacts | null {
-  const item = s.inputs?.assigned.find((i) => i.id === id);
+  const item = assignedItem(s, id);
   if (!item) return null;
   const mintSessions = s.inputs?.daySemantics.mintSessions ?? [];
   return {
@@ -1941,7 +2024,7 @@ export function batchRowsOf(
 ): BatchRow[] {
   const rows: BatchRow[] = [];
   for (const id of ids) {
-    const item = s.inputs?.assigned.find((i) => i.id === id);
+    const item = assignedItem(s, id);
     const facts = rowFactsOf(s, id);
     if (!item || !facts) continue;
     rows.push({

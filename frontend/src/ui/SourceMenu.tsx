@@ -120,7 +120,11 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
   useEffect(() => {
     if (!shown) return;
     const outside = (e: Event) => {
-      if (!wrap.current?.contains(e.target as Node)) close(false);
+      // composedPath is fixed at dispatch: the clicked menu item may already be
+      // unmounted (re-render between listeners), so target.contains() would
+      // misread an inside click as outside and cancel the confirm step.
+      const inside = e.composedPath().includes(wrap.current as EventTarget);
+      if (!inside) close(false);
     };
     document.addEventListener("mousedown", outside);
     document.addEventListener("touchstart", outside);

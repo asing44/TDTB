@@ -632,6 +632,25 @@ def disambiguate_names(
 # Calendar
 # ---------------------------------------------------------------------------
 
+def _as_id_collection(raw: Any) -> list[str]:
+    """Normalize a calendar-identifier collection into a list of strings.
+
+    Accepts a string, a list/tuple/set of strings, or a mapping whose values
+    are identifiers (``{logical: identifier}``). Anything else degrades to an
+    empty list rather than raising, mirroring the degrade-never-crash contract
+    of the other config normalizers.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, dict):
+        return [str(value) for value in raw.values() if value is not None]
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return [str(value) for value in raw if value is not None]
+    return []
+
+
 def fetch_calendar_decisions(
     store: Any, config: dict[str, Any], today: date
 ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
@@ -641,8 +660,9 @@ def fetch_calendar_decisions(
     Returns ``(blocks, warnings, decisions)``; never raises. ``blocks`` and
     ``warnings`` are exactly the frozen two-value ``fetch_calendar_busy``
     contract; ``decisions`` adds one diagnosable row per queried event:
-    ``included`` (emitted as a busy block), ``excluded`` (disabled calendar,
-    duplicate representation, or zero/negative duration), or ``unresolved``
+    ``included`` (emitted as a busy block), ``excluded`` (calendar switched
+    off in Settings, disabled calendar, duplicate representation, or
+    zero/negative duration), or ``unresolved``
     (malformed start/end). Each decision carries a stable identity
     (``event_id``/``id`` or a deterministic field composite), title, calendar
     identity, a human-readable reason, and capacity class plus start/end
@@ -774,6 +794,22 @@ def fetch_calendar_decisions(
             if title is not None:
                 disabled_titles.add(str(title).strip().casefold())
     match_keys = disabled_names | disabled_ids | disabled_titles
+
+    # Calendar settings (owner-managed per-calendar on/off defaults replacing
+    # the retired ``Disabled Calendars`` config list): a calendar switched off
+    # in Settings contributes no rows, walls, or capacity and carries its own
+    # diagnosable reason. TDTB's own writable zone calendars (``calendar_ids``)
+    # are never switched off — they are exempt by contract, so an accidental
+    # off entry can never hide the blocks TDTB itself wrote.
+    off_ids_cf = {
+        str(value).strip().casefold()
+        for value in _as_id_collection(config.get("calendar_disabled_ids"))
+    }
+    own_ids_cf = {
+        str(value).strip().casefold()
+        for value in _as_id_collection(config.get("calendar_ids"))
+    }
+    off_ids_cf -= own_ids_cf
 
     start = datetime.combine(today, time.min)
     end = start + timedelta(days=1)
@@ -953,6 +989,32 @@ def fetch_calendar_decisions(
                 ))
                 continue
             seen_composites.add(composite_identity)
+
+        # Calendar settings: a calendar the owner switched off in Settings is
+        # excluded here, after duplicate registration (first-occurrence-wins
+        # still holds) and before every capacity-class branch.
+        if off_ids_cf:
+            off_keys = {
+                str(value).strip().casefold()
+                for value in (calendar_id, source_calendar_id)
+                if value
+            }
+            if off_keys & off_ids_cf:
+                reason = (
+                    f"{title_disp}: calendar "
+                    f"{calendar_title or calendar_id or source_calendar_id} "
+                    "is switched off in calendar settings"
+                )
+                omitted.append(reason)
+                decisions.append(_build_decision(
+                    identity, title_disp, source_calendar_id, calendar_id,
+                    calendar_title, "excluded", "excluded_calendar_off",
+                    reason,
+                    capacity_class=capacity_class,
+                    start=interval_start, end=interval_end,
+                    all_day=all_day_flag,
+                ))
+                continue
 
         # Issue #6: disabled/inactive calendars contribute no rows, walls, or
         # capacity — omissions carry a user-readable reason.

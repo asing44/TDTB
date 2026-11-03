@@ -8,6 +8,7 @@
    Day Setup itself persists SERVER-side (runstate via POST /day-setup) and
    comes back through /plan-inputs — never through this blob. */
 
+import { sanitizeSequenceRows } from "../model/sequenceRows";
 import type { Store } from "./createStore";
 import type { Controller } from "./controller";
 import type { PlanInputs, SequenceRow, TodayOverride } from "../model/types";
@@ -75,9 +76,20 @@ function read(storage: Storage): SessionBlob | null {
     const raw = storage.getItem(KEY);
     if (!raw) return null;
     const blob = JSON.parse(raw);
-    return blob?.version === 2 && typeof blob.validDate === "string"
-      ? (blob as SessionBlob)
-      : null;
+    if (blob?.version !== 2 || typeof blob.validDate !== "string") return null;
+    // localStorage is a weaker boundary than the wire: drop malformed rows
+    // and non-object maps instead of letting them render.
+    const isMap = (v: unknown): boolean =>
+      typeof v === "object" && v !== null && !Array.isArray(v);
+    return {
+      ...blob,
+      overrides: isMap(blob.overrides) ? blob.overrides : {},
+      placements: isMap(blob.placements) ? blob.placements : {},
+      sequence: Array.isArray(blob.sequence) ? sanitizeSequenceRows(blob.sequence) : null,
+      pinnedRows: sanitizeSequenceRows(blob.pinnedRows),
+      pendingPinnedRows: sanitizeSequenceRows(blob.pendingPinnedRows),
+      overlapGrants: Array.isArray(blob.overlapGrants) ? blob.overlapGrants : [],
+    } as SessionBlob;
   } catch {
     return null;
   }

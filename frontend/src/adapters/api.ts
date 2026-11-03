@@ -55,6 +55,8 @@ import type {
   SequenceRow,
   ShadowDiff,
   TagCatalog,
+  CalendarSettings,
+  CalendarSettingsDraft,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -80,6 +82,8 @@ import {
   projectCapacitiesSettings,
   projectCapacitiesSource,
   projectTagExclusionSettings,
+  projectCalendarSettings,
+  calendarSettingsToWire,
   tagExclusionSettingsToWire,
   emptyTagCatalog,
   projectCalendarDrift,
@@ -620,6 +624,29 @@ export class ApiAdapter implements Adapter {
     return projectTagExclusionSettings(
       await this.post("/settings/exclusions/save", tagExclusionSettingsToWire(draft)),
       this.tagCatalog ?? emptyTagCatalog(),
+    );
+  }
+
+  /** Last-loaded calendar inventory; the save response carries none. */
+  private calendarInventory: Pick<
+    CalendarSettings,
+    "inventory" | "inventoryStatus" | "warnings"
+  > | null = null;
+
+  async loadCalendarSettings(): Promise<CalendarSettings> {
+    const settings = projectCalendarSettings(await this.request("/settings/calendars"));
+    this.calendarInventory = {
+      inventory: settings.inventory,
+      inventoryStatus: settings.inventoryStatus,
+      warnings: settings.warnings,
+    };
+    return settings;
+  }
+
+  async saveCalendarSettings(draft: CalendarSettingsDraft): Promise<CalendarSettings> {
+    return projectCalendarSettings(
+      await this.post("/settings/calendars/save", calendarSettingsToWire(draft)),
+      this.calendarInventory ?? undefined,
     );
   }
 

@@ -596,7 +596,7 @@ def read_history(path: Path) -> list[HistoryEntry]:
             return []
         post = frontmatter.load(str(path))
         return parse_history(post.metadata.get("history"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — unreadable history reads as empty; the log is advisory
         return []
 
 
@@ -641,7 +641,7 @@ def resolve_prior(
     if head.todoist_task_id and todoist_completed is not None:
         try:
             result = todoist_completed(head.todoist_task_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — a failing probe is inconclusive, never "done"
             result = None
         if result is True:
             return PriorResolution((done_entry,) + hist[1:], done_entry, None)
@@ -776,7 +776,7 @@ def write_history(path: Path, history: Iterable[HistoryEntry]) -> None:
             desc = existing.metadata.get("description")
             if isinstance(desc, str) and desc.strip():
                 description = desc
-    except Exception:
+    except Exception:  # noqa: BLE001 — an unreadable frontmatter keeps the default description
         pass
 
     hist_out: list[dict[str, Any]] = []

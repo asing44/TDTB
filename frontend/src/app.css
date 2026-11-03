@@ -10272,7 +10272,7 @@ button.strip-cal {
   /* Stable slots: select | name+meta (flexible, takes the slack) | duration
      | actions. The actions cell is a fixed grid (switch, Complete, Skip
      today, Expand), so every row aligns whatever its source. */
-  grid-template-columns: 16px minmax(0, 1fr) 66px 236px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
   grid-template-rows: auto;
   grid-template-areas: none;
   gap: 6px 16px;
@@ -10285,7 +10285,7 @@ button.strip-cal {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 .qrow.trow--unassigned {
-  grid-template-columns: 16px minmax(0, 1fr) 66px 236px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
 }
 .trow__check-slot {
   width: 16px;
@@ -10317,7 +10317,7 @@ button.strip-cal {
 }
 .queue__band .qrow.trow--dslider,
 .qrow.trow--dslider {
-  grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 236px;
+  grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 278px;
 }
 .qrow.trow--dslider > .trow__dur--slider {
   width: var(--trow-dur-w);
@@ -10325,7 +10325,7 @@ button.strip-cal {
   text-align: initial;
 }
 .qrow.trow--dslider > .trow__acts {
-  min-width: 236px;
+  min-width: 278px;
   flex-wrap: nowrap;
 }
 .trow__state {
@@ -10369,7 +10369,7 @@ button.strip-cal {
 }
 .trow__acts {
   display: grid;
-  grid-template-columns: 52px 44px 36px 36px 36px;
+  grid-template-columns: 52px 44px 36px 36px 36px 36px;
   align-items: center;
   gap: 6px;
 }
@@ -10693,7 +10693,7 @@ button.strip-cal {
   }
   .qrow.trow > .trow__acts {
     grid-column: 1 / -1 !important;
-    grid-template-columns: 56px 44px repeat(3, minmax(0, 1fr));
+    grid-template-columns: 56px 44px repeat(4, minmax(0, 1fr));
     flex-wrap: wrap;
   }
   .trow__btn {
@@ -11838,7 +11838,7 @@ button.strip-cal {
    calendar button keeps its chevron in the same column as every other row.
    The lane heading gets room above the first row. */
 .cockpit:has(.queue) .trow__acts {
-  grid-template-columns: 52px 44px 32px 32px 32px;
+  grid-template-columns: 52px 44px 32px 32px 32px 32px;
   gap: 10px;
 }
 .cockpit:has(.queue) .trow__acts > .trow__btn.trow__btn--icon:not(.trow__btn--primary) {
@@ -11853,4 +11853,18 @@ button.strip-cal {
 .cockpit:has(.queue) .tasktable__rows {
   gap: 8px;
   margin-top: 12px;
+}
+
+/* Session-only hide-from-view strip (HideFromView.tsx). */
+.queue__hidden-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--t-border);
+  border-radius: var(--radius-sm, 5px);
+  color: var(--t-muted);
+  font-size: 12px;
 }

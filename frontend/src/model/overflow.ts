@@ -115,6 +115,19 @@ function largestFreeGap(
     planning); dismissed (skipToday) or off rows free their interval; config
     hard/window blocks stay on the acceptable-defect path and are
     intentionally not included here (the server treats them as soft too). */
+/** Rows the sequencer injects on its own (schedulable sources and the seeded
+    Mint / Quick Tasks / Shivery Jigs zones) rather than from assigned work, so
+    the client keeps them even though no assigned item carries their id. */
+export function isSeededRow(r: SequenceRow): boolean {
+  return (
+    r.wire?.source === "schedulable" ||
+    r.id === "Minting" ||
+    r.id === "Quick Tasks" ||
+    r.id === "Shivery Jigs" ||
+    /^Mint /i.test(r.id)
+  );
+}
+
 export function calendarWalls(anchored: AnchoredBlock[]): WallInterval[] {
   const out: WallInterval[] = [];
   for (const a of anchored) {

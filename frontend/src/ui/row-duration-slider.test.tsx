@@ -307,7 +307,7 @@ describe("adaptive layout classes", () => {
       /\.qrow\.trow--dslider\s*\{\s*--trow-dur-w:\s*clamp\(112px,\s*14vw,\s*168px\)/,
     );
     expect(appCss).toMatch(
-      /\.qrow\.trow--dslider\s*\{[^}]*grid-template-columns:\s*18px minmax\(0,\s*1fr\) var\(--trow-dur-w\) 236px/,
+      /\.qrow\.trow--dslider\s*\{[^}]*grid-template-columns:\s*18px minmax\(0,\s*1fr\) var\(--trow-dur-w\) 278px/,
     );
   });
 
@@ -322,10 +322,10 @@ describe("adaptive layout classes", () => {
 
   it("the actions column never shrinks or wraps at any width", () => {
     expect(appCss).toMatch(
-      /\.trow__acts\s*\{[^}]*grid-template-columns:\s*52px 44px 36px 36px 36px/,
+      /\.trow__acts\s*\{[^}]*grid-template-columns:\s*52px 44px 36px 36px 36px 36px/,
     );
     expect(appCss).toMatch(
-      /\.qrow\.trow--dslider > \.trow__acts\s*\{[^}]*min-width:\s*236px/,
+      /\.qrow\.trow--dslider > \.trow__acts\s*\{[^}]*min-width:\s*278px/,
     );
   });
 

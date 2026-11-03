@@ -113,6 +113,7 @@ describe("collapsed row: the controls and their names", () => {
       "Complete",
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
+      "Hide Press from view",
     ]);
     // The lead control is the permanent May-overlap-Mint toggle: a pressed
     // state exposed to assistive tech, applied the moment it is clicked.
@@ -162,7 +163,7 @@ describe("collapsed row: the controls and their names", () => {
       );
       expect(labels.slice(0, 4)).toEqual(
         heldBySwitch
-          ? [expect.stringMatching(/^May overlap Mint/), "Complete", "Expand"]
+          ? [expect.stringMatching(/^May overlap Mint/), "Complete", "Expand", expect.stringMatching(/^Hide .* from view$/)]
           : [
               expect.stringMatching(/^May overlap Mint/),
               "Complete",

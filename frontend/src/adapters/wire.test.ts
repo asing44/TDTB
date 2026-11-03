@@ -46,6 +46,8 @@ import {
   rowToWire,
   shapeAssignedWire,
   to24h,
+  projectCalendarSettings,
+  calendarSettingsToWire,
 } from "./wire";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
@@ -2995,5 +2997,101 @@ describe("prompt description skips", () => {
     expect(descriptionSkipsToWire({ forMeegy: false, stoic: true })).toEqual({
       description_skips: { megan_nicety: false, stoic_intention: true },
     });
+  });
+});
+
+describe("calendar settings", () => {
+  function calWire(overrides: Record<string, any> = {}) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 3,
+        calendars: [{ id: "cal-a", title: "Work", enabled: false }],
+      },
+      inventory: [
+        { id: "cal-a", title: "Work", source: "iCloud", writable: true, locked: null, effective_enabled: false },
+        { id: "cal-own", title: "TDTB", source: "iCloud", writable: true, locked: "own_write", effective_enabled: true },
+      ],
+      inventory_status: "ok",
+      warnings: [],
+      ...overrides,
+    };
+  }
+
+  it("projects the policy and the live inventory", () => {
+    expect(projectCalendarSettings(calWire())).toEqual({
+      version: 1,
+      revision: 3,
+      persisted: true,
+      calendars: [{ id: "cal-a", title: "Work", enabled: false }],
+      inventory: [
+        { id: "cal-a", title: "Work", source: "iCloud", writable: true, locked: null, effectiveEnabled: false },
+        { id: "cal-own", title: "TDTB", source: "iCloud", writable: true, locked: "own_write", effectiveEnabled: true },
+      ],
+      inventoryStatus: "ok",
+      warnings: [],
+    });
+  });
+
+  it("uses the supplied inventory when the save response carries none", () => {
+    const { inventory: _i, inventory_status: _s, warnings: _w, ...saveWire } = calWire();
+    const projected = projectCalendarSettings(saveWire, {
+      inventory: [],
+      inventoryStatus: "ok",
+      warnings: ["kept"],
+    });
+    expect(projected.warnings).toEqual(["kept"]);
+    expect(projected.inventoryStatus).toBe("ok");
+    expect(projectCalendarSettings(saveWire).inventoryStatus).toBe("unavailable");
+  });
+
+  it("rejects malformed responses instead of defaulting", () => {
+    const bad = (o: Record<string, any>) => () => projectCalendarSettings(calWire(o));
+    const settings = (patch: Record<string, any>) => ({
+      settings: { version: 1, revision: 3, calendars: [], ...patch },
+    });
+    expect(bad({ settings: undefined })).toThrow(/settings object/);
+    expect(bad({ persisted: "yes" })).toThrow(/persisted/);
+    expect(bad(settings({ version: 2 }))).toThrow(/version/);
+    expect(bad(settings({ revision: -1 }))).toThrow(/revision/);
+    expect(bad(settings({ extra: 1 }))).toThrow(/unknown or missing/);
+    expect(bad(settings({ calendars: {} }))).toThrow(/array/);
+    expect(bad(settings({ calendars: [{ id: "a", title: "A", enabled: "on" }] }))).toThrow(/enabled/);
+    expect(
+      bad(settings({ calendars: [{ id: "a", title: "A", enabled: true }, { id: "a", title: "A", enabled: false }] })),
+    ).toThrow(/duplicate/);
+    expect(bad({ inventory_status: "weird" })).toThrow(/inventory_status/);
+    expect(bad({ inventory: [{ id: "a" }] })).toThrow(/inventory rows/);
+    expect(
+      bad({
+        inventory: [
+          { id: "a", title: "A", source: "s", writable: true, locked: "other", effective_enabled: true },
+        ],
+      }),
+    ).toThrow(/locked/);
+    expect(bad({ warnings: [1] })).toThrow(/warnings/);
+  });
+
+  it("builds the full-replacement save body", () => {
+    expect(
+      calendarSettingsToWire({
+        expectedRevision: 3,
+        calendars: [{ id: "cal-a", title: "Work", enabled: false }],
+      }),
+    ).toEqual({
+      expected_revision: 3,
+      calendars: [{ id: "cal-a", title: "Work", enabled: false }],
+    });
+    expect(() => calendarSettingsToWire({ expectedRevision: -1, calendars: [] })).toThrow();
+    expect(() =>
+      calendarSettingsToWire({
+        expectedRevision: 0,
+        calendars: [
+          { id: "a", title: "", enabled: true },
+          { id: "a", title: "", enabled: true },
+        ],
+      }),
+    ).toThrow(/duplicate/);
   });
 });

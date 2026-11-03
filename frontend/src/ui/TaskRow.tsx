@@ -6,6 +6,7 @@
    May-overlap-Mint toggle, and Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
+import { HideFromViewButton } from "./HideFromView";
 import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
@@ -72,7 +73,13 @@ export function kindLabel(
 /** Stable id for aria-controls/aria-labelledby pairs — item ids are human
     names with spaces and punctuation, and ids must not contain them. */
 export function rowId(item: { id: string }, suffix: string): string {
-  return `${suffix}-${item.id.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  return `${suffix}-${rowKey(item.id)}`;
+}
+
+/** The id-safe slug of a row id or identity; the one normalization every
+    aria pairing in the plan rows and the drawers shares. */
+export function rowKey(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/g, "-");
 }
 
 /** U11: urgency tier → the mockup's priority chip (p1 highest). */
@@ -457,6 +464,7 @@ export function TaskRow({
         >
           <ChevronIcon up={expanded} />
         </button>
+        <HideFromViewButton id={item.id} name={item.name} />
       </div>
       {expanded && (
         <div

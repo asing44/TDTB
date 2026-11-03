@@ -9,6 +9,8 @@
    today, wherever a date-scoped drop is listed. */
 
 import { useApp, useAppState } from "./context";
+import { rowKey } from "./TaskRow";
+import { SOURCE_LABEL as DRAWER_SOURCE_LABEL } from "../model/drawerGroups";
 import "./drawer-rows.css";
 import {
   skippedTodayRows,
@@ -16,15 +18,7 @@ import {
   type SkippedTodayRow,
 } from "../store/store";
 
-const SOURCE_LABEL: Record<string, string> = {
-  todoist: "Todoist",
-  capacities: "Capacities",
-  calendar: "Calendar",
-};
-
-function rowKey(identity: string): string {
-  return identity.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
+const SOURCE_LABEL: Record<string, string> = DRAWER_SOURCE_LABEL;
 
 /** The duration column is reserved even when a row has no duration, so every
     row's switch / button lands in the same place (see drawer-rows.css). */

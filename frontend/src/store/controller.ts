@@ -9,6 +9,7 @@
    - Live commit dispatches only through requestLiveCommit, which re-checks
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
+import { isWireSequenceRow } from "../model/sequenceRows";
 import type { Adapter, SequenceContext, SequenceResult } from "../adapters/adapter";
 import type {
   RuntimeBatchItemInput,
@@ -27,7 +28,7 @@ import { itemIdentity, normalizeTodoistExclusionName, projectSequenceRow } from 
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
-import { planOverflow, calendarWalls, mintWalls } from "../model/overflow";
+import { planOverflow, calendarWalls, mintWalls, isSeededRow } from "../model/overflow";
 import {
   explicitMintCapMinutes,
   initialMintSessionIds,
@@ -94,6 +95,8 @@ import type {
   MicroPoolItem,
   PlanInputs,
   SequenceRow,
+  CalendarSettings,
+  CalendarSettingsDraft,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   TodayOverride,
@@ -603,6 +606,20 @@ export class Controller {
     return { settings, refreshError: this.getState().refresh.error };
   }
 
+  async loadCalendarSettings(): Promise<CalendarSettings> {
+    return this.adapter.loadCalendarSettings();
+  }
+
+  /** Save the per-calendar defaults, then re-read sources through the same
+      refresh path as an explicit refresh. A save that throws never refreshes. */
+  async saveCalendarSettings(
+    draft: CalendarSettingsDraft,
+  ): Promise<{ settings: CalendarSettings; refreshError: string | null }> {
+    const settings = await this.adapter.saveCalendarSettings(draft);
+    await this.refreshSources();
+    return { settings, refreshError: this.getState().refresh.error };
+  }
+
   /** "Always exclude" for one Todoist task: add it to the persistent
       exclusion list (id OR normalized-name match) and re-earn planning
       inputs through the SAME refresh path as the tag-exclusion save. An
@@ -888,6 +905,16 @@ export class Controller {
       construction); null collapses everything. */
   expandRow(id: string | null): void {
     this.dispatch({ type: "ROW_EXPANDED", id });
+  }
+
+  /** Session-only: drop one row from view. No source, plan or storage write. */
+  hideFromView(id: string): void {
+    this.dispatch({ type: "VIEW_HIDDEN", id });
+  }
+
+  /** Bring every session-hidden row back into view. */
+  showAllHidden(): void {
+    this.dispatch({ type: "VIEW_HIDDEN_CLEARED" });
   }
 
   /** Select/deselect one row. Selection is independent of expansion. */
@@ -1498,6 +1525,17 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
       this.dispatch({ type: "BATCH_SET", batch: { ...applying, phase: "review" } });
       return;
     }
+    if (action === "hideAlways") {
+      // A hidden-always row simply leaves today's view. Refreshes are slow
+      // (API rate limits) and the owner refreshes several times while
+      // planning, so drop the applied rows locally and leave the refresh to
+      // the owner; a later refresh reads the same exclusion from the server.
+      const applied = new Set(
+        this.getState().batch.results.filter((r) => r.status === "applied").map((r) => r.id),
+      );
+      for (const id of itemIds) if (applied.has(id)) this.hideFromView(id);
+      return;
+    }
     await this.refreshSources();
   }
 
@@ -1870,14 +1908,8 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
     };
     try {
       const included = new Set(includedItems(this.getState()).map((i) => i.id));
-      const injected = (r: SequenceRow) =>
-        r.wire?.source === "schedulable" ||
-        r.id === "Minting" ||
-        r.id === "Quick Tasks" ||
-        r.id === "Shivery Jigs" ||
-        /^Mint /i.test(r.id);
       const rows = result.sequence.filter(
-        (r) => r.kind === "zone" || included.has(r.id) || injected(r),
+        (r) => r.kind === "zone" || included.has(r.id) || isSeededRow(r),
       );
       // Overbooked days: the sequencer drops what does not fit, and a dropped
       // row gets no time, so it reaches no surface and never appears in
@@ -1990,7 +2022,8 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
       const detail = e.detail as { rejected_proposal?: { sequence?: unknown[] } } | undefined;
       const rows = detail?.rejected_proposal?.sequence;
       if (Array.isArray(rows) && rows.length > 0) {
-        rejectedProposal = rows.map((r) => projectSequenceRow(r as never));
+        const valid = rows.filter(isWireSequenceRow);
+        if (valid.length > 0) rejectedProposal = valid.map((r) => projectSequenceRow(r));
       }
     }
     this.dispatch({
@@ -2127,7 +2160,10 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
     // journals, and leaves the queue untouched reads as a verb that did
     // nothing. Undo re-includes it.
     this.setOverride(target, false, this.getState().overrides[target]?.blocks ?? null);
-    await this.refreshSources();
+    // Source refreshes are slow (API rate limits) and the owner refreshes
+    // several times while planning, so the settled row leaves the view locally
+    // and the refresh is left to the owner. Undo brings it back.
+    this.hideFromView(target);
   }
 
   /** T20: the one scoped undo — reverses the LAST applied runtime action. */
@@ -2146,6 +2182,7 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
       );
       if (target) {
         this.setOverride(target.id, true, this.getState().overrides[target.id]?.blocks ?? null);
+        this.dispatch({ type: "VIEW_UNHIDDEN", id: target.id });
       }
     } catch (e) {
       this.dispatch({

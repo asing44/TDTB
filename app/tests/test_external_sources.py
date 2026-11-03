@@ -869,3 +869,64 @@ class TestQtAbsorption:
         )
         assert [i["id"] for i in remaining] == ["Deep work"]
         assert contents == []
+
+
+# ---------------------------------------------------------------------------
+# Per-calendar on/off settings filter (replaces the retired config list)
+# ---------------------------------------------------------------------------
+
+class TestCalendarSettingsFilter:
+    """A calendar switched off in Settings contributes no rows, walls, or
+    capacity and carries the ``excluded_calendar_off`` reason; TDTB's own
+    writable zone calendars are exempt and can never be filtered away."""
+
+    CALENDARS = [
+        CalendarInfo("Personal", "CAL-P", True, "iCloud"),
+        CalendarInfo("TDTB Blocks", "CAL-OWN", True, "Google"),
+    ]
+
+    @staticmethod
+    def _event(title, cal):
+        return {
+            "title": title,
+            "calendar_id": cal,
+            "start": datetime(2026, 7, 14, 9, 0),
+            "end": datetime(2026, 7, 14, 9, 30),
+        }
+
+    def test_off_calendar_is_excluded_with_new_reason(self):
+        cfg = {"calendar_disabled_ids": ["CAL-P"]}
+        blocks, _warnings, decisions = ext.fetch_calendar_decisions(
+            FakeStore(
+                [self._event("Dentist", "CAL-P"), self._event("Standup", "CAL-OWN")],
+                calendars=self.CALENDARS,
+            ),
+            cfg,
+            TODAY,
+        )
+        assert [b["calendar_id"] for b in blocks] == ["CAL-OWN"]
+        assert "excluded_calendar_off" in [d["reason_code"] for d in decisions]
+
+    def test_own_write_calendar_is_exempt(self):
+        cfg = {
+            "calendar_ids": {"blocks": "CAL-OWN"},
+            "calendar_disabled_ids": ["CAL-OWN"],
+        }
+        blocks, _warnings, decisions = ext.fetch_calendar_decisions(
+            FakeStore([self._event("Mint block", "CAL-OWN")], calendars=self.CALENDARS),
+            cfg,
+            TODAY,
+        )
+        assert [b["calendar_id"] for b in blocks] == ["CAL-OWN"]
+        assert all(d["reason_code"] != "excluded_calendar_off" for d in decisions)
+
+    def test_empty_filter_keeps_every_calendar(self):
+        blocks, _warnings, _decisions = ext.fetch_calendar_decisions(
+            FakeStore(
+                [self._event("Dentist", "CAL-P"), self._event("Standup", "CAL-OWN")],
+                calendars=self.CALENDARS,
+            ),
+            {"calendar_disabled_ids": []},
+            TODAY,
+        )
+        assert [b["calendar_id"] for b in blocks] == ["CAL-P", "CAL-OWN"]

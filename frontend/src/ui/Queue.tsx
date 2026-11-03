@@ -49,6 +49,7 @@ import { AlreadyPlaced } from "./AlreadyPlaced";
 import { CapacityCard } from "./CapacityCard";
 import { BatchBar, BatchPanel } from "./BatchActions";
 import { SkippedToday } from "./SkippedToday";
+import { HiddenViewStrip } from "./HideFromView";
 import { UnassignedToday } from "./UnassignedToday";
 import { TaskRow } from "./TaskRow";
 import { NeedsALookBanner } from "./NeedsALookBanner";
@@ -254,7 +255,11 @@ export function Queue() {
   }
 
   // KTD12: section membership is a view projection over the band/state model.
-  const sections = taskTableSections(s);
+  const hiddenIds = new Set(s.ui.hiddenIds);
+  const sections = taskTableSections(s).map((sec) => ({
+    ...sec,
+    rows: sec.rows.filter((e) => !hiddenIds.has(e.item.id)),
+  }));
   // Selecting today is the operator's job, so a cold day starts with an EMPTY
   // plan: nothing a source sent is pre-selected (only fixed calendar
   // commitments are). The page's first job is therefore the way in — one line,
@@ -286,6 +291,7 @@ export function Queue() {
       <AlreadyPlaced />
       <BatchBar />
       <BatchPanel />
+      <HiddenViewStrip />
       <div class="plan-grid">
         <div class="plan-grid__groups">
           {inPlanCount === 0 && (

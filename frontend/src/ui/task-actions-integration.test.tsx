@@ -144,6 +144,7 @@ describe("F7 integration: the row and its expanded panel", () => {
       "Complete",
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
+      "Hide Press from view",
     ]);
     expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
     expect(container.querySelector(".row-more")).toBeNull();

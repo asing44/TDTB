@@ -98,11 +98,12 @@ describe("controller.stagingAction", () => {
     });
   });
 
-  it("refreshes sources on success so the row leaves the queue", async () => {
-    const { adapter, controller } = harness();
+  it("hides the row locally on success and does not await a slow source refresh", async () => {
+    const { adapter, controller, store } = harness();
     const spy = vi.spyOn(adapter, "refreshSources");
     await controller.stagingAction("done", "Press");
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.getState().ui.hiddenIds).toContain("Press");
   });
 
   it("does NOT refresh when the verb failed — the row is still actionable", async () => {
