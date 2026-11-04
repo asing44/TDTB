@@ -4,7 +4,8 @@
    could not watch capacity change while expanding, skipping, or assigning
    rows. On the two-column layout the card now sticks at the lane header's
    offset, capped above the sticky footer, and scrolls inside itself when the
-   Details disclosure makes it tall. Stacked layouts (<=1100px) keep it in
+   Details disclosure makes it tall. Update: with Details open the card drops
+   sticky and flows in .cockpit__main, the single scroller. Stacked layouts (<=1100px) keep it in
    normal flow.
 
    jsdom does no layout, so the cascade is read off disk like
@@ -76,6 +77,13 @@ describe("the capacity card holds its place on the two-column Plan layout", () =
     // The app header band plus the shared footer reserve are both subtracted.
     expect(cap).toMatch(/calc\(\s*100dvh\s*-\s*64px\s*-\s*var\(--footer-clearance,\s*112px\)/);
     expect(cap).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it("drops the sticky pocket while Details is open so the card never clips", () => {
+    const open = mediaRule(WIDE, "\\.plan-grid__capacity:has\\(\\.cap-card__details\\[open\\]\\)");
+    expect(open).toMatch(/position:\s*static/);
+    expect(open).toMatch(/max-height:\s*none/);
+    expect(open).toMatch(/overflow-y:\s*visible/);
   });
 
   it("stays in normal flow where the grid stacks (<=1100px)", () => {

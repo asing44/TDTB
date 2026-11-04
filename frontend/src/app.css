@@ -9094,6 +9094,16 @@ body {
     );
     overflow-y: auto;
   }
+  /* Details open: the ledger is taller than the sticky box, and the card would
+     become a second y-scroller inside .cockpit__main whose sticky travel slides
+     the headline above the scrollport top. Only the compact card holds its
+     place; the opened card flows in document order so .cockpit__main stays the
+     single scroller and the headline scrolls away whole with its content. */
+  .plan-grid__capacity:has(.cap-card__details[open]) {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
 }
 
 /* Group header: a 3px left rule in the band colour, uppercase name, muted
