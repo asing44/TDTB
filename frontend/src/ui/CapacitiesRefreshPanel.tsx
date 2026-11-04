@@ -112,7 +112,14 @@ function plainStatusLine(status: CapacitiesRefreshStatus): string | null {
   return status.snapshot?.present ? "Up to date." : "Not refreshed yet.";
 }
 
-export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
+export function CapacitiesRefreshPanel({
+  active,
+  extraNotes = [],
+}: {
+  active: boolean;
+  /** Hub-derived advisory lines (e.g. mapped types missing from the refresh), listed after the refresh warnings. */
+  extraNotes?: readonly string[];
+}) {
   const { controller } = useApp();
   const [status, setStatus] = useState<CapacitiesRefreshStatus | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
@@ -206,6 +213,8 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
   // server's; this panel adds no names and no counts of its own.
   const schemaChange = status?.schemaChange ?? null;
   const schemaNotice = schemaChange && !schemaChange.acknowledged ? schemaChange : null;
+  const attentionCount =
+    (status?.warnings.length ?? 0) + extraNotes.length + (status && schemaNotice ? 1 : 0);
 
   const acknowledge = async (toHash: string) => {
     setAckBusy(true);
@@ -292,53 +301,67 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
             )}
             {summaryText && <p class="capacities-settings__hint">{summaryText}</p>}
 
-            {schemaNotice && (
-              <>
-                {schemaNotice.severity === "warn" ? (
-                  <section class="capacities-settings__error" role="alert">
-                    <span>{schemaNotice.summary}</span>
-                    <button
-                      class="btn"
-                      disabled={ackBusy}
-                      aria-label="Dismiss the Capacities change notice"
-                      onClick={() => void acknowledge(schemaNotice.toHash)}
-                    >
-                      {ackBusy ? "Saving…" : "Got it"}
-                    </button>
-                  </section>
-                ) : (
-                  <div class="capacities-rule__notice" role="status">
-                    <span>{schemaNotice.summary}</span>{" "}
-                    <button
-                      class="btn"
-                      disabled={ackBusy}
-                      aria-label="Dismiss the Capacities change notice"
-                      onClick={() => void acknowledge(schemaNotice.toHash)}
-                    >
-                      {ackBusy ? "Saving…" : "Got it"}
-                    </button>
-                  </div>
-                )}
-                {ackError && (
-                  <div class="capacities-settings__save-error" role="alert">
-                    <span>{ackError}</span>
-                  </div>
-                )}
-              </>
-            )}
-
-            {status.warnings.length > 0 && (
-              <div class="capacities-exclusion-list">
-                <h4>Heads-up from the last refresh</h4>
-                <p class="capacities-settings__hint">
-                  Shown exactly as reported. A refresh that finished with warnings may not have covered everything.
+            {attentionCount > 0 && (
+              <section class="settings-hub__attention" aria-label="Needs attention">
+                <p class="settings-hub__attention-head">
+                  <strong>Needs attention</strong>
+                  <span class="chip chip--warn" data-attention-count>{attentionCount}</span>
                 </p>
-                {status.warnings.map((warning) => (
-                  <div class="capacities-exclusion-row" key={warning}>
-                    <code>{warning}</code>
-                  </div>
-                ))}
-              </div>
+              {schemaNotice && (
+                <>
+                  {schemaNotice.severity === "warn" ? (
+                    <section class="capacities-settings__error" role="alert">
+                      <span>{schemaNotice.summary}</span>
+                      <button
+                        class="btn"
+                        disabled={ackBusy}
+                        aria-label="Dismiss the Capacities change notice"
+                        onClick={() => void acknowledge(schemaNotice.toHash)}
+                      >
+                        {ackBusy ? "Saving…" : "Got it"}
+                      </button>
+                    </section>
+                  ) : (
+                    <div class="capacities-rule__notice" role="status">
+                      <span>{schemaNotice.summary}</span>{" "}
+                      <button
+                        class="btn"
+                        disabled={ackBusy}
+                        aria-label="Dismiss the Capacities change notice"
+                        onClick={() => void acknowledge(schemaNotice.toHash)}
+                      >
+                        {ackBusy ? "Saving…" : "Got it"}
+                      </button>
+                    </div>
+                  )}
+                  {ackError && (
+                    <div class="capacities-settings__save-error" role="alert">
+                      <span>{ackError}</span>
+                    </div>
+                  )}
+                </>
+              )}
+
+                {(status.warnings.length > 0 || extraNotes.length > 0) && (
+                  <>
+                    {status.warnings.length > 0 && (
+                      <p class="capacities-settings__hint">
+                        Shown exactly as reported. A refresh that finished with warnings may not have covered everything.
+                      </p>
+                    )}
+                    <ul class="settings-hub__rows settings-hub__attention-list">
+                      {status.warnings.map((warning) => (
+                        <li key={warning}>
+                          <code>{warning}</code>
+                        </li>
+                      ))}
+                      {extraNotes.map((note) => (
+                        <li key={note}>{note}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </section>
             )}
 
             <div class="capacities-snapshot">

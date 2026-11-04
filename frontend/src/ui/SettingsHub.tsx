@@ -156,9 +156,8 @@ export function SettingsHub() {
           <>
             <p class="settings-hub__muted" role="status">
               {syncText}
-              {missingNote && ` · ${missingNote}`}
             </p>
-            <CapacitiesRefreshPanel active={here} />
+            <CapacitiesRefreshPanel active={here} extraNotes={missingNote ? [missingNote] : []} />
             <CapacitiesUnknownReview active={here} />
             <Fold title="Todoist and Calendar" note="status of each" live={here}>
               {() => (

@@ -104,3 +104,8 @@
   border: 1px solid var(--t-text); border-radius: 8px; background: var(--t-surface-2); color: var(--t-text);
 }
 .calendar-settings__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+/* One "Needs attention" block: notice first, then refresh warnings and hub notes. */
+.settings-hub__attention { display: grid; gap: 6px; padding: 8px 12px; border-left: 3px solid var(--t-muted); background: var(--t-surface-2); border-radius: 8px; }
+.settings-hub__attention-head { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+.settings-hub__attention-list { font-size: 13px; }
+.settings-hub__attention-list code { overflow-wrap: anywhere; }

@@ -211,13 +211,29 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
     );
   });
 
+  it("puts the notice and warnings in one Needs attention region with one count", async () => {
+    const { rendered } = await renderPanel(
+      statusWith(notice(), ["Capacities partial - 2 evaluated, 51 deferred."]),
+    );
+    const regions = rendered.container.querySelectorAll("[aria-label='Needs attention']");
+    expect(regions.length).toBe(1);
+    expect(regions[0]!.querySelector("[data-attention-count]")!.textContent).toBe("2");
+    expect(regions[0]!.textContent).toContain("Capacities partial - 2 evaluated, 51 deferred.");
+    expect(rendered.queryByText(/Heads-up/)).toBeNull();
+  });
+
+  it("omits the Needs attention region when there is nothing to report", async () => {
+    const { rendered } = await renderPanel(statusWith(null));
+    expect(rendered.container.querySelector("[aria-label='Needs attention']")).toBeNull();
+  });
+
   it("places the banner above the Warnings block", async () => {
     const { rendered } = await renderPanel(
       statusWith(notice(), ["Capacities partial - 2 evaluated, 51 deferred."]),
     );
 
     const banner = rendered.getByRole("alert");
-    const warnings = rendered.getByText("Heads-up from the last refresh");
+    const warnings = rendered.getByText("Capacities partial - 2 evaluated, 51 deferred.");
 
     // DOCUMENT_POSITION_FOLLOWING means the Warnings heading comes after the
     // banner in document order.
@@ -227,9 +243,9 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
   it("does not add the notice to the plan warnings list", async () => {
     const { rendered } = await renderPanel(statusWith(notice()));
 
-    // "Warnings" only appears for the job's own warnings, never for the
-    // advisory schema change.
-    expect(rendered.queryByText("Heads-up from the last refresh")).toBeNull();
+    // The notice counts once and adds no warning line of its own.
+    expect(rendered.container.querySelector("[data-attention-count]")!.textContent).toBe("1");
+    expect(rendered.container.querySelectorAll(".settings-hub__attention-list li").length).toBe(0);
     expect(rendered.getByRole("alert").textContent).toContain(SUMMARY);
   });
 });

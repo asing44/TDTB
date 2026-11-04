@@ -326,11 +326,12 @@ describe("hub · item types", () => {
 
   it("notes mapped types missing from the latest refresh", async () => {
     const { rendered } = openPlan({
+      panel: "freshness",
       warnings: ["Capacities structure RootTask is not in the published generation; needs Refresh."],
     });
-    fireEvent.click(await waitFor(() => rendered.getByRole("button", { name: /fine-tune by item type/i })));
-    const list = await waitFor(() => rendered.getByRole("region", { name: "Item types" }));
-    expect(list.textContent).toContain("1 mapped types are not yet in the latest refresh");
+    const region = await waitFor(() => rendered.getByRole("region", { name: "Needs attention" }));
+    expect(region.textContent).toContain("1 mapped types are not yet in the latest refresh");
+    expect(rendered.container.querySelector(".settings-hub__summary")!.textContent).not.toContain("mapped types");
   });
 
   it("moves focus to the type's rule card when a row is chosen", async () => {
