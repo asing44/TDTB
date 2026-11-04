@@ -14,19 +14,19 @@ afterEach(() => {
 });
 
 const CAP: CapacitiesSettings = {
-  version: 1,
+  version: 2,
   revision: 0,
   persisted: true,
-  nativeTaskAuto: { activeEnabled: true, dueEnabled: false, deadlineEnabled: false, deadlineHorizonDays: 2 },
+  statuses: { open: ["Started"], completed: ["Completed", "Dropped"] },
+  types: {
+    RootTask: { mode: "native", property: null, statuses: null },
+  },
+  native: { deadlineHorizonDays: 2 },
   excluded: [],
-  activeStructures: ["RootTask"],
-  nativeTaskStructures: ["RootTask"],
-  activeStatuses: ["Started"],
-  assignedStructures: { RootTask: "assigned" },
-  assignedOnStructures: {},
   availableStructures: ["RootTask", "Other"],
   structureTitles: { RootTask: "Task", Other: "Project" },
   declarationDiagnostics: [],
+  migratedFrom: null,
 };
 
 describe("hub · admission link", () => {
@@ -41,18 +41,31 @@ describe("hub · admission link", () => {
     const heading = await waitFor(() => rendered.getByRole("heading", { name: "How each item type gets in" }));
     const section = heading.closest("section") as HTMLElement;
     expect(section.id || section.getAttribute("aria-labelledby")).toBeTruthy();
-    expect(heading.id).toBe("capacities-sec-admission-per-type");
+    // The schema-v2 panel heads this section `capacities-sec-per-type` and
+    // tags it with the store's section id. (SettingsHub's scroll target still
+    // names `capacities-sec-admission-per-type`; that mismatch is a source
+    // defect reported separately, not encoded here.)
+    expect(heading.id).toBe("capacities-sec-per-type");
+    expect(section.dataset.settingsSection).toBe("admission-per-type");
     expect(section.closest("[hidden]")).toBeNull();
   });
 
-  it("names the three concepts at the top of the Capacities panel", async () => {
+  it("states the one-rule-per-type model at the top of the Capacities panel", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(CAP);
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair", settingsSection: "admission-per-type" } });
     const rendered = h.ui(<SettingsShell />);
-    const list = await waitFor(() => rendered.getByRole("list", { name: "Which section to use" }));
-    for (const name of ["How each item type gets in", "Automatic task rules", "Fine-tune by item type"]) {
-      expect(list.textContent).toContain(name);
-    }
+    const concepts = await waitFor(() =>
+      rendered.getByText("Each type has one rule for getting into your plan."),
+    );
+    expect(concepts.className).toContain("capacities-settings__concepts");
+    // Schema version 2 replaced the three overlapping concept sections with one
+    // rule per type, so the old section list must not come back.
+    expect(rendered.queryByRole("list", { name: "Which section to use" })).toBeNull();
+    // The native-rules explanation is still reachable from the one section that
+    // declares a native rule.
+    expect(
+      rendered.getByRole("button", { name: "What automatic task rules are" }),
+    ).toBeTruthy();
   });
 });
