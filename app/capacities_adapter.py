@@ -2987,6 +2987,12 @@ class CapacitiesAdapter:
     def _structure_can_contribute(self, mapping: StructureMapping) -> bool:
         """Whether any object from this structure could ever be eligible.
 
+        When the caller supplied the version-2 settings document, its per-type
+        ``mode`` is the SINGLE enumeration authority: every mode other than
+        ``off`` admits its objects somehow, so the structure is always
+        enumerated, and ``off`` never is. The mapping-based fallbacks below
+        apply only to callers that build the adapter without settings.
+
         A structure configured as native is always evaluated (its Auto rules
         are the only inclusion path). A custom structure with a source
         assignment property can contribute a source-assigned row. A custom
@@ -3003,6 +3009,9 @@ class CapacitiesAdapter:
         allows 30 requests per minute and enumeration plus hydration is
         otherwise an N+1 burst.
         """
+        mode_of = getattr(self.config.settings, "mode_of", None)
+        if callable(mode_of):
+            return mode_of(mapping.structure_id) != "off"
         if mapping.structure_id in self.config.assignment_settings.native_task_structures:
             return True
         if mapping.assignment_property:

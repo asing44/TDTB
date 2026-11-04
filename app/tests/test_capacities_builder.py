@@ -84,9 +84,8 @@ def _write_source_raw(text: str) -> Path:
 def _write_settings() -> None:
     cs.save_settings(
         expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(EXCLUDED,),
-        active_structures=("custom-project",),
+        types={"custom-project": cs.TypeDeclaration(mode="active")},
     )
 
 
@@ -220,15 +219,16 @@ def test_well_formed_record_returns_configured_adapter(tmp_path):
 
 def test_settings_admission_inputs_reach_the_adapter_config(tmp_path):
     """The production path carries both persisted admission inputs from the
-    vault file through ``to_assignment_settings`` into the built adapter."""
+    settings file through ``AssignmentSettings.from_v2`` into the built
+    adapter."""
     _write_source(_valid_payload())
     cs.save_settings(
         expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
-        excluded=(),
-        active_structures=(),
-        native_task_structures=("RootTask", "custom-project"),
-        active_statuses=("active", "In Progress"),
+        statuses={"open": ("active", "In Progress")},
+        types={
+            "RootTask": cs.TypeDeclaration(mode="native"),
+            "custom-project": cs.TypeDeclaration(mode="native"),
+        },
     )
     token = _valid_token_file(tmp_path)
     transport = _RecordingTransport()
@@ -281,44 +281,27 @@ ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-settings-assigned"
 def _write_settings_with_declarations(
     declarations: dict, on_declarations: dict | None = None
 ) -> None:
+    """Persist one version-2 declaration per structure.
+
+    ``declarations`` maps a structure to an ``assigned`` (boolean) property id
+    and ``on_declarations`` to an ``assignedOn`` (read-only date) one. A
+    structure may appear in only one of them: version 2 allows exactly one
+    mode, so two declarations for one structure is the shape the store now
+    refuses.
+    """
+    types: dict[str, object] = {}
+    for structure_id, property_id in declarations.items():
+        types[structure_id] = cs.TypeDeclaration(
+            mode="assigned", property_id=property_id
+        )
+    for structure_id, property_id in (on_declarations or {}).items():
+        types[structure_id] = cs.TypeDeclaration(
+            mode="assignedOn", property_id=property_id
+        )
     cs.save_settings(
         expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(EXCLUDED,),
-        active_structures=(),
-        assigned_structures=declarations,
-        assigned_on_structures=on_declarations or {},
-    )
-
-
-def _write_dual_declaration_settings() -> None:
-    """A hand-edited file declaring BOTH an Assigned and an Assigned On mapping.
-
-    ``save_settings`` now refuses this shape, so the read path's tolerance for a
-    pre-existing file is exercised by writing the bytes directly.
-    """
-    path = cs.settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({
-            "version": 1,
-            "revision": 0,
-            "native_task_auto": {
-                "active_enabled": True,
-                "due_enabled": True,
-                "deadline_enabled": True,
-                "deadline_horizon_days": 2,
-            },
-            "excluded": {EXCLUDED: True},
-            "active_structures": {},
-            "native_task_structures": list(cs.NATIVE_TASK_STRUCTURES),
-            "active_statuses": list(cs.DEFAULT_ACTIVE_STATUSES),
-            "assigned_structures": {"custom-project": SETTINGS_ASSIGNED_PROPERTY},
-            "assigned_on_structures": {
-                "custom-project": SETTINGS_ASSIGNED_ON_PROPERTY
-            },
-        }),
-        encoding="utf-8",
+        types=types,
     )
 
 
@@ -500,6 +483,44 @@ def test_declaration_does_not_supply_a_mapping_assignment_property(tmp_path):
     assert mappings["RootTask"].assigned_property == SETTINGS_ASSIGNED_PROPERTY
     assert mappings["RootTask"].assignment_property is None
     assert mappings["RootTask"].assignment_values == frozenset()
+
+
+def test_an_assigned_only_declaration_is_enumerated(tmp_path):
+    """A version-2 ``assigned`` declaration IS an enumeration authority.
+
+    The declared structure carries no record ``assignment_property``, no
+    Assigned On marker, and no Active enable, so every mapping-based fallback
+    would refuse to list it and the declared boolean could never be read. Only
+    the settings mode decides, and ``off`` still refuses.
+    """
+    _write_source(
+        _valid_payload(
+            structures=[
+                {
+                    "structure_id": "custom-project",
+                    "title_property": "title",
+                    "status_property": "state",
+                    "open_status_values": ["active"],
+                    "date_property": "date",
+                },
+                {
+                    "structure_id": "RootTask",
+                    "title_property": "title",
+                    "status_property": "status",
+                    "open_status_values": ["open"],
+                },
+            ]
+        )
+    )
+    _write_settings_with_declarations({"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    token = _valid_token_file(tmp_path)
+    adapter = cb.build_capacities_adapter(
+        cb.CapacitiesBuilderConfig(token_path=token, transport=_RecordingTransport()),
+    )
+
+    mappings = {m.structure_id: m for m in adapter.config.mappings}
+    assert adapter.can_contribute(mappings["custom-project"]) is True
+    assert adapter.can_contribute(mappings["RootTask"]) is False
 
 
 def test_declared_property_reaches_a_real_read_through_the_production_path(tmp_path):
@@ -2121,7 +2142,6 @@ def test_refresh_coordinator_serializes_publication_with_settings_saves(tmp_path
         try:
             cs.save_settings(
                 expected_revision=current,
-                native_task_auto=cs.NativeTaskAutoPolicy(),
             )
         except BaseException as exc:  # noqa: BLE001 — surfaced below
             errors.append(exc)
@@ -2168,11 +2188,22 @@ def test_assigned_on_declaration_resolves_only_the_declared_structure(tmp_path):
     assert mappings["custom-project"].assignment_values == frozenset({"yes"})
 
 
-def test_assigned_on_and_boolean_declarations_coexist_on_one_structure(tmp_path):
-    _write_dual_declaration_settings()
+def test_declared_boolean_and_record_assigned_on_coexist_on_one_structure(
+    tmp_path,
+):
+    """Both markers reach one structure through DIFFERENT persisted surfaces.
+
+    Version-2 settings allow exactly one declaration per structure, so a
+    settings ``assigned`` declaration and the record-level read-only
+    ``Assigned On`` marker are the only way a structure can carry both.
+    """
+    _write_settings_with_declarations({"custom-project": SETTINGS_ASSIGNED_PROPERTY})
 
     mappings = {
-        m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())
+        m.structure_id: m
+        for m in _built_mappings(
+            tmp_path, _record_assigned_on_payload(RECORD_ASSIGNED_ON_PROPERTY)
+        )
     }
 
     assert (
@@ -2180,7 +2211,7 @@ def test_assigned_on_and_boolean_declarations_coexist_on_one_structure(tmp_path)
     )
     assert (
         mappings["custom-project"].assigned_on_property
-        == SETTINGS_ASSIGNED_ON_PROPERTY
+        == RECORD_ASSIGNED_ON_PROPERTY
     )
 
 
