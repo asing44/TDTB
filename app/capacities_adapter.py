@@ -229,6 +229,16 @@ class CapacitiesReadResult:
     #: One entry per malformed identity, for the additive intake block. The
     #: count above stays the coverage authority; this is the named surface.
     skipped: tuple[SkippedObject, ...] = ()
+    #: Per-structure drop accounting for this read: structure id -> {reason
+    #: code: count of dropped objects}. Every gate that can drop a projected
+    #: row without failing it counts here, so the run reports what it removed
+    #: instead of losing it silently. Sorted on the way out, deduped per
+    #: identity, and content-free: counts and closed reason codes only.
+    drop_tally: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Structures skipped before any listing (structure id -> reason code).
+    #: The count of their objects is deliberately absent: nothing was listed,
+    #: so no count exists and none is invented.
+    structures_not_read: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -896,6 +906,120 @@ def _review_warning(review_rows: Sequence[tuple[str, Sequence[str]]]) -> str:
     )
 
 
+#: The drop-reason vocabulary a read reports. Every code here is already the
+#: code the deciding surface uses — the assignment evaluator, the status /
+#: completion classifier, the stored-rule evaluator, or the refresh coordinator
+#: — so the tally never invents a second name for one cause.
+DROP_REASON_CLOSED_STATUS = "closed-source-status"
+DROP_REASON_FUTURE_DATE = "future-date"
+DROP_REASON_NO_ASSIGNMENT = "no-effective-assignment"
+DROP_REASON_EXCLUDED = "tdtb-excluded"
+DROP_REASON_NO_RULE_MATCH = "no-rule-match"
+DROP_REASON_MALFORMED = "malformed"
+DROP_REASON_UNREADABLE = "unreadable"
+DROP_REASON_STRUCTURE_NOT_ELIGIBLE = "structure-not-eligible"
+DROP_REASON_STRUCTURE_UNMAPPED = "structure-unmapped"
+
+#: At most this many distinct reason codes are named on one structure's line.
+MAX_DROP_REASONS_PER_LINE = 6
+
+#: Evaluator reason codes mapped onto the tally vocabulary. The tally reports
+#: the reason that actually decided the drop, never a generic "ineligible".
+_DECISION_DROP_VOCABULARY = {
+    "closed-source-status": DROP_REASON_CLOSED_STATUS,
+    "no-effective-assignment": DROP_REASON_NO_ASSIGNMENT,
+    "tdtb-excluded": DROP_REASON_EXCLUDED,
+    "malformed-source-row": DROP_REASON_MALFORMED,
+    "cross-space-row": DROP_REASON_MALFORMED,
+    "missing-stable-identity": DROP_REASON_MALFORMED,
+    "unstable-identity": DROP_REASON_MALFORMED,
+}
+
+
+def _decision_drop_reason(decision: Any) -> str:
+    """The tally code for an ineligible evaluator decision."""
+    for code in decision.reason_codes:
+        reason = _DECISION_DROP_VOCABULARY.get(code)
+        if reason is not None:
+            return reason
+    return DROP_REASON_NO_ASSIGNMENT
+
+
+def structure_label(
+    structures: Any, structure_id: str
+) -> str:
+    """Operator-facing label for one structure: its contract title, else its id.
+
+    A configuration id (``custom-project``) and a display title (``Project``)
+    are both owner-owned metadata, so either is content-free; the title is used
+    when the contract carries one because that is what the operator sees in
+    Capacities.
+    """
+    return _structure_display_name(structures, structure_id) or structure_id
+
+
+def _ordered_reason_counts(counts: Mapping[str, int]) -> list[tuple[str, int]]:
+    """Positive counts, largest first then by code, so the line is stable."""
+    return sorted(
+        ((code, count) for code, count in counts.items() if count > 0),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
+def _reason_listing(counts: Mapping[str, int]) -> str:
+    """Bounded ``2 code, 1 code`` listing plus an ``and N more`` remainder."""
+    ordered = _ordered_reason_counts(counts)
+    shown = ordered[:MAX_DROP_REASONS_PER_LINE]
+    parts = [f"{count} {code}" for code, count in shown]
+    remaining = len(ordered) - len(shown)
+    if remaining > 0:
+        parts.append(f"and {remaining} more")
+    return ", ".join(parts)
+
+
+def drop_tally_warning(label: str, counts: Mapping[str, int]) -> str:
+    """One aggregated, bounded, content-free line for one structure's drops.
+
+    The empty string means nothing was counted, so a caller can filter it out
+    without a second check. The line names counts and closed reason codes only:
+    never a title, an id, or a property value.
+    """
+    total = sum(count for _, count in _ordered_reason_counts(counts))
+    if total < 1:
+        return ""
+    noun = "object" if total == 1 else "objects"
+    return (
+        f"Capacities type {label!r}: {total} {noun} dropped — "
+        f"{_reason_listing(counts)}"
+    )
+
+
+def retained_scope_warning(label: str, counts: Mapping[str, int]) -> str:
+    """One line for a structure kept from the previous generation, unlisted.
+
+    A dropped enumeration scope is not a drop of the objects themselves: they
+    stay in the published generation with their original timestamps. Say that,
+    with the count and the same reason vocabulary, instead of leaving the
+    exclusion aggregate and anonymous.
+    """
+    total = sum(count for _, count in _ordered_reason_counts(counts))
+    if total < 1:
+        return ""
+    noun = "object" if total == 1 else "objects"
+    return (
+        f"Capacities type {label!r}: {total} {noun} retained with their "
+        f"original timestamps; not refreshed — {_reason_listing(counts)}"
+    )
+
+
+def structure_not_read_warning(label: str, reason: str) -> str:
+    """One line for a configured structure skipped before any listing."""
+    return (
+        f"Capacities type {label!r} was not read — {reason}; "
+        "its objects were never listed."
+    )
+
+
 def _tag_exclusion_warning(report: dict[str, Any]) -> str:
     """One bounded, content-free summary of rows removed by tag exclusions.
 
@@ -1293,17 +1417,36 @@ def _skipped_hint(obj: dict[str, Any]) -> str | None:
     return " · ".join(tokens)[:_SKIP_HINT_CHARS]
 
 
+def _structure_rows(structures: Any) -> list[Any]:
+    """Structure rows from either payload shape the provider/cache can hand us.
+
+    The structures endpoint answers either a mapping keyed by structure id or a
+    list of rows, and a dict may also wrap either shape under ``structures``;
+    the label lookup must not assume one of them.
+    """
+    if isinstance(structures, dict):
+        inner = structures.get("structures")
+        if isinstance(inner, (dict, list)):
+            return _structure_rows(inner)
+        return list(structures.values())
+    if isinstance(structures, list):
+        return structures
+    return []
+
+
 def _structure_display_name(
-    structures: dict[str, dict[str, Any]] | None, structure_id: str
+    structures: Any, structure_id: str
 ) -> str | None:
     """The cached structures contract's display name, or ``None``."""
     if not structures or not structure_id:
         return None
-    row = structures.get(structure_id)
-    if not isinstance(row, dict):
-        return None
-    name = _text(row.get("title")) or _text(row.get("name"))
-    return name or None
+    for row in _structure_rows(structures):
+        if not isinstance(row, dict) or _text(row.get("id")) != structure_id:
+            continue
+        name = _text(row.get("title")) or _text(row.get("name"))
+        if name:
+            return name
+    return None
 
 
 def _fingerprint(obj: dict[str, Any]) -> str:
@@ -1369,6 +1512,12 @@ class CapacitiesAdapter:
         #: inflate coverage.
         self._deferred_identities: set[str] = set()
         self._rate_limited = False
+        #: Per-read drop accounting, keyed by structure id and reset by every
+        #: projection entry point. ``_drop_counts`` counts dropped objects per
+        #: reason code; ``_structures_not_read`` names a structure the
+        #: enumeration gate skipped before any listing.
+        self._drop_counts: dict[str, dict[str, int]] = {}
+        self._structures_not_read: dict[str, str] = {}
         #: Per-read Assigned On diagnostics, keyed by structure id and reset
         #: by every projection entry point: at most one content-free warning
         #: per structure reaches the warnings surface.
@@ -2008,6 +2157,10 @@ class CapacitiesAdapter:
         # Nothing is called dead when no live label set is known, and an empty
         # payload keeps the shipped absent-signal rules untouched.
         dead_status_member = False
+        #: A status the projection cannot decide at all — a deleted option, or a
+        #: custom structure with an absent/empty payload. UNKNOWN is never
+        #: closed: the row is kept as an unassigned review candidate.
+        unresolved_status = False
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
             dead_status_member = (
@@ -2037,8 +2190,13 @@ class CapacitiesAdapter:
                 # A missing mapped status value is an absent signal, not closed
                 # evidence. On a native structure it stays UNKNOWN so the
                 # evaluator can admit the row on its own due/deadline/source
-                # signal; a custom structure keeps the fail-closed gate.
-                status_is_open = None if native_status_structure else False
+                # signal. A custom structure carries the SAME absent signal:
+                # unknown never means closed, so the row is kept as an
+                # unassigned review candidate with ``status_unknown`` instead
+                # of disappearing as closed-source-status.
+                status_is_open = None
+                if not native_status_structure:
+                    unresolved_status = True
             elif dead_status_member:
                 # Undecided status: the projection keeps the row as an
                 # unassigned review candidate instead of dropping it as closed.
@@ -2067,19 +2225,20 @@ class CapacitiesAdapter:
                     status_prop, mapping.open_status_property
                 )
                 status = _status_token(display_tokens, self.config.assignment_settings)
-                if (
-                    native_status_structure or source_assigned is True
-                ) and not status_tokens:
+                if not status_tokens:
                     # Present but empty payload: the same absent signal as a
                     # missing property, so it stays UNKNOWN rather than closed.
-                    # A custom structure carries that absent signal too when the
-                    # source Assigned On declaration places the object on or
-                    # before the logical day: the status property is empty, not
-                    # closed evidence, and the source-assigned signal outranks
-                    # the day filter. A readable closed status never reaches
-                    # here (its tokens are non-empty), so the fail-closed gate
-                    # still drops completed/dropped rows.
+                    # A native structure or a row the source explicitly marks
+                    # assigned keeps that absent signal as-is. A custom row
+                    # that is not source-assigned is UNKNOWN too: it stays an
+                    # unassigned review candidate (``status_unknown``) instead
+                    # of being dropped as closed evidence it does not carry. A
+                    # readable closed status never reaches here (its tokens are
+                    # non-empty), so the fail-closed gate still drops
+                    # completed/dropped rows.
                     status_is_open = None
+                    if not native_status_structure and source_assigned is not True:
+                        unresolved_status = True
                 else:
                     status_is_open = bool(
                         status_tokens.intersection(
@@ -2095,6 +2254,11 @@ class CapacitiesAdapter:
                     )
         elif active_rule is not None:
             status_state = "unavailable"
+
+        # A deleted status option is undecided for the same reason an absent or
+        # empty payload is: neither carries readable closed evidence. One flag
+        # drives the unassigned-candidate treatment on both paths.
+        unresolved_status = unresolved_status or dead_status_member
 
         # Completion availability on the stored-rule path. A mapping that
         # shares the open-status field checks the configured completed value
@@ -2160,6 +2324,7 @@ class CapacitiesAdapter:
                     if end is not None and end > due:
                         window_end = end
                 if due is not None and due > logical_day and source_assigned is not True:
+                    self._note_drop(mapping.structure_id, DROP_REASON_FUTURE_DATE)
                     return None
 
         deadline: date | None = None
@@ -2226,8 +2391,10 @@ class CapacitiesAdapter:
                 logical_day=logical_day.isoformat(),
             )
             if rule_state is capacities_rules.NO_MATCH:
+                self._note_drop(mapping.structure_id, DROP_REASON_NO_RULE_MATCH)
                 return None
             if status_state == "closed" or completion_state == "closed":
+                self._note_drop(mapping.structure_id, DROP_REASON_CLOSED_STATUS)
                 return None
             # A TDTB stable-identity exclusion still wins over the stored
             # rule exactly as it wins over Auto on the legacy path: the rule
@@ -2238,6 +2405,7 @@ class CapacitiesAdapter:
                 identity in self.config.assignment_settings.excluded_identities
                 and source_assigned is not True
             ):
+                self._note_drop(mapping.structure_id, DROP_REASON_EXCLUDED)
                 return None
             # A missing assignment mapping is manual assignment: the row is
             # an eligible candidate, never auto-assigned. An UNKNOWN status
@@ -2266,17 +2434,24 @@ class CapacitiesAdapter:
             if direct_completion and completion_state == "closed":
                 # Direct-refresh completion override (U3b-4): a readable
                 # completed value is a hard exclusion even when source-assigned.
+                self._note_drop(mapping.structure_id, DROP_REASON_CLOSED_STATUS)
                 return None
-            if dead_status_member:
-                # A dead status option is never auto-assigned, on any path
-                # (D2), and it is never silently dropped: the row is a review
-                # candidate that reports ``status_unknown``. A stable-identity
-                # exclusion still wins, exactly as it does on the stored-rule
-                # path, and the outcome is reported as unassigned either way.
+            if unresolved_status:
+                # An undecided status (a deleted option, or a custom structure
+                # with an absent/empty payload) is never auto-assigned, on any
+                # path (D2), and it is never silently dropped: the row is a
+                # review candidate that reports ``status_unknown``. A
+                # stable-identity exclusion still wins, exactly as it does on
+                # the stored-rule path, and the outcome is reported as
+                # unassigned either way.
                 if decision.provenance.exclusion_matched:
+                    self._note_drop(mapping.structure_id, DROP_REASON_EXCLUDED)
                     return None
                 assigned = False
             elif not decision.eligible:
+                self._note_drop(
+                    mapping.structure_id, _decision_drop_reason(decision)
+                )
                 return None
             else:
                 assigned = True
@@ -2370,15 +2545,15 @@ class CapacitiesAdapter:
                 # Rule-less direct rows carry only the completion availability
                 # and its review reason; no stored rule state is fabricated.
                 row["capacities_completion_state"] = completion_state
-            if dead_status_member:
+            if unresolved_status:
                 # Mirror exactly how the stored-rule path represents an
                 # unresolved status: the same state token and the same stable
                 # review reason, so one consumer renders both paths alike.
                 row["capacities_status_state"] = "unknown"
-            if dead_status_member or direct_completion:
+            if unresolved_status or direct_completion:
                 row["capacities_review_reasons"] = _review_reasons(
                     None,
-                    "unknown" if dead_status_member else None,
+                    "unknown" if unresolved_status else None,
                     completion_state if direct_completion else None,
                 )
         if tag_error is not None:
@@ -2603,6 +2778,8 @@ class CapacitiesAdapter:
         # must not suppress or fabricate a warning on this one.
         self._assigned_on_unparsed = set()
         self._assigned_on_matched = set()
+        self._drop_counts = {}
+        self._structures_not_read = {}
         items, warnings, evaluated, malformed, skipped = self._project_objects(
             logical_day, objects
         )
@@ -2610,6 +2787,7 @@ class CapacitiesAdapter:
             *self._contract_warnings,
             *warnings,
             *self._assigned_on_warnings(),
+            *self._drop_warnings(),
         ]
         return CapacitiesReadResult(
             items=items,
@@ -2617,6 +2795,8 @@ class CapacitiesAdapter:
             evaluated=len(evaluated),
             malformed=len(malformed),
             skipped=tuple(skipped),
+            drop_tally=self._drop_tally(),
+            structures_not_read=dict(sorted(self._structures_not_read.items())),
         )
 
     def _active_rule(self, structure_id: str) -> dict[str, Any] | None:
@@ -2662,6 +2842,45 @@ class CapacitiesAdapter:
         if mapping.structure_id in self.config.assignment_settings.active_structures:
             return True
         return self._active_rule(mapping.structure_id) is not None
+
+    def _note_drop(self, structure_id: str, reason: str) -> None:
+        """Count one dropped object under its structure and reason code."""
+        if not structure_id:
+            return
+        bucket = self._drop_counts.setdefault(structure_id, {})
+        bucket[reason] = bucket.get(reason, 0) + 1
+
+    def _drop_tally(self) -> dict[str, dict[str, int]]:
+        """Deterministic snapshot of this read's per-structure drop counts."""
+        return {
+            structure_id: {
+                code: self._drop_counts[structure_id][code]
+                for code in sorted(self._drop_counts[structure_id])
+            }
+            for structure_id in sorted(self._drop_counts)
+        }
+
+    def _drop_warnings(self) -> list[str]:
+        """One aggregated line per structure this read dropped or skipped.
+
+        Exactly one line per structure, sorted, deduped, and bounded by
+        ``MAX_DROP_REASONS_PER_LINE``. A structure that was never listed gets
+        its own line because no object count exists to aggregate over.
+        """
+        warnings = [
+            drop_tally_warning(
+                structure_label(self._structure_defs, structure_id),
+                self._drop_counts[structure_id],
+            )
+            for structure_id in sorted(self._drop_counts)
+        ]
+        warnings.extend(
+            structure_not_read_warning(
+                structure_label(self._structure_defs, structure_id), reason
+            )
+            for structure_id, reason in sorted(self._structures_not_read.items())
+        )
+        return [warning for warning in warnings if warning]
 
     def _assigned_on_warnings(self) -> list[str]:
         """At most one content-free diagnostic per mapped Assigned On structure.
@@ -2713,6 +2932,8 @@ class CapacitiesAdapter:
         self._rate_limited = False
         self._assigned_on_unparsed = set()
         self._assigned_on_matched = set()
+        self._drop_counts = {}
+        self._structures_not_read = {}
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = list(self._contract_warnings)
         evaluated: set[str] = set()
@@ -2721,6 +2942,11 @@ class CapacitiesAdapter:
         page_count = 0
         for structure_id, mapping in self._mappings.items():
             if not self._structure_can_contribute(mapping):
+                # Silent before this tally: the structure's objects were never
+                # listed or hydrated, so nothing about them reached the result.
+                self._structures_not_read[
+                    structure_id
+                ] = DROP_REASON_STRUCTURE_NOT_ELIGIBLE
                 continue
             objects, pages = self._list_objects(structure_id)
             page_count += pages
@@ -2758,6 +2984,7 @@ class CapacitiesAdapter:
                 "least a minute, then Refresh sources to continue."
             )
         warnings.extend(self._assigned_on_warnings())
+        warnings.extend(self._drop_warnings())
         warnings.extend(self._drain_cache_warnings())
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(
@@ -2768,6 +2995,8 @@ class CapacitiesAdapter:
             deferred=len(deferred),
             malformed=len(malformed),
             skipped=tuple(skipped),
+            drop_tally=self._drop_tally(),
+            structures_not_read=dict(sorted(self._structures_not_read.items())),
         )
 
     def list_tags(self) -> dict[str, Any]:

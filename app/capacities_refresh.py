@@ -605,6 +605,56 @@ def _release_exclusive(handle: Any) -> None:
         pass
 
 
+def _retained_member_counts(
+    prior: refresh_state.CompleteSnapshot | None, retained_types: Sequence[str]
+) -> dict[str, int]:
+    """Objects kept from the previous generation, grouped by type key.
+
+    A type that lost eligibility, or left the mapping record, keeps its
+    published membership with the original timestamps. The count comes from the
+    prior generation itself, so naming it costs no provider read.
+    """
+    if prior is None or not retained_types:
+        return {}
+    retained = set(retained_types)
+    counts: dict[str, int] = {}
+    for member in prior.members:
+        if member.type_key in retained:
+            counts[member.type_key] = counts.get(member.type_key, 0) + 1
+    return counts
+
+
+def retained_scope_warnings(
+    counts: Mapping[str, int],
+    *,
+    structures_payload: Any,
+    mapped_structure_ids: set[str],
+) -> list[str]:
+    """One bounded line per type retained instead of enumerated.
+
+    ``structure-not-eligible`` means the type is still mapped but no assignment
+    path, Active enable, or stored rule can make its objects eligible, so the
+    enumeration gate skipped it; ``structure-unmapped`` means the type is no
+    longer configured at all. Either way the objects are NOT deleted — they stay
+    in the published generation — so the line says "retained", names the type,
+    the count, and the reason, instead of leaving one anonymous aggregate.
+    """
+    warnings: list[str] = []
+    for type_key in sorted(counts):
+        reason = (
+            capacities_adapter.DROP_REASON_STRUCTURE_NOT_ELIGIBLE
+            if type_key in mapped_structure_ids
+            else capacities_adapter.DROP_REASON_STRUCTURE_UNMAPPED
+        )
+        warnings.append(
+            capacities_adapter.retained_scope_warning(
+                capacities_adapter.structure_label(structures_payload, type_key),
+                {reason: counts[type_key]},
+            )
+        )
+    return [warning for warning in warnings if warning]
+
+
 class RefreshCoordinator:
     """The persisted single-flight Refresh/Rescan job coordinator."""
 
@@ -1084,6 +1134,13 @@ class RefreshCoordinator:
             # does, without claiming a fresh listing for inactive types.
             retained_types = [t for t in prior_types if t not in configured_types]
 
+        # Retention accounting, per type: the objects kept from the previous
+        # generation are exactly the scope this run did not enumerate, and a
+        # status-only or unmapped type would otherwise vanish into one
+        # anonymous aggregate line. Counts come from the prior generation's own
+        # members, so no provider call is added.
+        retained_member_counts = _retained_member_counts(prior, retained_types)
+
         mode = job.get("mode")
         logical_day = self.logical_day or date.today()
         listings: list[refresh_state.TypeListing] = []
@@ -1218,11 +1275,13 @@ class RefreshCoordinator:
         # under-evaluated rows — ride the successful finish; the publication
         # itself stays one complete generation with every candidate retained.
         warnings = list(_result.warnings)
-        if retained_types:
-            warnings.append(
-                "Previously cached Capacities types outside this refresh scope "
-                "were retained with their original timestamps; not refreshed."
+        warnings.extend(
+            retained_scope_warnings(
+                retained_member_counts,
+                structures_payload=structures_payload,
+                mapped_structure_ids={m.structure_id for m in self.mappings},
             )
+        )
         self._finish("complete", "published", warnings)
         self._record_schema_change(
             previous=previous_structures,

@@ -270,9 +270,13 @@ def test_offline_projection_splits_assigned_rows_from_pool_rows(
     assert all(row["assigned"] is True for row in assigned)
     assert all(row["assigned"] is not True for row in pool)
     # The UNKNOWN-completion pool row is surfaced as the adapter's own review
-    # warning; the offline path adds no refusal text.
-    assert len(warnings) == 1
+    # warning, and the dropped row is counted instead of vanishing; the offline
+    # path adds no refusal text.
+    assert len(warnings) == 2
     assert warnings[0].startswith("Capacities review")
+    assert warnings[1] == (
+        "Capacities type 'T2': 1 object dropped — 1 no-effective-assignment"
+    )
     assert coverage.members == 3
     assert coverage.unreadable == 0
     assert coverage.evaluated == 3

@@ -706,7 +706,19 @@ def test_native_mapping_rejects_future_out_of_horizon_and_closed_rows():
     result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.items == []
-    assert result.warnings == []
+    # Every previously silent drop is now counted, once per structure, so a
+    # filtered-out row can no longer disappear without evidence.
+    assert result.warnings == [
+        "Capacities type 'Task': 5 objects dropped — "
+        "2 closed-source-status, 2 no-effective-assignment, 1 future-date"
+    ]
+    assert result.drop_tally == {
+        "RootTask": {
+            "closed-source-status": 2,
+            "future-date": 1,
+            "no-effective-assignment": 2,
+        }
+    }
 
 
 def _project_status_settings(**overrides):
@@ -1245,7 +1257,9 @@ def test_custom_unassigned_or_absent_is_not_projected_even_when_open_and_due():
     result = _adapter(provider).items_for_day(TODAY)
 
     assert result.items == []
-    assert result.warnings == []
+    assert result.warnings == [
+        "Capacities type 'Project': 2 objects dropped — 2 no-effective-assignment"
+    ]
 
 
 def test_custom_excluded_but_unassigned_is_not_projected():
@@ -1455,7 +1469,9 @@ def test_custom_active_enabled_mapping_requires_the_active_status():
     ).items_for_day(TODAY)
 
     assert result.items == []
-    assert result.warnings == []
+    assert result.warnings == [
+        "Capacities type 'Project': 1 object dropped — 1 no-effective-assignment"
+    ]
 
 
 def test_custom_active_pull_respects_the_label_name_not_the_label_id():
@@ -1664,7 +1680,16 @@ def test_custom_status_mapping_is_not_enumerated_before_it_is_active_enabled():
     ).items_for_day(TODAY)
 
     assert result.items == []
-    assert result.warnings == []
+    # The structure was skipped before any listing, so no object count exists:
+    # the read reports the skip itself instead of staying silent.
+    assert result.warnings == [
+        "Capacities type 'Project' was not read — structure-not-eligible; "
+        "its objects were never listed."
+    ]
+    assert result.structures_not_read == {
+        "custom-project": "structure-not-eligible"
+    }
+    assert result.drop_tally == {}
     assert ("custom-project", None) not in provider.list_calls
 
 
@@ -2178,7 +2203,9 @@ def test_evaluated_objects_are_distinct_from_the_eligible_item_count():
     assert result.evaluated == 3
     assert result.deferred == 0
     assert result.malformed == 0
-    assert result.warnings == []
+    assert result.warnings == [
+        "Capacities type 'Task': 2 objects dropped — 2 closed-source-status"
+    ]
 
 
 def test_batch_projection_reports_evaluated_and_malformed_counts():
@@ -2661,7 +2688,16 @@ def test_declared_assignment_property_overrides_the_mapping_declaration():
 
     result = _override_adapter(provider, mapping).items_for_day(TODAY)
 
-    assert result.items == []
+    # The declaration still wins (the row is not source-assigned), but an
+    # absent mapped status is UNKNOWN, never closed evidence: the row is kept
+    # as an unassigned review candidate instead of disappearing.
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert _source_assigned_by_id(result) == {"project-1": False}
+    assert row["capacities_status_state"] == "unknown"
+    assert row["capacities_review_reasons"] == ["status_unknown"]
+    assert result.drop_tally == {}
 
 
 def test_mapping_declaration_still_applies_when_no_override_is_resolved():
@@ -3204,7 +3240,10 @@ def test_assigned_on_today_admits_a_custom_object_with_an_empty_status():
     assert result.warnings == []
 
 
-def test_empty_status_with_a_future_assigned_on_stays_closed():
+def test_empty_status_with_a_future_assigned_on_is_a_review_candidate():
+    # An EMPTY status payload carries no closed evidence. A future Assigned On
+    # makes the row not source-assigned, so nothing admits it — but UNKNOWN is
+    # never closed, so it stays an unassigned review candidate.
     provider = _assigned_on_provider([
         _assigned_on_object(
             "event-1",
@@ -3221,10 +3260,13 @@ def test_empty_status_with_a_future_assigned_on_stays_closed():
         provider, _assigned_on_mapping(), assignment_settings=_active_settings()
     ).items_for_day(TODAY)
 
-    assert result.items == []
+    assert [row["capacities_id"] for row in result.items] == ["event-1"]
+    assert result.items[0]["assigned"] is False
+    assert result.items[0]["capacities_status_state"] == "unknown"
+    assert result.items[0]["capacities_review_reasons"] == ["status_unknown"]
 
 
-def test_empty_status_without_assigned_on_stays_closed():
+def test_empty_status_without_assigned_on_is_a_review_candidate():
     provider = _assigned_on_provider([
         _assigned_on_object("event-1", {"state": _empty_state()}),
         _assigned_on_object(
@@ -3240,7 +3282,16 @@ def test_empty_status_without_assigned_on_stays_closed():
         provider, _assigned_on_mapping(), assignment_settings=_active_settings()
     ).items_for_day(TODAY)
 
-    assert result.items == []
+    assert [row["capacities_id"] for row in result.items] == [
+        "event-1",
+        "event-empty-date",
+    ]
+    assert all(row["assigned"] is False for row in result.items)
+    assert all(
+        row["capacities_review_reasons"] == ["status_unknown"]
+        for row in result.items
+    )
+    assert result.drop_tally == {}
 
 
 def test_readable_completed_status_with_assigned_on_today_stays_closed():

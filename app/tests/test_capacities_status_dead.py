@@ -391,13 +391,20 @@ def test_mixed_open_and_dead_status_stays_open():
 
 
 # ---------------------------------------------------------------------------
-# Empty status payloads keep their shipped behaviour
+# Empty status payloads: unknown never means closed
 # ---------------------------------------------------------------------------
 
-def test_empty_status_without_assigned_on_stays_dropped():
+def test_empty_status_without_assigned_on_is_a_review_candidate():
     result = _read([_event_object(status=())], (_event_mapping(),))
 
-    assert result.items == []
+    # An EMPTY payload is not closed evidence, so the row is kept as an
+    # unassigned review candidate instead of dropping as closed-source-status.
+    assert [row["capacities_id"] for row in result.items] == ["event-1"]
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_status_state"] == "unknown"
+    assert row["capacities_review_reasons"] == ["status_unknown"]
+    assert result.drop_tally == {}
 
 
 def test_empty_status_with_assigned_on_today_is_still_admitted():
