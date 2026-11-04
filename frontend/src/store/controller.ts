@@ -685,13 +685,26 @@ export class Controller {
     const write = (current: CapacitiesSettings) =>
       this.saveCapacitiesSettings({
         expectedRevision: current.revision,
-        nativeTaskAuto: { ...current.nativeTaskAuto },
+        statuses: {
+          open: [...current.statuses.open],
+          completed: [...current.statuses.completed],
+        },
+        // Round-tripped verbatim: this writer only adds an exclusion, and the
+        // save route is a full replacement, so every declaration (including
+        // its null-vs-[] statuses state) must travel unchanged.
+        types: Object.fromEntries(
+          Object.entries(current.types).map(([structureId, declaration]) => [
+            structureId,
+            {
+              mode: declaration.mode,
+              property: declaration.property,
+              statuses:
+                declaration.statuses === null ? null : [...declaration.statuses],
+            },
+          ]),
+        ),
+        native: { deadlineHorizonDays: current.native.deadlineHorizonDays },
         excluded: [...current.excluded, identity].sort(),
-        activeStructures: [...current.activeStructures],
-        nativeTaskStructures: [...current.nativeTaskStructures],
-        activeStatuses: [...current.activeStatuses],
-        assignedStructures: { ...current.assignedStructures },
-        assignedOnStructures: { ...current.assignedOnStructures },
       });
     try {
       return await write(settings);

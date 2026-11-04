@@ -13,13 +13,57 @@
 
 export type Source = "todoist" | "capacities" | "calendar";
 
-/** TDTB-owned native Capacities Task Auto policy. Each condition is an
-    independent OR rule; the backend persists the exact policy and revision. */
-export interface CapacitiesNativeTaskAutoPolicy {
-  activeEnabled: boolean;
-  dueEnabled: boolean;
-  deadlineEnabled: boolean;
+/** TDTB-owned native Capacities policy: the inclusive deadline horizon the
+    `native` type mode admits on. Version 1's three independent toggles are
+    gone — a `native` declaration admits on status-open OR due OR deadline, and
+    the type's own `statuses` list decides whether the status condition
+    applies. */
+export interface CapacitiesNativePolicy {
+  /** Inclusive window in calendar days for the deadline condition. */
   deadlineHorizonDays: number;
+}
+
+/** The five admission modes, mirrored from the backend's `TYPE_MODES`.
+    Exactly one mode per structure, which is why the old contradictory dual
+    declaration is no longer representable. */
+export type CapacitiesTypeMode =
+  | "off"
+  | "active"
+  | "assigned"
+  | "assignedOn"
+  | "native";
+
+/** Modes whose declaration is meaningless without a raw provider property id. */
+export const CAPACITIES_PROPERTY_MODES: ReadonlyArray<CapacitiesTypeMode> = [
+  "assigned",
+  "assignedOn",
+];
+
+/** Modes whose admission decision consults the status condition at all. */
+export const CAPACITIES_STATUS_MODES: ReadonlyArray<CapacitiesTypeMode> = [
+  "active",
+  "native",
+];
+
+/** One structure's declaration: exactly one admission mode.
+
+    `property` is a RAW Capacities property id, required iff the mode is
+    `assigned`/`assignedOn` and null for every other mode. `statuses` is
+    deliberately tri-state — `null` inherits the shared `statuses.open` names,
+    `[]` disables status admission for this structure (date/checkbox only), and
+    a non-empty list is that structure's own open names. The client preserves
+    the distinction end to end; `[]` and `null` are NOT interchangeable. */
+export interface CapacitiesTypeDeclaration {
+  mode: CapacitiesTypeMode;
+  property: string | null;
+  statuses: string[] | null;
+}
+
+/** The shared status vocabularies. `open` is inherited by every declaration
+    that states no names; `completed` is the closed set. */
+export interface CapacitiesStatusVocabulary {
+  open: string[];
+  completed: string[];
 }
 
 /** One advisory declaration diagnostic from the settings read/save: a saved
@@ -37,38 +81,20 @@ export interface CapacitiesDeclarationDiagnostic {
   reason: string;
 }
 
-/** The local, versioned Capacities policy returned by the settings API. */
+/** The local, versioned Capacities policy returned by the settings API.
+    Schema version 2: ONE declaration per structure (`types`), plus the shared
+    status vocabulary, the native horizon, and the exclusion set. */
 export interface CapacitiesSettings {
   version: number;
   revision: number;
   persisted: boolean;
-  nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
+  /** Shared open/completed label vocabularies. */
+  statuses: CapacitiesStatusVocabulary;
+  /** One declaration per structure id; an absent id means `off`. */
+  types: Record<string, CapacitiesTypeDeclaration>;
+  native: CapacitiesNativePolicy;
   /** Canonical capacities:{space}:{structure}:{object} identities. */
   excluded: string[];
-  /** Structure ids whose typed `Active` status label is an inclusion signal
-      for the Capacities builder. Additive to schema version 1. */
-  activeStructures: string[];
-  /** Structures admitted to the native Task Auto rules. A plain list of
-      strings on the wire (unlike `activeStructures`); additive to schema
-      version 1, and the documented default is `{"RootTask", "Task"}`. */
-  nativeTaskStructures: string[];
-  /** Status values satisfying the native status condition. A plain list of
-      strings on the wire, stored exactly as configured; additive to schema
-      version 1, and the documented default is the single `active`. */
-  activeStatuses: string[];
-  /** Settings-declared source assignment: structure id -> RAW Capacities
-      property id whose boolean `true` means "assigned at TDTB level". The
-      property id is opaque and kept exactly as declared; additive to schema
-      version 1, and an absent key means no declarations. */
-  assignedStructures: Record<string, string>;
-  /** Settings-declared read-only Assigned On marker: structure id -> RAW
-      Capacities property id of a date/datetime property set inside Capacities.
-      Per structure, when mapped, an item counts as assigned iff its date (in
-      the app's local timezone) is today or earlier; a future date is not
-      assigned yet. The legacy `assignedStructures` marker is ignored for that
-      structure. Properties are opaque and kept exactly as declared; additive
-      to schema version 1, and an absent key means no declarations. */
-  assignedOnStructures: Record<string, string>;
   /** Read-only structure ids the drawer offers as Active-pull
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
@@ -90,29 +116,26 @@ export interface CapacitiesSettings {
       consumers never handle an absent value, exactly like
       `availableStructures`. */
   declarationDiagnostics: CapacitiesDeclarationDiagnostic[];
+  /** Additive: `1` only when the STORED file is still a schema version 1
+      document, translated in memory for this read. The next save rewrites it
+      (keeping a `.bak-v1-` sibling), so the panel can say so once. Absent on
+      the wire means the stored file is already v2, which projects as null. */
+  migratedFrom: number | null;
 }
 
-/** Full replacement body for the settings save route. */
+/** Full replacement body for the settings save route: the complete editable
+    schema-v2 policy. `version` and the new `revision` are server-owned. */
 export interface CapacitiesSettingsDraft {
   expectedRevision: number;
-  nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
+  /** Always sent on save: the full-replacement route replaces the vocabulary
+      wholesale, so omission would reset it to the documented default. */
+  statuses: CapacitiesStatusVocabulary;
+  /** Always sent on save: omission is a full replacement to no declarations,
+      which would turn every structure off. */
+  types: Record<string, CapacitiesTypeDeclaration>;
+  native: CapacitiesNativePolicy;
+  /** Always sent on save: omission would erase the exclusion set. */
   excluded: string[];
-  /** Round-tripped from the settings read; the drawer owns no editor yet. */
-  activeStructures: string[];
-  /** Always sent on save: omission would make the full-replacement route
-      reset the key to its documented default. */
-  nativeTaskStructures: string[];
-  /** Always sent on save: omission would make the full-replacement route
-      reset the key to its documented default. */
-  activeStatuses: string[];
-  /** Always sent on save: the full-replacement route replaces the
-      declaration map wholesale, so omission would wipe the operator's
-      declared assignment properties. */
-  assignedStructures: Record<string, string>;
-  /** Always sent on save: the full-replacement route replaces the
-      Assigned On map wholesale, so omission would wipe the operator's
-      declared read-only date markers. */
-  assignedOnStructures: Record<string, string>;
 }
 
 /** One per-structure row in the Capacities source mapping record. Property

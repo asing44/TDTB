@@ -49,10 +49,13 @@ export function structureOf(item: AssignedItem): string {
 }
 
 export function hasMapping(cap: CapacitiesSettings, structureId: string): boolean {
-  return (
-    (cap.assignedStructures[structureId] ?? "") !== "" ||
-    (cap.assignedOnStructures[structureId] ?? "") !== ""
-  );
+  const declaration = cap.types[structureId];
+  if (!declaration) return false;
+  if (declaration.mode === "off") return false;
+  if (declaration.mode === "assigned" || declaration.mode === "assignedOn") {
+    return (declaration.property ?? "") !== "";
+  }
+  return true;
 }
 
 const SHORT_ID_AFTER = 24;
@@ -63,15 +66,16 @@ export function structureLabel(cap: CapacitiesSettings, structureId: string): st
   return title && title !== structureId ? title : short;
 }
 
+/** One structure's health for the preview. Schema v2 has ONE rule per type, so
+    "set up but turned off" and "never set up" are the same state: a type with
+    no declaration (or mode `off`) admits nothing, and a property mode with no
+    property picked is not set up yet either. */
 export function structureStatus(cap: CapacitiesSettings, structureId: string): StructureStatus {
   const label = structureLabel(cap, structureId);
   if (!hasMapping(cap, structureId)) {
     return { structureId, label, health: "needs-setup", line: "Not set up yet — its items wait" };
   }
-  if (cap.activeStructures.includes(structureId)) {
-    return { structureId, label, health: "ok", line: "Set up and bringing items in" };
-  }
-  return { structureId, label, health: "off", line: "Set up, but turned off" };
+  return { structureId, label, health: "ok", line: "Set up and bringing items in" };
 }
 
 export function previewRows(

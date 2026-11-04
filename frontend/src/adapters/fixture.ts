@@ -366,34 +366,53 @@ export class FixtureAdapter implements Adapter {
   private refreshJobId = "";
   private refreshJobSeq = 0;
   private capacitiesSettings: CapacitiesSettings = {
-    version: 1,
+    version: 2,
     revision: 0,
     persisted: false,
-    nativeTaskAuto: {
-      activeEnabled: true,
-      dueEnabled: true,
-      deadlineEnabled: true,
-      deadlineHorizonDays: 2,
+    // The shared vocabularies: one open label every declaration inherits
+    // unless it states its own, and the built-in completed set.
+    statuses: {
+      open: ["Active"],
+      completed: ["Completed", "Dropped"],
     },
+    // A plausible schema-v2 document: the five property-gated types use an
+    // Assigned checkbox, Project admits on its status (inheriting the shared
+    // open list), and Task uses the native rules with `statuses: []` — the
+    // date-only decision, which is exactly the null-vs-[] distinction the
+    // projection must not collapse.
+    types: {
+      Continual: { mode: "assigned", property: "assigned-flag", statuses: null },
+      Event: { mode: "assigned", property: "assigned-flag", statuses: null },
+      Press: { mode: "assigned", property: "assigned-flag", statuses: null },
+      Print: { mode: "assigned", property: "assigned-flag", statuses: null },
+      Project: { mode: "active", property: null, statuses: null },
+      Purchase: { mode: "assigned", property: "assigned-flag", statuses: null },
+      Task: { mode: "native", property: null, statuses: [] },
+      "custom-project": { mode: "assignedOn", property: "assigned-on-date", statuses: null },
+    },
+    native: { deadlineHorizonDays: 2 },
     excluded: [],
-    activeStructures: [],
-    nativeTaskStructures: ["RootTask", "Task"],
-    activeStatuses: ["active"],
-    assignedStructures: {},
-    assignedOnStructures: {},
     availableStructures: [
+      "Continual",
+      "Event",
+      "Press",
+      "Print",
+      "Project",
+      "Purchase",
+      "Task",
       "custom-project",
-      "0d194525-c5a1-4af5-bb62-202b83006b5e",
     ],
-    // Deliberately partial: one structure has an observed title and one does
-    // not, so the title-with-fallback-to-id path is exercised rather than
-    // assumed.
+    // Deliberately partial: one structure has an observed title and the rest
+    // fall back to their id, so the title-with-fallback path is exercised
+    // rather than assumed.
     structureTitles: {
-      "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+      "custom-project": "Custom project",
     },
     // No advisory declaration drift in the fixture default: the diagnostics
     // block stays absent unless a test supplies one.
     declarationDiagnostics: [],
+    // The fixture's default file is already schema version 2.
+    migratedFrom: null,
   };
   private calendarSettings: CalendarSettings = {
     version: 1,
@@ -901,16 +920,28 @@ export class FixtureAdapter implements Adapter {
       );
     }
     this.capacitiesSettings = {
-      version: 1,
+      version: 2,
       revision: this.capacitiesSettings.revision + 1,
       persisted: true,
-      nativeTaskAuto: { ...draft.nativeTaskAuto },
+      statuses: {
+        open: [...draft.statuses.open].sort(),
+        completed: [...draft.statuses.completed].sort(),
+      },
+      types: Object.fromEntries(
+        Object.entries(draft.types).map(([structureId, declaration]) => [
+          structureId,
+          {
+            mode: declaration.mode,
+            property: declaration.property,
+            // The tri-state list is stored as sent: null (inherit) and []
+            // (status admission off) must not be collapsed into each other.
+            statuses:
+              declaration.statuses === null ? null : [...declaration.statuses].sort(),
+          },
+        ]),
+      ),
+      native: { deadlineHorizonDays: draft.native.deadlineHorizonDays },
       excluded: [...draft.excluded].sort(),
-      activeStructures: [...draft.activeStructures].sort(),
-      nativeTaskStructures: [...draft.nativeTaskStructures].sort(),
-      activeStatuses: [...draft.activeStatuses].sort(),
-      assignedStructures: { ...draft.assignedStructures },
-      assignedOnStructures: { ...draft.assignedOnStructures },
       availableStructures: [...this.capacitiesSettings.availableStructures],
       // Titles are read-only advisory metadata, never part of the save
       // payload, so a save carries the observed ones through unchanged.
@@ -919,6 +950,9 @@ export class FixtureAdapter implements Adapter {
       // save payload; the fixture keeps the observed list rather than
       // pretending to recompute the published contract.
       declarationDiagnostics: [...this.capacitiesSettings.declarationDiagnostics],
+      // A save rewrites the stored file as schema version 2, so the migration
+      // advisory is cleared by the very save that performs the rewrite.
+      migratedFrom: null,
     };
     return structuredClone(this.capacitiesSettings);
   }
