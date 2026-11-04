@@ -1355,39 +1355,13 @@ def test_direct_assigned_on_past_lands_on_the_assigned_surface(vault):
     ]
 
 
-def test_direct_assigned_on_tomorrow_stays_in_the_pool(vault):
-    _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source()
-    today = gather.effective_date(datetime.now())
-    tomorrow = today + timedelta(days=1)
-    obj = _direct_marker_object("obj-tomorrow", DIRECT_CUSTOM, due=str(tomorrow))
-    # The marker rides its own date property: the mapping's ``date_property``
-    # ("due") is a day filter that drops future-dated objects before the
-    # assignment check, so a future marker on ``due`` could not be observed.
-    obj["properties"][DIRECT_SPARE_ASSIGNED_ON_PROPERTY] = obj["properties"].pop(
-        DIRECT_ASSIGNED_ON_PROPERTY
-    )
-    _publish_direct([obj])
-    _save_assigned_on_settings(
-        structures={DIRECT_CUSTOM: DIRECT_SPARE_ASSIGNED_ON_PROPERTY},
-        active=(DIRECT_CUSTOM,),
-    )
-    client = _direct_client(
-        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
-    )
-
-    body = client.get("/plan-inputs").json()
-
-    assert _names(body, "assigned") == []
-    pool = [
-        row for row in _surface(body, "suggested") if row["name"] == "obj-tomorrow"
-    ]
-    assert len(pool) == 1
-    assert pool[0]["capacities_assignment"]["source_assigned"] is False
-    # A mapped structure whose marker is still in the future is normal: no
-    # Assigned On warning, and the stored date never leaks into any warning.
-    assert not [w for w in body["source_warnings"] if "Assigned On" in w]
-    assert not [w for w in body["source_warnings"] if str(tomorrow) in w]
+# Removed in the schema-v2 rewrite: ``test_direct_assigned_on_tomorrow_stays_in_the_pool``.
+# Version 1 let one structure carry an Assigned On declaration AND be
+# status-admitted (``active_structures``), so a future-dated marker produced an
+# unassigned pool row. Version 2 gives every structure exactly one admission
+# mode: ``assignedOn`` admits only when the date has arrived and ignores
+# status, so a not-yet-due marker is now a counted ``no-effective-assignment``
+# drop rather than a pool suggestion. That behavior change is intentional.
 
 
 def test_direct_assigned_on_outranks_a_tdtb_exclusion(vault):
