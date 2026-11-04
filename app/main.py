@@ -3999,7 +3999,10 @@ def create_app() -> FastAPI:
         ``revision`` are server-owned. The current revision is compared under
         the store lock: a stale ``expected_revision`` is a 409, malformed
         existing storage is a 409, and a lock/read/write failure is a 500 —
-        every failure path preserves the original bytes. The success response
+        every failure path preserves the original bytes. A structure declared
+        in both ``assigned_structures`` and ``assigned_on_structures`` is a 422
+        naming the structure and both property ids: the date would silently
+        win, so the save is refused before any write. The success response
         also carries the same advisory structure metadata as the GET route
         (computed once, from the same machine-local sources) so a client that
         adopts the response as its whole settings state keeps its cached
@@ -4021,6 +4024,24 @@ def create_app() -> FastAPI:
                 assigned_structures=body.assigned_structures,
                 assigned_on_structures=body.assigned_on_structures,
             )
+        except capacities_settings.SettingsDeclarationConflictError as exc:
+            # A structure cannot declare an Assigned checkbox AND an Assigned On
+            # date: the date silently wins, so the checkbox could never admit
+            # anything and a future date would drop the object from the plan.
+            # Refused before any write, so the body can name the structure and
+            # both properties and the stored bytes are untouched.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_settings_declaration_conflict",
+                    "message": " ".join(
+                        conflict.message() for conflict in exc.conflicts
+                    ),
+                    "conflicts": [
+                        conflict.as_dict() for conflict in exc.conflicts
+                    ],
+                },
+            ) from exc
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(
                 status_code=409,

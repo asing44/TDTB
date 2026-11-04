@@ -128,6 +128,77 @@ class SettingsConflictError(SettingsStoreError):
 
 
 @dataclass(frozen=True)
+class DeclarationConflict:
+    """One structure declaring BOTH an ``Assigned`` checkbox and an
+    ``Assigned On`` date.
+
+    The date declaration alone decides ``source_assigned`` for a structure, so
+    the boolean can never read: an object carrying ``Assigned = true`` and a
+    future ``Assigned On`` date silently leaves the plan. Two content-free
+    identifiers and a bounded sentence are all a caller needs to name the
+    problem; no property value or source content is involved.
+    """
+
+    structure_id: str
+    assigned_property: str
+    assigned_on_property: str
+
+    def message(self) -> str:
+        """The one actionable line naming the structure and both properties."""
+        return (
+            f"Capacities structure {self.structure_id!r} declares both an "
+            f"Assigned checkbox (property {self.assigned_property!r}) and an "
+            f"Assigned On date (property {self.assigned_on_property!r}); "
+            "clear one of the two mappings in Settings."
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "structure_id": self.structure_id,
+            "assigned_property": self.assigned_property,
+            "assigned_on_property": self.assigned_on_property,
+        }
+
+
+class SettingsDeclarationConflictError(SettingsStoreError):
+    """A save would persist a contradictory assignment declaration.
+
+    Raised BEFORE any file access, so the save is atomic: the caller's bytes
+    are untouched and the stored revision does not move. The read path stays
+    tolerant — an already-saved or hand-edited contradiction still loads, and
+    the adapter reports it as one bounded warning — so this guard can never
+    lock an owner out of the settings they already own.
+    """
+
+    def __init__(self, conflicts: tuple[DeclarationConflict, ...]) -> None:
+        self.conflicts = conflicts
+        super().__init__(" ".join(conflict.message() for conflict in conflicts))
+
+
+def declaration_conflicts(
+    assigned_structures: Mapping[str, str],
+    assigned_on_structures: Mapping[str, str],
+) -> tuple[DeclarationConflict, ...]:
+    """Every structure id present in BOTH declaration maps, sorted by id.
+
+    Both inputs are already-canonical ``{structure_id: property_id}`` maps, so
+    this is pure set intersection over structure ids and needs no I/O. The
+    property ids are reported as declared: they are opaque provider
+    identifiers, and the pair is what makes the refusal actionable.
+    """
+    return tuple(
+        DeclarationConflict(
+            structure_id=structure_id,
+            assigned_property=assigned_structures[structure_id],
+            assigned_on_property=assigned_on_structures[structure_id],
+        )
+        for structure_id in sorted(
+            set(assigned_structures) & set(assigned_on_structures)
+        )
+    )
+
+
+@dataclass(frozen=True)
 class NativeTaskAutoPolicy:
     """Default-enabled native ``RootTask``/``Task`` Auto toggles.
 
@@ -720,6 +791,14 @@ def save_settings(
     A stale revision raises :class:`SettingsConflictError`; malformed storage
     raises :class:`SettingsFormatError`; both preserve the original bytes. Lock
     and write failures raise and likewise leave the bytes untouched.
+
+    A structure declared in BOTH maps is a contradiction, not a preference:
+    the ``Assigned On`` date alone decides ``source_assigned`` for it, so the
+    boolean could never read and a future date would silently drop the object
+    from the plan. Such a save raises
+    :class:`SettingsDeclarationConflictError` before any file access, naming
+    the structure and both property ids; the stored bytes and revision are
+    untouched and every other input stays exactly as validated above.
     """
     if type(expected_revision) is not int or expected_revision < 0:
         raise ValueError("expected_revision must be a nonnegative integer")
@@ -743,6 +822,15 @@ def save_settings(
     on_declarations = canonical_assignment_declarations(
         assigned_on_structures, key="assigned_on_structures"
     )
+    # A structure may declare an Assigned checkbox OR an Assigned On date,
+    # never both: the date declaration alone decides ``source_assigned``, so
+    # the boolean could never read and an object with ``Assigned = true`` and a
+    # future date would silently leave the plan. Refusing here — before the
+    # lock and before any write — keeps the save atomic; the read path stays
+    # tolerant as the belt-and-braces warning for bytes already on disk.
+    conflicts = declaration_conflicts(declarations, on_declarations)
+    if conflicts:
+        raise SettingsDeclarationConflictError(conflicts)
 
     with _store_lock():
         fh = _acquire_lock_file()

@@ -1247,3 +1247,152 @@ class TestAssignedOnStructures:
             with pytest.raises(ValueError):
                 cs.CapacitiesSettings(assigned_on_structures=declarations)
         assert cs.CapacitiesSettings().assigned_on_structures == {}
+
+
+# ---------------------------------------------------------------------------
+# Contradictory declarations refused at save
+# ---------------------------------------------------------------------------
+# A structure may declare an ``Assigned`` checkbox OR an ``Assigned On`` date.
+# Declaring both is not a preference: the adapter branches on the date first, so
+# the boolean can never read and an object with ``Assigned = true`` plus a
+# future date silently leaves the plan. The save seam therefore refuses the
+# pairing before any file access — atomically, leaving the stored bytes and
+# revision untouched — while the read path stays tolerant so a hand-edited or
+# already-saved contradiction still loads and only warns.
+
+
+class TestContradictoryDeclarations:
+    def test_save_refuses_a_structure_declared_in_both_maps(self, tmp_path):
+        with pytest.raises(cs.SettingsDeclarationConflictError) as excinfo:
+            cs.save_settings(
+                expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            )
+
+        conflicts = excinfo.value.conflicts
+        assert [(c.structure_id, c.assigned_property, c.assigned_on_property)
+                for c in conflicts] == [
+            (
+                PROJECT_STRUCTURE,
+                PROJECT_ASSIGNED_PROPERTY,
+                PROJECT_ASSIGNED_ON_PROPERTY,
+            )
+        ]
+        # Names the structure, both properties, and the required action.
+        message = conflicts[0].message()
+        assert PROJECT_STRUCTURE in message
+        assert PROJECT_ASSIGNED_PROPERTY in message
+        assert PROJECT_ASSIGNED_ON_PROPERTY in message
+        assert "clear one of the two mappings" in message
+        # Nothing was created and nothing was locked: the refusal precedes all
+        # I/O, so no partial write is even possible.
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
+
+    def test_refused_save_preserves_existing_bytes_byte_for_byte(self, tmp_path):
+        cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_structures={
+                PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+            },
+        )
+        before = _bytes()
+        stored_before = cs.read_settings()
+
+        with pytest.raises(cs.SettingsDeclarationConflictError):
+            cs.save_settings(
+                expected_revision=1,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+                    PRESS_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+                },
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            )
+
+        assert _bytes() == before
+        after = cs.read_settings()
+        assert after.settings.revision == stored_before.settings.revision
+        assert after.settings.assigned_structures == {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+        }
+        assert after.settings.assigned_on_structures == {}
+
+    def test_every_conflicting_structure_is_reported_sorted_by_id(self, tmp_path):
+        with pytest.raises(cs.SettingsDeclarationConflictError) as excinfo:
+            cs.save_settings(
+                expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_structures={
+                    PRESS_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+                },
+                assigned_on_structures={
+                    PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
+                    PROJECT_STRUCTURE: ADVENTURE_ASSIGNED_ON_PROPERTY,
+                },
+            )
+
+        assert [c.structure_id for c in excinfo.value.conflicts] == sorted(
+            [PROJECT_STRUCTURE, PRESS_STRUCTURE]
+        )
+
+    def test_one_mapping_per_structure_still_saves(self, tmp_path):
+        saved = cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_structures={
+                PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+            },
+            assigned_on_structures={
+                PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+            },
+        )
+
+        assert saved.assigned_structures == {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+        }
+        assert saved.assigned_on_structures == {
+            PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+        }
+
+    def test_a_stored_contradiction_still_reads_and_only_warns(self, tmp_path):
+        # Belt and braces: bytes already on disk (hand-edited, or written
+        # before this guard existed) must keep loading. The read path is not
+        # the place to refuse — a refusal there would lock the owner out of the
+        # very screen that clears the mapping.
+        _write_json(
+            _valid_payload(
+                assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            )
+        )
+
+        result = cs.read_settings()
+
+        assert result.settings.assigned_structures == {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+        }
+        assert result.settings.assigned_on_structures == {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+        }
+
+    def test_the_error_is_a_store_error_and_not_a_stale_revision_conflict(self):
+        # Callers already branch on ``SettingsConflictError`` (retry after a
+        # re-read); a contradiction is not retryable and must not be mistaken
+        # for one.
+        assert issubclass(cs.SettingsDeclarationConflictError, cs.SettingsStoreError)
+        assert not issubclass(
+            cs.SettingsDeclarationConflictError, cs.SettingsConflictError
+        )

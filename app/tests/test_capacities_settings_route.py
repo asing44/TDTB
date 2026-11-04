@@ -1105,3 +1105,107 @@ class TestAssignedOnStructuresRoute:
 
         assert response.status_code == 409
         assert _settings_bytes() == before
+
+
+class TestContradictoryDeclarationsRoute:
+    """POST /settings/capacities/save refuses a structure declared in BOTH the
+    ``assigned_structures`` boolean map and the ``assigned_on_structures`` date
+    map.
+
+    The date mapping alone decides ``source_assigned``, so the boolean could
+    never read and a future date would silently drop the object from the plan.
+    The route maps the store's refusal to a 422 naming the structure and both
+    property ids, and the stored bytes stay byte-for-byte identical."""
+
+    def test_post_refuses_both_mappings_with_422_and_preserves_bytes(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                }
+            ),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes()
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=1,
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            ),
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["code"] == "capacities_settings_declaration_conflict"
+        # Precise and actionable: the structure, both properties, and what to do.
+        assert detail["message"] == (
+            f"Capacities structure {PROJECT_STRUCTURE!r} declares both an "
+            f"Assigned checkbox (property {PROJECT_ASSIGNED_PROPERTY!r}) and an "
+            f"Assigned On date (property {PROJECT_ASSIGNED_ON_PROPERTY!r}); "
+            "clear one of the two mappings in Settings."
+        )
+        assert detail["conflicts"] == [
+            {
+                "structure_id": PROJECT_STRUCTURE,
+                "assigned_property": PROJECT_ASSIGNED_PROPERTY,
+                "assigned_on_property": PROJECT_ASSIGNED_ON_PROPERTY,
+            }
+        ]
+        # Atomic: no partial write, original bytes intact, revision unmoved.
+        assert _settings_bytes() == before
+        stored = json.loads(before.decode("utf-8"))
+        assert stored["revision"] == 1
+        assert stored["assigned_on_structures"] == {}
+
+    def test_post_refuses_on_a_first_save_without_creating_a_file(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            ),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["conflicts"][0]["structure_id"] == (
+            PROJECT_STRUCTURE
+        )
+        assert not cs.settings_path().exists()
+
+    def test_one_mapping_per_structure_still_saves(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                assigned_on_structures={
+                    PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            ),
+        )
+
+        assert response.status_code == 200
+        settings = response.json()["settings"]
+        assert settings["assigned_structures"] == {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+        }
+        assert settings["assigned_on_structures"] == {
+            PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+        }
