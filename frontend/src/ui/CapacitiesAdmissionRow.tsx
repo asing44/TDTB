@@ -1,47 +1,67 @@
-/* CapacitiesAdmissionRow — ONE admission control per Capacities item type.
+/* CapacitiesAdmissionRow — ONE admission rule per Capacities item type.
 
-   The panel used to ask for two opaque property GUIDs in one section and a
-   separate "bring in Active items" switch in another; a declaration saved
-   with that switch off silently did nothing. This row replaces all of it with
-   one select whose four modes say exactly which draft keys it writes:
+   Schema version 2 gives each type exactly one rule for getting into the plan,
+   so the row is one five-option mode selector plus the two controls a mode may
+   need:
 
-     off         no activeStructures entry, no declaration
-     status      activeStructures entry only
-     assigned    activeStructures entry + assignedStructures[structure]
-     assignedOn  activeStructures entry + assignedOnStructures[structure]
+     off         no declaration at all (the type admits nothing)
+     active      status only — inherits or states its own open names
+     assigned    an `assigned` checkbox property (boolean) must be true
+     assignedOn  an `assignedOn` date property must be today or earlier
+     native      the built-in rules: status-open, due, or deadline in window
 
-   Choosing either Assigned mode shows a picker limited to properties of the
-   matching kind. The picker is fed by the same provider discovery the source
-   mapping editor uses; when no schema has been looked up yet the row shows
-   the declared id as plain text with a "Look up properties" button rather
-   than an empty picker. */
+   The property picker appears only for the two property modes and offers only
+   properties of the matching kind (boolean for Assigned, date for Assigned On),
+   fed by the same provider discovery the source mapping editor uses. The status
+   control appears only for the two status modes and has three states that map
+   one-to-one onto the wire's tri-state:
 
-import type { CapacitiesCatalogProperty } from "../model/types";
-import type { CapacitiesSettingsDraft } from "../model/types";
+     Inherit the shared list  -> statuses: null
+     Don't use status         -> statuses: []
+     Custom names             -> statuses: ["In Progress", ...]
+
+   `null` and `[]` mean opposite things to the evaluator (inherit vs. no status
+   admission at all), so the row never collapses one into the other. */
+
+import { useState } from "preact/hooks";
+import type {
+  CapacitiesCatalogProperty,
+  CapacitiesSettingsDraft,
+  CapacitiesTypeDeclaration,
+  CapacitiesTypeMode,
+} from "../model/types";
 import "./capacities-admission.css";
 
-export type CapacitiesAdmissionMode = "off" | "status" | "assigned" | "assignedOn";
+export type CapacitiesAdmissionMode = CapacitiesTypeMode;
 
 export const ADMISSION_MODES: ReadonlyArray<{
   value: CapacitiesAdmissionMode;
   label: string;
 }> = [
   { value: "off", label: "Off" },
-  { value: "status", label: "Status only" },
-  { value: "assigned", label: "Requires Assigned checkbox" },
-  { value: "assignedOn", label: "Requires Assigned date" },
+  { value: "active", label: "Active by status" },
+  { value: "assigned", label: "Assigned checkbox" },
+  { value: "assignedOn", label: "Assigned On date" },
+  { value: "native", label: "Native task rules" },
 ];
 
 /** Kinds discovery reports for a boolean "assigned" checkbox. */
 const CHECKBOX_KINDS = new Set(["boolean", "checkbox"]);
-/** Kinds discovery reports for a read-only "Assigned to me" date. */
+/** Kinds discovery reports for a read-only "Assigned On" date. */
 const DATE_KINDS = new Set(["date", "datetime"]);
 
-export function isRequiresMode(mode: CapacitiesAdmissionMode): boolean {
+/** Modes whose declaration is meaningless without a picked property. */
+export function isPropertyMode(mode: CapacitiesAdmissionMode): boolean {
   return mode === "assigned" || mode === "assignedOn";
 }
 
-/** The properties the picker may offer for a mode, in discovery order. */
+/** Modes whose decision consults the status condition at all. */
+export function usesStatus(mode: CapacitiesAdmissionMode): boolean {
+  return mode === "active" || mode === "native";
+}
+
+/** The properties the picker may offer for a mode, in discovery order. A
+    non-property mode offers nothing: its decision reads no property. */
 export function propertiesForMode(
   properties: CapacitiesCatalogProperty[] | null,
   mode: CapacitiesAdmissionMode,
@@ -52,48 +72,81 @@ export function propertiesForMode(
   return properties.filter((property) => kinds.has((property.type ?? "").toLowerCase()));
 }
 
-/** The mode the saved draft already describes for one structure. A
-    declaration wins over the plain inclusion flag: the flag alone cannot say
-    which property the operator meant. */
+/** The declaration the draft holds for one structure. An absent entry is the
+    documented `off` default — never a missing editor state. */
+export function declarationOf(
+  draft: CapacitiesSettingsDraft,
+  structureId: string,
+): CapacitiesTypeDeclaration {
+  return draft.types[structureId] ?? { mode: "off", property: null, statuses: null };
+}
+
+/** The mode the saved draft already describes for one structure. */
 export function admissionModeOf(
   draft: CapacitiesSettingsDraft,
   structureId: string,
 ): CapacitiesAdmissionMode {
-  if (draft.assignedOnStructures[structureId]) return "assignedOn";
-  if (draft.assignedStructures[structureId]) return "assigned";
-  return draft.activeStructures.includes(structureId) ? "status" : "off";
+  return declarationOf(draft, structureId).mode;
 }
 
-/** One admission change, written as exactly the draft keys the mode owns. Any
-    Requires mode also switches the structure on, which is the whole point of
-    collapsing the old switch and the declarations into one control. */
+/** One mode change. The property travels with the mode so switching between the
+    two property modes keeps the operator's pick when it still applies, and a
+    property is never sent for a mode that must not declare one. The statuses
+    tri-state is untouched: switching a type's rule is not a statement about
+    its status names. */
 export function applyAdmissionMode(
   draft: CapacitiesSettingsDraft,
   structureId: string,
   mode: CapacitiesAdmissionMode,
   propertyId: string,
 ): CapacitiesSettingsDraft {
-  const activeStructures =
-    mode === "off"
-      ? draft.activeStructures.filter((value) => value !== structureId)
-      : draft.activeStructures.includes(structureId)
-        ? [...draft.activeStructures]
-        : [...draft.activeStructures, structureId].sort();
-  const assignedStructures = { ...draft.assignedStructures };
-  const assignedOnStructures = { ...draft.assignedOnStructures };
-  if (mode === "assigned") {
-    delete assignedOnStructures[structureId];
-    if (propertyId === "") delete assignedStructures[structureId];
-    else assignedStructures[structureId] = propertyId;
-  } else if (mode === "assignedOn") {
-    delete assignedStructures[structureId];
-    if (propertyId === "") delete assignedOnStructures[structureId];
-    else assignedOnStructures[structureId] = propertyId;
-  } else {
-    delete assignedStructures[structureId];
-    delete assignedOnStructures[structureId];
-  }
-  return { ...draft, activeStructures, assignedStructures, assignedOnStructures };
+  const current = declarationOf(draft, structureId);
+  const property = isPropertyMode(mode) && propertyId !== "" ? propertyId : null;
+  return {
+    ...draft,
+    types: { ...draft.types, [structureId]: { mode, property, statuses: current.statuses } },
+  };
+}
+
+/** The three states the status control offers. */
+export type CapacitiesStatusChoice = "inherit" | "none" | "custom";
+
+export function statusChoiceOf(declaration: CapacitiesTypeDeclaration): CapacitiesStatusChoice {
+  if (declaration.statuses === null) return "inherit";
+  if (declaration.statuses.length === 0) return "none";
+  return "custom";
+}
+
+/** One status-control change, written as exactly the tri-state the wire needs:
+    `null` (inherit the shared list), `[]` (status admission off for this type,
+    so only its date/checkbox/native conditions decide), or the custom names. */
+export function applyStatusChoice(
+  draft: CapacitiesSettingsDraft,
+  structureId: string,
+  choice: CapacitiesStatusChoice,
+  names: string[] = [],
+): CapacitiesSettingsDraft {
+  const current = declarationOf(draft, structureId);
+  const statuses = choice === "inherit" ? null : choice === "none" ? [] : [...names];
+  return {
+    ...draft,
+    types: { ...draft.types, [structureId]: { ...current, statuses } },
+  };
+}
+
+/** Edit the custom name list of a declaration that already states its own
+    names. Kept as a separate helper so adding a name never flips the state of a
+    declaration that inherits or disables status admission. */
+export function applyCustomStatusNames(
+  draft: CapacitiesSettingsDraft,
+  structureId: string,
+  names: string[],
+): CapacitiesSettingsDraft {
+  const current = declarationOf(draft, structureId);
+  return {
+    ...draft,
+    types: { ...draft.types, [structureId]: { ...current, statuses: [...names] } },
+  };
 }
 
 /** Shortens an id only when there is no title to show: a raw 36-char provider
@@ -106,45 +159,53 @@ export function CapacitiesAdmissionRow({
   structureId,
   title,
   mode,
-  declaredPropertyId,
+  propertyId,
   properties,
   discovering,
-  declaredButOff,
+  statusChoice,
+  customStatuses,
+  openStatuses,
   onModeChange,
   onPropertyChange,
+  onStatusChoiceChange,
+  onCustomStatusesChange,
   onLookUp,
 }: {
   structureId: string;
   title: string | null;
   mode: CapacitiesAdmissionMode;
-  declaredPropertyId: string;
+  /** The declaration's raw property id, or "" when none is picked yet. */
+  propertyId: string;
   /** The discovered properties for this structure, or null when the space's
       schema has not been looked up yet. */
   properties: CapacitiesCatalogProperty[] | null;
   discovering: boolean;
-  /** A saved declaration exists while the structure is not switched on. */
-  declaredButOff: boolean;
+  statusChoice: CapacitiesStatusChoice;
+  customStatuses: string[];
+  /** The shared open names an "inherit" declaration resolves to. */
+  openStatuses: string[];
   onModeChange: (mode: CapacitiesAdmissionMode) => void;
   onPropertyChange: (propertyId: string) => void;
+  onStatusChoiceChange: (choice: CapacitiesStatusChoice) => void;
+  onCustomStatusesChange: (names: string[]) => void;
   onLookUp: () => void;
 }) {
   const label = title ?? displayIdOf(structureId);
   const choices = propertiesForMode(properties, mode);
   const declaredMissing =
-    declaredPropertyId !== "" &&
-    properties !== null &&
-    !choices.some((property) => property.propertyId === declaredPropertyId);
-  const hasDeclaredOption = declaredPropertyId !== "" && declaredMissing;
+    propertyId !== "" && properties !== null && !choices.some((p) => p.propertyId === propertyId);
+  const hasDeclaredOption = propertyId !== "" && declaredMissing;
+  const needsProperty = isPropertyMode(mode) && propertyId === "";
 
   return (
-    <div class="capacities-object-row capacities-admission" data-structure={structureId}>
+    <div class="capacities-object-row capacities-admission" data-structure={structureId} data-mode={mode}>
       <div class="capacities-object-row__identity">
         {title !== null && <strong>{title}</strong>}
         <code>{displayIdOf(structureId)}</code>
       </div>
       <div class="capacities-admission__control">
         <label class="capacities-admission__mode">
-          <span class="capacities-admission__label">Admission</span>
+          <span class="capacities-admission__label">Rule</span>
           <select
             aria-label={`Admission for ${label}`}
             value={mode}
@@ -159,12 +220,16 @@ export function CapacitiesAdmissionRow({
             ))}
           </select>
         </label>
+        {/* One line so the two status modes are not read as the same rule. */}
+        <span class="capacities-admission__help">
+          Active uses the status only; Native also uses the due date and the deadline.
+        </span>
 
-        {isRequiresMode(mode) &&
+        {isPropertyMode(mode) &&
           (properties === null ? (
             <div class="capacities-admission__pending">
               <span class="capacities-admission__label">
-                {declaredPropertyId === "" ? "No property picked yet" : declaredPropertyId}
+                {propertyId === "" ? "No property picked yet" : propertyId}
               </span>
               <button
                 type="button"
@@ -179,20 +244,18 @@ export function CapacitiesAdmissionRow({
           ) : (
             <label class="capacities-admission__mode">
               <span class="capacities-admission__label">
-                {mode === "assigned" ? "Assigned checkbox property" : "Assigned date property"}
+                {mode === "assigned" ? "Assigned checkbox property" : "Assigned On date property"}
               </span>
               <select
                 aria-label={`Assignment property for ${label}`}
                 class={declaredMissing ? "capacities-admission__pick--missing" : undefined}
-                value={declaredPropertyId}
-                onChange={(e) =>
-                  onPropertyChange((e.currentTarget as HTMLSelectElement).value)
-                }
+                value={propertyId}
+                onChange={(e) => onPropertyChange((e.currentTarget as HTMLSelectElement).value)}
               >
                 <option value="">No property</option>
                 {hasDeclaredOption && (
-                  <option value={declaredPropertyId} class="capacities-admission__missing">
-                    {`Missing in Capacities — pick another (${declaredPropertyId})`}
+                  <option value={propertyId} class="capacities-admission__missing">
+                    {`Missing in Capacities — pick another (${propertyId})`}
                   </option>
                 )}
                 {choices.map((property) => (
@@ -203,8 +266,8 @@ export function CapacitiesAdmissionRow({
               </select>
               {declaredMissing && (
                 <span class="capacities-admission__warn" role="status">
-                  Saved property {declaredPropertyId} is missing in Capacities. Pick another, or
-                  choose No property to clear it.
+                  Saved property {propertyId} is missing in Capacities. Pick another, or choose No
+                  property to clear it.
                 </span>
               )}
               {!declaredMissing && choices.length === 0 && (
@@ -216,16 +279,117 @@ export function CapacitiesAdmissionRow({
             </label>
           ))}
 
-        {declaredButOff && (
+        {isPropertyMode(mode) && needsProperty && (
           <span class="capacities-admission__warn" role="status">
-            This type has a saved declaration but is not switched on. Pick the same Requires mode
-            again to turn it on.
+            Pick a property for this type, or choose another rule.
           </span>
         )}
-        <span class="capacities-admission__help">
-          Switching a type to a Requires mode also turns it on.
-        </span>
+
+        {usesStatus(mode) && (
+          <CapacitiesStatusControl
+            label={label}
+            choice={statusChoice}
+            customStatuses={customStatuses}
+            openStatuses={openStatuses}
+            onChoiceChange={onStatusChoiceChange}
+            onNamesChange={onCustomStatusesChange}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+/** The tri-state status control. It is rendered only for the two status modes,
+    because the other modes never consult status and an editor there would
+    promise something the evaluator ignores. */
+function CapacitiesStatusControl({
+  label,
+  choice,
+  customStatuses,
+  openStatuses,
+  onChoiceChange,
+  onNamesChange,
+}: {
+  label: string;
+  choice: CapacitiesStatusChoice;
+  customStatuses: string[];
+  openStatuses: string[];
+  onChoiceChange: (choice: CapacitiesStatusChoice) => void;
+  onNamesChange: (names: string[]) => void;
+}) {
+  const [draftName, setDraftName] = useState("");
+  const addName = () => {
+    const value = draftName.trim();
+    setDraftName("");
+    if (value === "" || customStatuses.includes(value)) return;
+    onNamesChange([...customStatuses, value].sort());
+  };
+  return (
+    <div class="capacities-admission__status">
+      <label class="capacities-admission__mode">
+        <span class="capacities-admission__label">Status names</span>
+        <select
+          aria-label={`Status names for ${label}`}
+          value={choice}
+          onChange={(e) =>
+            onChoiceChange((e.currentTarget as HTMLSelectElement).value as CapacitiesStatusChoice)
+          }
+        >
+          <option value="inherit">Inherit the shared list</option>
+          <option value="none">Don't use status (date or checkbox only)</option>
+          <option value="custom">Custom names</option>
+        </select>
+      </label>
+      {choice === "inherit" && (
+        <span class="capacities-admission__help">
+          {openStatuses.length === 0
+            ? "The shared open list is empty, so status admits nothing."
+            : `Uses your shared open list: ${openStatuses.join(", ")}.`}
+        </span>
+      )}
+      {choice === "none" && (
+        <span class="capacities-admission__help">
+          Status is ignored for this type; only its date or checkbox rule decides.
+        </span>
+      )}
+      {choice === "custom" && (
+        <div class="capacities-admission__names">
+          {customStatuses.length === 0 ? (
+            <span class="capacities-admission__warn" role="status">
+              No names yet, so status admits nothing for this type.
+            </span>
+          ) : (
+            <ul class="capacities-admission__names-list">
+              {customStatuses.map((name) => (
+                <li key={name}>
+                  <code>{name}</code>
+                  <button
+                    type="button"
+                    class="btn"
+                    aria-label={`Remove status ${name} from ${label}`}
+                    onClick={() => onNamesChange(customStatuses.filter((value) => value !== name))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div class="capacities-admission__names-add">
+            <input
+              type="text"
+              aria-label={`Add a status name for ${label}`}
+              placeholder="e.g. In Progress"
+              value={draftName}
+              onInput={(e) => setDraftName((e.currentTarget as HTMLInputElement).value)}
+            />
+            <button type="button" class="btn" disabled={draftName.trim() === ""} onClick={addName}>
+              Add name
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

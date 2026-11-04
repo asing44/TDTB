@@ -115,6 +115,28 @@
 .settings-hub__attention-list code { overflow-wrap: anywhere; }
 .capacities-settings__concepts { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; color: var(--t-muted); }
 .capacities-settings__concepts b { color: var(--t-text); font-weight: 600; }
+/* One-rule-per-type vocabulary (open + completed names) and the migration
+   advisory. Theme tokens only; the two-column grid collapses to one column in
+   the narrow drawer. */
+.capacities-settings__migration {
+  margin: 0; padding: 6px 10px; font-size: 12px; color: var(--t-text);
+  border-left: 3px solid var(--t-muted); background: var(--t-surface-2); border-radius: 8px;
+}
+.capacities-settings__vocabulary {
+  display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.capacities-settings__vocabulary h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.capacities-admission__status { display: grid; gap: 4px; min-width: 0; }
+.capacities-admission__names { display: grid; gap: 4px; min-width: 0; }
+.capacities-admission__names-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.capacities-admission__names-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.capacities-admission__names-list code { overflow-wrap: anywhere; }
+.capacities-admission__names-add { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.capacities-admission__names-add input {
+  flex: 1 1 120px; min-width: 0; min-height: 32px; padding: 4px 8px;
+  border: 0.5px solid var(--t-border); border-radius: var(--radius-sm);
+  background: var(--t-surface); color: var(--t-text); font: inherit; font-size: 12px;
+}
 /* Saved-mapping advisories: one compact, non-blocking notice listing the
    declarations the last published Capacities contract cannot resolve. Reuses
    the capacities-rule__notice frame and the chip--warn skin; only the list
