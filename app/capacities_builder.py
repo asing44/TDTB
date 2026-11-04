@@ -1337,6 +1337,10 @@ class DirectIntakeRead:
     is stamped with the installed generation. ``objects`` holds one
     projection-ready payload per member whose cached content read cleanly, and
     ``unreadable`` counts the members whose content is missing or unreadable.
+    ``warnings`` holds the generation's own coverage diagnostics (a configured
+    type with no listed member, cached objects the generation does not account
+    for, cached objects whose type moved since the last Refresh), so the intake
+    can surface them instead of leaving the gap unexplained.
     Nothing here reads the credential, builds a client, or calls the provider.
     """
 
@@ -1347,6 +1351,7 @@ class DirectIntakeRead:
     structures: Any
     objects: tuple[dict[str, Any], ...]
     unreadable: int
+    warnings: tuple[str, ...] = ()
 
 
 def read_direct_intake() -> DirectIntakeRead | None:
@@ -1361,10 +1366,20 @@ def read_direct_intake() -> DirectIntakeRead | None:
         return None
     settings = read_settings().settings
     store = build_refresh_state(record.space_id)
+    mappings = _resolve_assigned_structures(
+        record.to_mappings(),
+        settings.assigned_structures,
+        settings.assigned_on_structures,
+    )
     snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
     structures = None
     objects: list[dict[str, Any]] = []
     unreadable = 0
+    #: Cached reads whose stored ``structureId`` disagrees with the type key the
+    #: generation published them under, i.e. the object changed type upstream
+    #: and its content would be projected through the old type's mapping.
+    retargeted = 0
+    warnings: tuple[str, ...] = ()
     if snapshot is not None:
         contract = store.load_structure_contract(snapshot.scope_key)
         structures = contract.structures if contract is not None else None
@@ -1373,21 +1388,31 @@ def read_direct_intake() -> DirectIntakeRead | None:
             if cached is None:
                 unreadable += 1
                 continue
+            cached_type = cached.content.get("structureId")
+            if isinstance(cached_type, str) and cached_type != member.type_key:
+                retargeted += 1
             objects.append(
                 {"id": member.object_id, "structureId": member.type_key, **cached.content}
             )
+        warnings = tuple(
+            capacities_refresh.generation_coverage_warnings(
+                type_keys=[mapping.structure_id for mapping in mappings],
+                member_type_keys=[member.type_key for member in snapshot.members],
+                cached_objects=store.object_count(),
+                generation_objects=len(snapshot.members) - unreadable,
+                retargeted=retargeted,
+                structures_payload=structures,
+            )
+        )
     return DirectIntakeRead(
         space_id=record.space_id,
-        mappings=_resolve_assigned_structures(
-            record.to_mappings(),
-            settings.assigned_structures,
-            settings.assigned_on_structures,
-        ),
+        mappings=mappings,
         settings=settings,
         snapshot=snapshot,
         structures=structures,
         objects=tuple(objects),
         unreadable=unreadable,
+        warnings=warnings,
     )
 
 

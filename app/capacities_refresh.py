@@ -50,7 +50,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 try:  # POSIX advisory locks
     import fcntl as _fcntl
@@ -655,6 +655,82 @@ def retained_scope_warnings(
     return [warning for warning in warnings if warning]
 
 
+def generation_coverage_warnings(
+    *,
+    type_keys: Iterable[str],
+    member_type_keys: Iterable[str],
+    cached_objects: int,
+    generation_objects: int,
+    retargeted: int = 0,
+    structures_payload: Any = None,
+) -> list[str]:
+    """Diagnostics for a published generation the owner's edits left gaps in.
+
+    Three owner-caused states are invisible in the projection itself, so they
+    are stated once each instead of being silently absorbed:
+
+    * a configured type with ZERO members in the published generation — every
+      object of that type stops being plannable, and nothing in the rows says
+      why;
+    * cached objects the generation does not account for (``cached_objects``
+      minus ``generation_objects``) — stale content can outnumber the members;
+    * ``retargeted`` cached objects whose stored ``structureId`` disagrees with
+      the generation's type key, which would otherwise be projected through
+      another type's mapping without a word.
+
+    Pure and local: the caller supplies counts it already holds, so a warning
+    costs no provider read. Lines carry a structure label, a count, and the
+    Refresh hint only — never an object title or a property value. A clean
+    generation returns ``[]``.
+    """
+    present = {key for key in member_type_keys if isinstance(key, str) and key}
+    warnings: list[str] = []
+    for type_key in sorted({
+        key for key in type_keys if isinstance(key, str) and key
+    }):
+        if type_key in present:
+            continue
+        label = capacities_adapter.structure_label(structures_payload, type_key)
+        warnings.append(
+            f"Capacities type {label!r}: no objects in the published "
+            "generation; Refresh to re-list it."
+        )
+    orphans = int(cached_objects) - int(generation_objects)
+    if orphans > 0:
+        warnings.append(
+            f"{orphans} cached Capacities objects are not in the published "
+            "generation; Refresh to reconcile."
+        )
+    if int(retargeted) > 0:
+        warnings.append(
+            f"{int(retargeted)} cached Capacities objects changed type since "
+            "the last Refresh; Refresh to reconcile."
+        )
+    return warnings
+
+
+def _generation_object_count(
+    store: Any,
+    snapshot: refresh_state.CompleteSnapshot,
+    listed_types: set[str],
+) -> int:
+    """How many of a published generation's members the cache backs.
+
+    Every member of a type this run listed was read successfully (an unreadable
+    object fails the run before installation), so those members are cached. A
+    retained member keeps its dated membership from the prior generation and is
+    counted only while its cached object is still present, so an evicted file
+    reads as an orphan instead of disappearing into the difference.
+    """
+    count = 0
+    for member in snapshot.members:
+        if member.type_key in listed_types or store.contains(
+            member.object_id, member.type_key
+        ):
+            count += 1
+    return count
+
+
 class RefreshCoordinator:
     """The persisted single-flight Refresh/Rescan job coordinator."""
 
@@ -1193,6 +1269,10 @@ class RefreshCoordinator:
         self._progress_field("to_read", int(to_read))
         merged: list[dict[str, Any]] = []
         unreadable = False
+        #: Cached reads whose stored ``structureId`` disagrees with the type key
+        #: this run listed them under: a re-typed object, which the projection
+        #: would otherwise map with another type's property mapping.
+        retargeted = 0
         for type_key in listing_types:
             for row in rows_by_type[type_key]:
                 if self.cancel_event.is_set():
@@ -1213,6 +1293,9 @@ class RefreshCoordinator:
                 except Exception:  # noqa: BLE001 — one unreadable object
                     unreadable = True
                     continue
+                cached_type = _text(content.get("structureId"))
+                if cached_type and cached_type != type_key:
+                    retargeted += 1
                 merged.append({**row, **content})
                 if fresh:
                     # Only an actual provider read advances the read counter, so
@@ -1280,6 +1363,24 @@ class RefreshCoordinator:
                 retained_member_counts,
                 structures_payload=structures_payload,
                 mapped_structure_ids={m.structure_id for m in self.mappings},
+            )
+        )
+        # The generation's own coverage, in the same vocabulary: a configured
+        # type with no listed member, cached objects the generation does not
+        # account for, and cached objects whose type moved since the last
+        # Refresh. Counts come from the generation just installed and the run's
+        # own reads, so no provider call is added and no object content is
+        # printed.
+        warnings.extend(
+            generation_coverage_warnings(
+                type_keys=configured_types,
+                member_type_keys=[m.type_key for m in snapshot.members],
+                cached_objects=self.store.object_count(),
+                generation_objects=_generation_object_count(
+                    self.store, snapshot, set(listing_types)
+                ),
+                retargeted=retargeted,
+                structures_payload=structures_payload,
             )
         )
         self._finish("complete", "published", warnings)
