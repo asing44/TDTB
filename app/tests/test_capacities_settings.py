@@ -1,9 +1,10 @@
-"""Public-interface tests for the vault-scoped Capacities settings store.
+"""Public-interface tests for the Capacities settings store (schema version 2).
 
 Everything here is local and fake: no provider, credential, network, or live
-source is touched. The tests drive only ``capacities_settings``' public surface
-(``read_settings`` / ``save_settings`` / the strict model) plus its path
-helpers.
+source is touched. The tests drive only ``capacities_settings``' public
+surface (``read_settings`` / ``save_settings`` / the strict model) plus its
+path helpers. Version-1 reading and the migration backup are covered by
+``test_capacities_settings_v2.py``.
 """
 from __future__ import annotations
 
@@ -23,9 +24,8 @@ SPACE = "space-1"
 NATIVE = f"capacities:{SPACE}:RootTask:task-1"
 CUSTOM = f"capacities:{SPACE}:custom-project:project-1"
 
-#: Documented defaults for the two additive version-1 admission inputs.
-DEFAULT_NATIVE_STRUCTURES = ["RootTask"]
-DEFAULT_ACTIVE_STATUSES = ["active"]
+PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+PROJECT_PROPERTY = "f779f78a-3b1e-4a2c-9f5d-6a0f0e1d2c3b"
 
 
 def _write_raw(text: str) -> Path:
@@ -45,23 +45,25 @@ def _bytes() -> bytes:
 
 def _valid_payload(**overrides) -> dict:
     payload = {
-        "version": 1,
+        "version": 2,
         "revision": 0,
-        "native_task_auto": {
-            "active_enabled": True,
-            "due_enabled": True,
-            "deadline_enabled": True,
-            "deadline_horizon_days": 2,
-        },
+        "statuses": {"open": ["active"], "completed": ["Completed", "Dropped"]},
+        "types": {},
+        "native": {"deadline_horizon_days": 2},
         "excluded": {},
-        "active_structures": {},
     }
     payload.update(overrides)
     return payload
 
 
-def _default_policy() -> cs.NativeTaskAutoPolicy:
-    return cs.NativeTaskAutoPolicy()
+def _saved(**kwargs):
+    kwargs.setdefault("expected_revision", 0)
+    return cs.save_settings(**kwargs)
+
+
+def _validated(**kwargs):
+    """Validate save inputs without touching a file (validation is pre-I/O)."""
+    return cs.save_settings(expected_revision=0, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +72,10 @@ def _default_policy() -> cs.NativeTaskAutoPolicy:
 
 
 class TestPathsAndDefault:
+    def test_schema_version_is_two(self):
+        assert cs.SCHEMA_VERSION == 2
+
     def test_paths_derive_only_from_app_home(self, tmp_path):
-        """The store is machine-local: both paths derive only from the app
-        home."""
         assert cs.settings_path() == app_config.state_dir() / "capacities-settings.json"
         assert cs.lock_path() == app_config.state_dir() / "capacities-settings.lock"
         assert cs.settings_path().is_relative_to(app_config.state_dir())
@@ -82,24 +85,22 @@ class TestPathsAndDefault:
         result = cs.read_settings()
 
         assert result.persisted is False
+        assert result.source_version is None
         assert result.settings.revision == 0
-        policy = result.settings.native_task_auto
-        assert policy.active_enabled is True
-        assert policy.due_enabled is True
-        assert policy.deadline_enabled is True
-        assert policy.deadline_horizon_days == 2
+        assert result.settings.statuses.open == frozenset({"active"})
+        assert result.settings.statuses.completed == frozenset(
+            {"Completed", "Dropped"}
+        )
+        assert result.settings.native.deadline_horizon_days == 2
+        assert result.settings.types == {}
         assert result.settings.excluded == frozenset()
         assert not cs.settings_path().exists()
         assert not cs.lock_path().exists()
 
     def test_default_settings_match_the_persisted_shape(self, tmp_path):
         result = cs.read_settings()
-        expected = _valid_payload()
-        expected["native_task_structures"] = DEFAULT_NATIVE_STRUCTURES
-        expected["active_statuses"] = DEFAULT_ACTIVE_STATUSES
-        expected["assigned_structures"] = {}
-        expected["assigned_on_structures"] = {}
-        assert result.settings.as_dict() == expected
+
+        assert result.settings.as_dict() == _valid_payload()
 
     def test_vault_isolation(self, tmp_path, monkeypatch):
         """S1: the store is machine-local, so isolation is by app home
@@ -107,11 +108,7 @@ class TestPathsAndDefault:
         home_a = tmp_path / "home-a"
         home_b = tmp_path / "home-b"
         monkeypatch.setenv("TDTB_HOME", str(home_a))
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[NATIVE],
-        )
+        _saved(excluded=[NATIVE])
         assert cs.read_settings().persisted is True
         assert cs.read_settings().settings.excluded == frozenset({NATIVE})
 
@@ -126,198 +123,144 @@ class TestPathsAndDefault:
 
 class TestRoundTrip:
     def test_save_round_trips_across_reads(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=cs.NativeTaskAutoPolicy(
-                active_enabled=False,
-                due_enabled=True,
-                deadline_enabled=False,
-                deadline_horizon_days=7,
-            ),
-            excluded=[NATIVE, CUSTOM],
+        saved = _saved(
+            statuses={"open": ["In Progress"], "completed": ["Completed"]},
+            types={
+                "RootTask": {"mode": "native", "statuses": []},
+                PROJECT_STRUCTURE: {
+                    "mode": "assigned",
+                    "property": PROJECT_PROPERTY,
+                },
+            },
+            native={"deadline_horizon_days": 14},
+            excluded=[NATIVE],
         )
-
-        assert saved.revision == 1
-        assert saved.excluded == frozenset({NATIVE, CUSTOM})
 
         result = cs.read_settings()
+
         assert result.persisted is True
+        assert result.source_version == 2
         assert result.settings == saved
-        assert result.settings.native_task_auto.deadline_horizon_days == 7
-        assert result.settings.native_task_auto.active_enabled is False
-        assert result.settings.native_task_auto.deadline_enabled is False
-
-    def test_persisted_file_has_exactly_the_versioned_shape(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[NATIVE],
+        assert result.settings.statuses.open == frozenset({"In Progress"})
+        assert result.settings.native.deadline_horizon_days == 14
+        assert result.settings.excluded == frozenset({NATIVE})
+        assert result.settings.types["RootTask"].statuses == ()
+        assert (
+            result.settings.types[PROJECT_STRUCTURE].property_id == PROJECT_PROPERTY
         )
+
+    def test_written_bytes_are_sorted_and_deterministic(self, tmp_path):
+        _saved(types={"zeta": {"mode": "active"}, "alpha": {"mode": "off"}})
+
         data = json.loads(_bytes().decode("utf-8"))
 
-        assert data == {
-            "version": 1,
-            "revision": 1,
-            "native_task_auto": {
-                "active_enabled": True,
-                "due_enabled": True,
-                "deadline_enabled": True,
-                "deadline_horizon_days": 2,
-            },
-            "excluded": {NATIVE: True},
-            "active_structures": {},
-            "native_task_structures": DEFAULT_NATIVE_STRUCTURES,
-            "active_statuses": DEFAULT_ACTIVE_STATUSES,
-            "assigned_structures": {},
-            "assigned_on_structures": {},
+        assert list(data["types"]) == ["alpha", "zeta"]
+        assert data["types"]["alpha"] == {
+            "mode": "off",
+            "property": None,
+            "statuses": None,
         }
+        assert data["statuses"]["completed"] == ["Completed", "Dropped"]
 
-    def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=cs.NativeTaskAutoPolicy(
-                active_enabled=False, due_enabled=False, deadline_enabled=False,
-                deadline_horizon_days=5,
-            ),
-            excluded=[NATIVE],
-        )
-        seam = saved.to_assignment_settings()
-
-        assert seam.excluded_identities == frozenset({NATIVE})
-        assert seam.deadline_horizon_days == 5
-        assert seam.active_enabled is False
-        assert seam.due_enabled is False
-        assert seam.deadline_enabled is False
-
-    def test_large_horizon_round_trips_without_an_arbitrary_cap(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=cs.NativeTaskAutoPolicy(deadline_horizon_days=10**12),
-            excluded=[],
-        )
-        assert cs.read_settings().settings == saved
-        assert saved.native_task_auto.deadline_horizon_days == 10**12
-
-    def test_exclusion_keys_are_written_sorted_and_deterministic(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[CUSTOM, NATIVE],
-        )
-        data = json.loads(_bytes().decode("utf-8"))
-        assert list(data["excluded"]) == sorted([CUSTOM, NATIVE])
+    def test_constructed_model_is_strict(self):
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(revision=-1)
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(revision=True)
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(excluded=["task-1"])
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(native={"deadline_horizon_days": 2})
+        with pytest.raises(ValueError):
+            cs.NativePolicy(deadline_horizon_days=True)
+        with pytest.raises(ValueError):
+            cs.NativePolicy(deadline_horizon_days=-1)
+        with pytest.raises(ValueError):
+            cs.StatusVocabulary(open=[""])
+        with pytest.raises(ValueError):
+            cs.StatusVocabulary(open=["active", "active"])
 
 
 # ---------------------------------------------------------------------------
-# Canonical identity rejection
+# Canonical identity
 # ---------------------------------------------------------------------------
 
 
 class TestCanonicalIdentity:
-    def test_canonical_identity_round_trips(self):
-        assert cs.canonical_exclusion_identity(NATIVE) == NATIVE
-        assert cs.canonical_exclusion_identity(CUSTOM) == CUSTOM
-
     @pytest.mark.parametrize(
-        "value",
-        [
-            "task-1",                                   # bare id
-            "Write brief",                              # title
-            f"  {NATIVE}  ",                            # whitespace alias
-            f"capacities:{SPACE}:RootTask: task-1",     # inner whitespace
-            f"Capacities:{SPACE}:RootTask:task-1",      # non-canonical casing
-            "todoist:1:2:3",                            # wrong source
-            f"capacities:{SPACE}:RootTask",             # missing component
-            "",
-        ],
+        "bad",
+        ["", "task-1", "capacities:space-1:RootTask", NATIVE + " ", " " + NATIVE],
     )
-    def test_non_canonical_identities_are_rejected(self, value):
+    def test_non_canonical_identities_are_rejected(self, bad):
         with pytest.raises(ValueError):
-            cs.canonical_exclusion_identity(value)
+            cs.canonical_exclusion_identity(bad)
 
-    def test_save_rejects_invalid_identity_before_any_file_access(self, tmp_path):
+    def test_canonical_identity_is_returned_unchanged(self):
+        assert cs.canonical_exclusion_identity(NATIVE) == NATIVE
+
+    def test_non_canonical_exclusion_fails_the_save_before_io(self, tmp_path):
         with pytest.raises(ValueError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(),
-                excluded=["task-1"],
-            )
+            _saved(excluded=["task-1"])
         assert not cs.settings_path().exists()
-        assert not cs.lock_path().exists()
 
-    def test_file_with_invalid_exclusion_identity_fails_closed(self, tmp_path):
+    def test_bad_exclusion_identity_fails_the_read(self, tmp_path):
         _write_json(_valid_payload(excluded={"task-1": True}))
-        before = _bytes()
         with pytest.raises(cs.SettingsFormatError):
             cs.read_settings()
-        with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(),
-                excluded=[],
-            )
-        assert _bytes() == before
 
 
 # ---------------------------------------------------------------------------
-# Strict decoding
+# Strict decoding (version 2)
 # ---------------------------------------------------------------------------
 
 
 class TestStrictDecoding:
     @pytest.mark.parametrize(
         "raw",
-        [
-            "{not json!!",
-            "",
-            "[]",
-            '"a string"',
-            "42",
-            "null",
-        ],
+        ["{not json!!", "", "[]", '"a string"', "42", "null", b"\xff\xfe"],
     )
     def test_malformed_or_non_object_documents_fail_closed(self, tmp_path, raw):
-        _write_raw(raw)
-        with pytest.raises(cs.SettingsFormatError):
+        path = cs.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(raw, bytes):
+            path.write_bytes(raw)
+        else:
+            path.write_text(raw, encoding="utf-8")
+        with pytest.raises(cs.SettingsStoreError):
             cs.read_settings()
-        assert _bytes() == raw.encode("utf-8")
+        assert path.read_bytes() == (raw if isinstance(raw, bytes) else raw.encode())
 
     @pytest.mark.parametrize(
         "payload",
         [
-            _valid_payload(extra_key="x"),                         # unknown top-level
-            {k: v for k, v in _valid_payload().items() if k != "revision"},  # missing key
-            _valid_payload(revision=True),                          # bool revision
-            _valid_payload(revision=-1),                            # negative revision
-            _valid_payload(revision=1.5),                           # float revision
-            _valid_payload(version=True),                           # bool version
-            _valid_payload(version=2),                              # unsupported version
-            _valid_payload(version="1"),                            # string version
-            _valid_payload(native_task_auto={"active_enabled": True}),  # missing native keys
-            _valid_payload(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2, "extra": 1,
-            }),                                                     # unknown native key
-            _valid_payload(native_task_auto={
-                "active_enabled": 1, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2,
-            }),                                                     # int bool
-            _valid_payload(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": True,
-            }),                                                     # bool horizon
-            _valid_payload(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2.5,
-            }),                                                     # float horizon
-            _valid_payload(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": -1,
-            }),                                                     # negative horizon
-            _valid_payload(excluded=[]),                            # excluded not object
-            _valid_payload(excluded={NATIVE: False}),               # flag false
-            _valid_payload(excluded={NATIVE: 1}),                   # flag int
-            _valid_payload(excluded={NATIVE: None}),                # flag null
+            _valid_payload(extra_key="x"),                              # unknown top-level
+            {k: v for k, v in _valid_payload().items() if k != "native"},  # missing key
+            _valid_payload(version=True),
+            _valid_payload(version=3),
+            _valid_payload(version="2"),
+            _valid_payload(revision=True),
+            _valid_payload(revision=-1),
+            _valid_payload(revision=1.5),
+            _valid_payload(statuses={"open": ["active"]}),               # missing completed
+            _valid_payload(statuses={"open": ["active"], "completed": ["x"], "y": []}),
+            _valid_payload(statuses={"open": "active", "completed": []}),  # not a list
+            _valid_payload(statuses={"open": [""], "completed": []}),      # empty name
+            _valid_payload(statuses={"open": ["a", "a"], "completed": []}),  # duplicate
+            _valid_payload(native={}),                                     # missing horizon
+            _valid_payload(native={"deadline_horizon_days": 2, "x": 1}),
+            _valid_payload(native={"deadline_horizon_days": True}),
+            _valid_payload(native={"deadline_horizon_days": -1}),
+            _valid_payload(native={"deadline_horizon_days": 2.5}),
+            _valid_payload(types=[]),                                      # not an object
+            _valid_payload(types={"s": {"mode": "active", "extra": 1}}),
+            _valid_payload(types={"s": {"property": "p"}}),                # missing mode
+            _valid_payload(types={"s": {"mode": "active", "statuses": "x"}}),
+            _valid_payload(types={"s": "active"}),                         # not an object
+            _valid_payload(types={" ": {"mode": "active"}}),               # bad structure id
+            _valid_payload(excluded=[]),
+            _valid_payload(excluded={NATIVE: False}),
+            _valid_payload(excluded={NATIVE: 1}),
+            _valid_payload(excluded={NATIVE: None}),
         ],
     )
     def test_strict_shape_violations_fail_closed(self, tmp_path, payload):
@@ -329,29 +272,19 @@ class TestStrictDecoding:
 
     def test_duplicate_top_level_keys_are_rejected(self, tmp_path):
         _write_raw(
-            '{"version": 1, "revision": 0, "revision": 1, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, "excluded": {}}',
+            '{"version": 2, "revision": 0, "revision": 1, '
+            '"statuses": {"open": ["active"], "completed": []}, '
+            '"types": {}, "native": {"deadline_horizon_days": 2}, "excluded": {}}'
         )
         with pytest.raises(cs.SettingsFormatError):
             cs.read_settings()
 
-    def test_duplicate_nested_keys_are_rejected(self, tmp_path):
+    def test_duplicate_type_keys_are_rejected(self, tmp_path):
         _write_raw(
-            '{"version": 1, "revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "active_enabled": false, '
-            '"due_enabled": true, "deadline_enabled": true, '
-            '"deadline_horizon_days": 2}, "excluded": {}}',
-        )
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-
-    def test_duplicate_exclusion_keys_are_rejected(self, tmp_path):
-        _write_raw(
-            '{"version": 1, "revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
-            f'"excluded": {{"{NATIVE}": true, "{NATIVE}": true}}}}',
+            '{"version": 2, "revision": 0, '
+            '"statuses": {"open": ["active"], "completed": []}, '
+            '"types": {"s": {"mode": "off"}, "s": {"mode": "active"}}, '
+            '"native": {"deadline_horizon_days": 2}, "excluded": {}}'
         )
         with pytest.raises(cs.SettingsFormatError):
             cs.read_settings()
@@ -360,33 +293,22 @@ class TestStrictDecoding:
         _write_json(
             _valid_payload(
                 revision=4,
-                native_task_auto={
-                    "active_enabled": False, "due_enabled": True,
-                    "deadline_enabled": False, "deadline_horizon_days": 9,
-                },
+                statuses={"open": ["In Progress"], "completed": ["Done"]},
+                native={"deadline_horizon_days": 9},
                 excluded={NATIVE: True},
-            ),
+            )
         )
+
         result = cs.read_settings()
+
         assert result.persisted is True
         assert result.settings.revision == 4
-        assert result.settings.native_task_auto.as_dict() == {
-            "active_enabled": False, "due_enabled": True,
-            "deadline_enabled": False, "deadline_horizon_days": 9,
-        }
-        assert result.settings.excluded == frozenset({NATIVE})
-
-    def test_constructed_model_is_strict(self):
-        with pytest.raises(ValueError):
-            cs.NativeTaskAutoPolicy(active_enabled=1)
-        with pytest.raises(ValueError):
-            cs.NativeTaskAutoPolicy(deadline_horizon_days=True)
-        with pytest.raises(ValueError):
-            cs.NativeTaskAutoPolicy(deadline_horizon_days=-1)
-        with pytest.raises(ValueError):
-            cs.CapacitiesSettings(revision=-1)
-        with pytest.raises(ValueError):
-            cs.CapacitiesSettings(excluded=["task-1"])
+        assert result.settings.as_dict() == _valid_payload(
+            revision=4,
+            statuses={"open": ["In Progress"], "completed": ["Done"]},
+            native={"deadline_horizon_days": 9},
+            excluded={NATIVE: True},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -396,53 +318,40 @@ class TestStrictDecoding:
 
 class TestRevisions:
     def test_first_save_creates_revision_one(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+        saved = _saved()
         assert saved.revision == 1
         assert cs.read_settings().settings.revision == 1
 
     def test_revision_increments_on_each_save(self, tmp_path):
-        first = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
-        second = cs.save_settings(
-            expected_revision=first.revision,
-            native_task_auto=_default_policy(), excluded=[NATIVE],
-        )
+        first = _saved()
+        second = _saved(expected_revision=first.revision, excluded=[NATIVE])
         assert (first.revision, second.revision) == (1, 2)
         assert cs.read_settings().settings.revision == 2
 
     def test_stale_expected_revision_conflicts_and_preserves_bytes(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+        _saved()
         before = _bytes()
         with pytest.raises(cs.SettingsConflictError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[NATIVE],
-            )
+            _saved(expected_revision=0, excluded=[NATIVE])
         assert _bytes() == before
+
+    def test_conflict_is_a_store_error_naming_both_revisions(self, tmp_path):
+        _saved()
+        with pytest.raises(cs.SettingsStoreError) as excinfo:
+            _saved(expected_revision=0)
+        message = str(excinfo.value)
+        assert "stored revision 1" in message
+        assert "expected 0" in message
 
     def test_missing_file_with_nonzero_expected_revision_conflicts(self, tmp_path):
         with pytest.raises(cs.SettingsConflictError):
-            cs.save_settings(
-                expected_revision=1,
-                native_task_auto=_default_policy(), excluded=[],
-            )
+            _saved(expected_revision=1)
         assert not cs.settings_path().exists()
 
     def test_save_rejects_bad_expected_revision_before_file_access(self, tmp_path):
-        for bad in (True, -1, 1.5, "0"):
+        for bad in (True, -1, 1.5, "0", None):
             with pytest.raises(ValueError):
-                cs.save_settings(
-                    expected_revision=bad,
-                    native_task_auto=_default_policy(), excluded=[],
-                )
+                cs.save_settings(expected_revision=bad)
         assert not cs.settings_path().exists()
 
 
@@ -455,27 +364,18 @@ class TestFailClosedWrites:
     def test_save_fails_closed_on_malformed_file(self, tmp_path):
         _write_raw("garbage")
         with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-            )
+            _saved()
         assert _bytes() == b"garbage"
 
     def test_save_fails_closed_on_unsupported_version(self, tmp_path):
         _write_json(_valid_payload(version=99))
         before = _bytes()
         with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-            )
+            _saved()
         assert _bytes() == before
 
     def test_save_fails_closed_on_lock_failure(self, tmp_path, monkeypatch):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+        _saved()
         before = _bytes()
 
         def boom():
@@ -483,17 +383,11 @@ class TestFailClosedWrites:
 
         monkeypatch.setattr(cs, "_acquire_lock_file", boom)
         with pytest.raises(OSError):
-            cs.save_settings(
-                expected_revision=1,
-                native_task_auto=_default_policy(), excluded=[NATIVE],
-            )
+            _saved(expected_revision=1, excluded=[NATIVE])
         assert _bytes() == before
 
     def test_save_fails_closed_on_write_failure(self, tmp_path, monkeypatch):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+        _saved()
         before = _bytes()
 
         def boom(path, data):
@@ -501,23 +395,16 @@ class TestFailClosedWrites:
 
         monkeypatch.setattr(cs, "_atomic_write_json", boom)
         with pytest.raises(OSError):
-            cs.save_settings(
-                expected_revision=1,
-                native_task_auto=_default_policy(), excluded=[NATIVE],
-            )
+            _saved(expected_revision=1, excluded=[NATIVE])
         assert _bytes() == before
 
     def test_read_fails_closed_on_directory_at_settings_path(self, tmp_path):
-        path = cs.settings_path()
-        path.mkdir(parents=True)
+        cs.settings_path().mkdir(parents=True)
         with pytest.raises(cs.SettingsStoreError):
             cs.read_settings()
 
     def test_atomic_write_leaves_no_temp_files(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+        _saved()
         leftovers = [
             entry.name
             for entry in cs.settings_path().parent.iterdir()
@@ -525,874 +412,134 @@ class TestFailClosedWrites:
         ]
         assert leftovers == []
 
-    def test_lock_file_created_under_vault(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
+    def test_lock_file_created_under_app_home(self, tmp_path):
+        _saved()
         assert cs.lock_path().is_file()
 
 
 # ---------------------------------------------------------------------------
-# Active-enabled custom structures (additive version-1 key)
+# The types document
 # ---------------------------------------------------------------------------
 
 
-PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
-PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
+class TestTypeDeclarations:
+    def test_undeclared_structure_is_off_and_never_admits_on_status(self, tmp_path):
+        settings = cs.read_settings().settings
 
+        assert settings.mode_of("unknown") == "off"
+        assert settings.type_declaration("unknown").mode == "off"
+        assert settings.status_admission_enabled("unknown") is False
+        assert settings.open_statuses_for("unknown") == frozenset()
 
-class TestActiveStructures:
-    def test_default_has_no_active_structures(self, tmp_path):
-        assert cs.read_settings().settings.active_structures == frozenset()
-
-    def test_active_structures_round_trip(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[],
-            active_structures=[PROJECT_STRUCTURE, "custom-project"],
+    def test_declarations_round_trip_for_every_mode(self, tmp_path):
+        saved = _saved(
+            types={
+                "off-structure": {"mode": "off"},
+                "active-structure": {"mode": "active"},
+                "assigned-structure": {"mode": "assigned", "property": "p-1"},
+                "assigned-on-structure": {"mode": "assignedOn", "property": "p-2"},
+                "native-structure": {"mode": "native"},
+            }
         )
 
-        assert saved.active_structures == frozenset({PROJECT_STRUCTURE, "custom-project"})
-        result = cs.read_settings()
-        assert result.settings.active_structures == frozenset(
-            {PROJECT_STRUCTURE, "custom-project"}
-        )
-
-    def test_active_structures_are_written_sorted_and_deterministic(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            active_structures=["zeta", "alpha"],
-        )
-        data = json.loads(_bytes().decode("utf-8"))
-        assert list(data["active_structures"]) == ["alpha", "zeta"]
-
-    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
-        # An existing on-disk version-1 file written before the additive key
-        # existed must stay readable; its absence means "no custom structure
-        # is Active-enabled".
-        legacy = {
-            "version": 1,
-            "revision": 0,
-            "native_task_auto": {
-                "active_enabled": True,
-                "due_enabled": True,
-                "deadline_enabled": True,
-                "deadline_horizon_days": 2,
+        assert saved.as_dict()["types"] == {
+            "active-structure": {"mode": "active", "property": None, "statuses": None},
+            "assigned-on-structure": {
+                "mode": "assignedOn",
+                "property": "p-2",
+                "statuses": None,
             },
-            "excluded": {},
+            "assigned-structure": {
+                "mode": "assigned",
+                "property": "p-1",
+                "statuses": None,
+            },
+            "native-structure": {"mode": "native", "property": None, "statuses": None},
+            "off-structure": {"mode": "off", "property": None, "statuses": None},
         }
-        _write_json(legacy)
-
-        result = cs.read_settings()
-
-        assert result.persisted is True
-        assert result.settings.active_structures == frozenset()
-        assert result.settings.as_dict()["active_structures"] == {}
-
-    def test_saved_settings_bridge_active_structures_to_the_evaluator(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            active_structures=[PROJECT_STRUCTURE],
-        )
-        assert saved.to_assignment_settings().active_structures == frozenset(
-            {PROJECT_STRUCTURE}
-        )
-
-    @pytest.mark.parametrize(
-        "active",
-        [
-            [],                                             # not an object
-            "custom-project",                               # string
-            1,                                              # number
-            None,                                           # null
-            {"custom-project": False},                      # flag false
-            {"custom-project": 1},                          # flag int
-            {"custom-project": None},                       # flag null
-            {"": True},                                     # empty id
-            {" custom-project ": True},                     # whitespace alias
-            {"custom project": True},                       # inner whitespace
-        ],
-    )
-    def test_malformed_active_structures_fail_closed(self, tmp_path, active):
-        _write_json(_valid_payload(active_structures=active))
-        before = _bytes()
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-
-        assert _bytes() == before
-
-    def test_duplicate_active_structure_keys_are_rejected(self, tmp_path):
-        _write_raw(
-            '{"version": 1, "revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
-            '"excluded": {}, "active_structures": {"alpha": true, "alpha": true}}',
-        )
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-
-    def test_save_rejects_invalid_structure_before_any_file_access(self, tmp_path):
-        with pytest.raises(ValueError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                active_structures=["custom-project", "  "],
-            )
-        assert not cs.settings_path().exists()
-
-    def test_constructed_model_is_strict_about_active_structures(self):
-        with pytest.raises(ValueError):
-            cs.CapacitiesSettings(active_structures=[""])
-        with pytest.raises(ValueError):
-            cs.CapacitiesSettings(active_structures=[None])
-        with pytest.raises(ValueError):
-            cs.CapacitiesSettings(active_structures=["a b"])
-
-
-# ---------------------------------------------------------------------------
-# Admission inputs (additive version-1 keys)
-# ---------------------------------------------------------------------------
-# ``native_task_structures`` and ``active_statuses`` were added additively to
-# schema version 1 in the same way as ``active_structures``: absent means the
-# documented default, every fresh write emits them, and a present value is
-# validated strictly. ``SCHEMA_VERSION`` is deliberately unchanged so an
-# existing version-1 file keeps reading instead of failing closed.
-
-
-class TestAdmissionInputs:
-    def test_schema_version_is_unchanged(self):
-        assert cs.SCHEMA_VERSION == 1
-
-    def test_defaults_when_no_file_exists(self, tmp_path):
-        settings = cs.read_settings().settings
-
-        assert settings.native_task_structures == frozenset({"RootTask"})
-        assert settings.active_statuses == frozenset({"active"})
-
-    def test_defaults_exclude_the_root_task_display_name(self, tmp_path):
-        # ``Task`` is the DISPLAY NAME of the ``RootTask`` structure, not a
-        # structure id, so it can never satisfy the native admission set.
-        import capacities_assignment as ca
-
-        assert ca.NATIVE_TASK_STRUCTURES == frozenset({"RootTask"})
-        assert "Task" not in ca.NATIVE_TASK_STRUCTURES
-        settings = cs.read_settings().settings
-        assert settings.native_task_structures == frozenset({"RootTask"})
-
-    def test_legacy_version_1_file_without_either_key_reads_with_the_documented_defaults(
-        self, tmp_path
-    ):
-        _write_json(_valid_payload())
-
-        result = cs.read_settings()
-
-        assert result.persisted is True
-        assert result.settings.native_task_structures == frozenset({"RootTask"})
-        assert result.settings.active_statuses == frozenset({"active"})
-
-    def test_both_keys_round_trip_through_write_and_read(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[],
-            native_task_structures=["RootTask", "custom-project"],
-            active_statuses=["Active", "In Progress"],
-        )
-
-        assert saved.native_task_structures == frozenset({"RootTask", "custom-project"})
-        assert saved.active_statuses == frozenset({"Active", "In Progress"})
-        result = cs.read_settings()
-        assert result.settings == saved
-        assert result.settings.native_task_structures == frozenset(
-            {"RootTask", "custom-project"}
-        )
-        assert result.settings.active_statuses == frozenset({"Active", "In Progress"})
-
-    def test_freshly_written_file_emits_both_keys(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[],
-        )
-        data = json.loads(_bytes().decode("utf-8"))
-
-        assert data["native_task_structures"] == DEFAULT_NATIVE_STRUCTURES
-        assert data["active_statuses"] == DEFAULT_ACTIVE_STATUSES
-
-    def test_written_lists_are_sorted_and_deterministic(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            native_task_structures=["zeta", "alpha"],
-            active_statuses=["zeta", "Alpha"],
-        )
-        data = json.loads(_bytes().decode("utf-8"))
-
-        assert data["native_task_structures"] == ["alpha", "zeta"]
-        assert data["active_statuses"] == ["Alpha", "zeta"]
-
-    def test_active_statuses_are_stored_as_given_not_pre_normalized(self, tmp_path):
-        # The evaluator normalizes at comparison time; the persisted form keeps
-        # the operator's exact text.
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            active_statuses=["In Progress"],
-        )
-
-        assert saved.active_statuses == frozenset({"In Progress"})
-        assert cs.read_settings().settings.active_statuses == frozenset(
-            {"In Progress"}
-        )
-
-    def test_empty_native_task_structures_is_a_legitimate_configuration(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            native_task_structures=[],
-        )
-
-        assert saved.native_task_structures == frozenset()
-        result = cs.read_settings()
-        assert result.settings.native_task_structures == frozenset()
-        assert result.settings.as_dict()["native_task_structures"] == []
-
-    def test_empty_active_statuses_is_a_legitimate_configuration(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            active_statuses=[],
-        )
-
-        assert saved.active_statuses == frozenset()
-        assert cs.read_settings().settings.active_statuses == frozenset()
-
-    @pytest.mark.parametrize(
-        "key, bad",
-        [
-            ("native_task_structures", "RootTask"),            # not a list
-            ("native_task_structures", {"RootTask": True}),    # object
-            ("native_task_structures", 1),                     # number
-            ("native_task_structures", None),                  # null
-            ("native_task_structures", [""]),                  # empty entry
-            ("native_task_structures", [None]),                # non-string entry
-            ("native_task_structures", [1]),                   # non-string entry
-            ("native_task_structures", ["RootTask", "RootTask"]),  # duplicate
-            ("active_statuses", "active"),                     # not a list
-            ("active_statuses", {"active": True}),             # object
-            ("active_statuses", None),                         # null
-            ("active_statuses", [""]),                         # empty entry
-            ("active_statuses", [True]),                       # non-string entry
-            ("active_statuses", ["active", "active"]),         # duplicate
-        ],
-    )
-    def test_malformed_stored_values_fail_closed_and_preserve_the_bytes(
-        self, tmp_path, key, bad
-    ):
-        _write_json(_valid_payload(**{key: bad}))
-        before = _bytes()
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-        with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-            )
-        assert _bytes() == before
-
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            {"native_task_structures": "RootTask"},
-            {"native_task_structures": [""]},
-            {"native_task_structures": [None]},
-            {"native_task_structures": ["RootTask", "RootTask"]},
-            {"native_task_structures": None},
-            {"active_statuses": "active"},
-            {"active_statuses": [""]},
-            {"active_statuses": [True]},
-            {"active_statuses": ["active", "active"]},
-            {"active_statuses": None},
-        ],
-    )
-    def test_malformed_save_input_is_rejected_before_any_file_access(
-        self, tmp_path, kwargs
-    ):
-        with pytest.raises(ValueError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[], **kwargs,
-            )
-        assert not cs.settings_path().exists()
-        assert not cs.lock_path().exists()
-
-    def test_constructed_model_is_strict_about_the_admission_inputs(self):
-        for kwargs in (
-            {"native_task_structures": "RootTask"},
-            {"native_task_structures": [""]},
-            {"native_task_structures": [None]},
-            {"native_task_structures": ["RootTask", "RootTask"]},
-            {"native_task_structures": None},
-            {"active_statuses": "active"},
-            {"active_statuses": [""]},
-            {"active_statuses": [True]},
-            {"active_statuses": ["active", "active"]},
-        ):
-            with pytest.raises(ValueError):
-                cs.CapacitiesSettings(**kwargs)
-        assert cs.CapacitiesSettings(
-            native_task_structures=[]
-        ).native_task_structures == frozenset()
-
-    def test_saved_settings_bridge_both_inputs_to_the_evaluator(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            native_task_structures=["custom-project"],
-            active_statuses=["In Progress"],
-        )
-        seam = saved.to_assignment_settings()
-
-        assert seam.native_task_structures == frozenset({"custom-project"})
-        assert seam.active_statuses == frozenset({"In Progress"})
-
-
-# ---------------------------------------------------------------------------
-# Settings-declared source assignment (additive version-1 key)
-# ---------------------------------------------------------------------------
-# ``assigned_structures`` declares, per structure, the RAW Capacities property
-# ID whose boolean ``true`` means "assigned at TDTB level". It is a dict on the
-# wire (like ``active_structures``, not a list like the admission inputs)
-# because the property ID differs per structure and no property is literally
-# named ``assigned`` in the API. ``true`` is implied, so no value list is
-# stored. The key was added additively to schema version 1 in the same way as
-# the two admission inputs: optional on read (absence means "no override"; the
-# per-structure fallback to the source mapping's ``assignment_property`` is
-# resolved by the builder), emitted on every write, strictly validated when
-# present, and ``SCHEMA_VERSION`` is deliberately unchanged so an existing
-# version-1 file keeps reading instead of failing closed.
-
-
-PROJECT_ASSIGNED_PROPERTY = "f779f78a-3b1e-4a2c-9f5d-6a0f0e1d2c3b"
-ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-7c2d-4e18-8a51-9b0c1d2e3f40"
-
-
-def _legacy_version_1_payload() -> dict:
-    """A version-1 file written before any of the additive keys existed."""
-    return {
-        "version": 1,
-        "revision": 0,
-        "native_task_auto": {
-            "active_enabled": True,
-            "due_enabled": True,
-            "deadline_enabled": True,
-            "deadline_horizon_days": 2,
-        },
-        "excluded": {},
-    }
-
-
-class TestAssignedStructures:
-    def test_schema_version_is_unchanged(self):
-        assert cs.SCHEMA_VERSION == 1
-
-    def test_default_has_no_declarations(self, tmp_path):
-        settings = cs.read_settings().settings
-
-        assert settings.assigned_structures == {}
-        assert settings.as_dict()["assigned_structures"] == {}
-
-    def test_assigned_structures_round_trip(self, tmp_path):
-        declarations = {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
-        }
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[],
-            assigned_structures=declarations,
-        )
-
-        assert saved.assigned_structures == declarations
-        result = cs.read_settings()
-        assert result.settings.assigned_structures == declarations
-        assert result.settings.as_dict()["assigned_structures"] == declarations
+        assert cs.read_settings().settings == saved
 
     def test_property_ids_are_preserved_exactly_as_declared(self, tmp_path):
-        # The ID is a raw, opaque Capacities property ID: it is never
-        # normalized, case-folded, or trimmed.
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_structures={"custom-project": "Assigned-ID_CaseSensitive"},
+        saved = _saved(
+            types={"s": {"mode": "assigned", "property": "Assigned-ID_CaseSensitive"}}
         )
-
-        assert saved.assigned_structures == {
-            "custom-project": "Assigned-ID_CaseSensitive"
-        }
-        assert cs.read_settings().settings.assigned_structures == {
-            "custom-project": "Assigned-ID_CaseSensitive"
-        }
-
-    def test_every_fresh_write_emits_the_key_even_when_omitted(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
+        assert (
+            cs.read_settings().settings.types["s"].property_id
+            == "Assigned-ID_CaseSensitive"
         )
+        assert saved.types["s"].property_id == "Assigned-ID_CaseSensitive"
 
-        data = json.loads(_bytes().decode("utf-8"))
-        assert data["assigned_structures"] == {}
+    def test_omitted_types_replace_to_no_declarations(self, tmp_path):
+        _saved(types={"s": {"mode": "active"}})
+        saved = _saved(expected_revision=1)
+        assert saved.types == {}
+        assert json.loads(_bytes().decode("utf-8"))["types"] == {}
 
-    def test_assigned_structures_are_written_sorted_and_deterministic(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_structures={"zeta": "p2", "alpha": "p1"},
-        )
-
-        data = json.loads(_bytes().decode("utf-8"))
-        assert list(data["assigned_structures"]) == ["alpha", "zeta"]
-        assert data["assigned_structures"] == {"alpha": "p1", "zeta": "p2"}
-
-    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
-        _write_json(_legacy_version_1_payload())
-
-        result = cs.read_settings()
-
-        assert result.persisted is True
-        assert result.settings.assigned_structures == {}
-        assert result.settings.as_dict()["assigned_structures"] == {}
-
-    def test_absent_key_does_not_reach_the_evaluator_seam(self, tmp_path):
-        # The declaration is an adapter/mapping input, never an evaluator
-        # input: adding it must not perturb ``AssignmentSettings``.
-        baseline = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        ).to_assignment_settings()
-        declared = cs.save_settings(
-            expected_revision=1,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
-        ).to_assignment_settings()
-
-        assert declared == baseline
-
-    @pytest.mark.parametrize(
-        "declarations",
-        [
-            [],                                             # list, not an object
-            "custom-project",                               # string
-            1,                                              # number
-            None,                                           # null
-            True,                                           # bool
-            {PROJECT_STRUCTURE: False},                     # flag, not a property id
-            {PROJECT_STRUCTURE: 1},                         # int property id
-            {PROJECT_STRUCTURE: None},                      # null property id
-            {PROJECT_STRUCTURE: ["prop"]},                  # list property id
-            {"": PROJECT_ASSIGNED_PROPERTY},                # empty structure id
-            {" ": PROJECT_ASSIGNED_PROPERTY},               # whitespace structure id
-            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},  # whitespace alias
-            {"custom project": PROJECT_ASSIGNED_PROPERTY},  # inner whitespace
-            {PROJECT_STRUCTURE: ""},                        # empty property id
-        ],
-    )
-    def test_malformed_stored_declarations_fail_closed(self, tmp_path, declarations):
-        _write_json(_valid_payload(assigned_structures=declarations))
-        before = _bytes()
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-        # A strict save over the malformed file also refuses and preserves the
-        # offending bytes rather than repairing them.
-        with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
-            )
-        assert _bytes() == before
-
-    def test_duplicate_declared_structure_keys_are_rejected(self, tmp_path):
-        _write_raw(
-            '{"version": 1, "revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
-            '"excluded": {}, '
-            '"assigned_structures": {"alpha": "p1", "alpha": "p2"}}',
-        )
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-
-    @pytest.mark.parametrize(
-        "declarations",
-        [
-            "custom-project",
-            [],
-            None,
-            {PROJECT_STRUCTURE: ""},
-            {"": PROJECT_ASSIGNED_PROPERTY},
-            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},
-            {PROJECT_STRUCTURE: 1},
-        ],
-    )
-    def test_save_rejects_invalid_declaration_before_any_file_access(
-        self, tmp_path, declarations
-    ):
-        with pytest.raises(ValueError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_structures=declarations,
-            )
-
-        assert not cs.settings_path().exists()
-        assert not cs.lock_path().exists()
-
-    def test_constructed_model_is_strict_about_assigned_structures(self):
-        for declarations in (
-            "custom-project",
-            None,
-            {PROJECT_STRUCTURE: ""},
-            {"": PROJECT_ASSIGNED_PROPERTY},
-            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},
-            {PROJECT_STRUCTURE: True},
-        ):
+    def test_invalid_structure_ids_are_rejected_before_io(self):
+        for bad in (" ", "", 1):
             with pytest.raises(ValueError):
-                cs.CapacitiesSettings(assigned_structures=declarations)
-        assert cs.CapacitiesSettings().assigned_structures == {}
+                _validated(types={bad: {"mode": "active"}})
 
-
-PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
-ADVENTURE_ASSIGNED_ON_PROPERTY = "2b3c4d5e-6f70-4899-8b1c-2d3e4f5a6b7c"
-
-
-class TestAssignedOnStructures:
-    """The additive read-only ``assigned_on_structures`` declaration.
-
-    The key follows the same contract as ``assigned_structures``: optional on
-    read (a legacy version-1 file means no Assigned On override anywhere),
-    emitted on every write, strictly validated when present, and never
-    perturbing the evaluator seam."""
-
-    def test_schema_version_is_unchanged(self):
-        assert cs.SCHEMA_VERSION == 1
-
-    def test_default_has_no_declarations(self, tmp_path):
-        settings = cs.read_settings().settings
-
-        assert settings.assigned_on_structures == {}
-        assert settings.as_dict()["assigned_on_structures"] == {}
-
-    def test_round_trip_and_property_ids_are_preserved_exactly(self, tmp_path):
-        declarations = {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
-            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_ON_PROPERTY,
-        }
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(),
-            excluded=[],
-            assigned_on_structures=declarations,
+    def test_structure_ids_accessor_filters_by_mode(self, tmp_path):
+        saved = _saved(
+            types={
+                "b": {"mode": "native"},
+                "a": {"mode": "native"},
+                "c": {"mode": "active"},
+            }
         )
-
-        assert saved.assigned_on_structures == declarations
-        result = cs.read_settings()
-        assert result.settings.assigned_on_structures == declarations
-        assert result.settings.as_dict()["assigned_on_structures"] == declarations
-
-    def test_every_fresh_write_emits_the_key_even_when_omitted(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        )
-
-        data = json.loads(_bytes().decode("utf-8"))
-        assert data["assigned_on_structures"] == {}
-
-    def test_written_sorted_and_deterministic(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_on_structures={"zeta": "p2", "alpha": "p1"},
-        )
-
-        data = json.loads(_bytes().decode("utf-8"))
-        assert list(data["assigned_on_structures"]) == ["alpha", "zeta"]
-        assert data["assigned_on_structures"] == {"alpha": "p1", "zeta": "p2"}
-
-    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
-        _write_json(_legacy_version_1_payload())
-
-        result = cs.read_settings()
-
-        assert result.persisted is True
-        assert result.settings.assigned_on_structures == {}
-        assert result.settings.as_dict()["assigned_on_structures"] == {}
-
-    def test_omitted_key_on_a_later_save_is_a_full_replacement_to_empty(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_on_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY},
-        )
-
-        saved = cs.save_settings(
-            expected_revision=1,
-            native_task_auto=_default_policy(), excluded=[],
-        )
-
-        assert saved.assigned_on_structures == {}
-        assert cs.read_settings().settings.assigned_on_structures == {}
-
-    def test_absent_key_does_not_reach_the_evaluator_seam(self, tmp_path):
-        baseline = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-        ).to_assignment_settings()
-        declared = cs.save_settings(
-            expected_revision=1,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_on_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY},
-        ).to_assignment_settings()
-
-        assert declared == baseline
-
-    @pytest.mark.parametrize(
-        "declarations",
-        [
-            [],                                             # list, not an object
-            "custom-project",                               # string
-            1,                                              # number
-            None,                                           # null
-            True,                                           # bool
-            {PROJECT_STRUCTURE: False},                     # flag, not a property id
-            {PROJECT_STRUCTURE: 1},                         # int property id
-            {PROJECT_STRUCTURE: None},                      # null property id
-            {PROJECT_STRUCTURE: ["prop"]},                  # list property id
-            {"": PROJECT_ASSIGNED_ON_PROPERTY},             # empty structure id
-            {" ": PROJECT_ASSIGNED_ON_PROPERTY},            # whitespace structure id
-            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},  # whitespace alias
-            {"custom project": PROJECT_ASSIGNED_ON_PROPERTY},   # inner whitespace
-            {PROJECT_STRUCTURE: ""},                        # empty property id
-        ],
-    )
-    def test_malformed_stored_declarations_fail_closed(self, tmp_path, declarations):
-        _write_json(_valid_payload(assigned_on_structures=declarations))
-        before = _bytes()
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-        with pytest.raises(cs.SettingsFormatError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-            )
-        assert _bytes() == before
-
-    def test_duplicate_declared_structure_keys_are_rejected(self, tmp_path):
-        _write_raw(
-            '{"version": 1, "revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
-            '"excluded": {}, '
-            '"assigned_on_structures": {"alpha": "p1", "alpha": "p2"}}',
-        )
-
-        with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings()
-
-    @pytest.mark.parametrize(
-        "declarations",
-        [
-            "custom-project",
-            [],
-            None,
-            {PROJECT_STRUCTURE: ""},
-            {"": PROJECT_ASSIGNED_ON_PROPERTY},
-            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},
-            {PROJECT_STRUCTURE: 1},
-        ],
-    )
-    def test_save_rejects_invalid_declaration_before_any_file_access(
-        self, tmp_path, declarations
-    ):
-        with pytest.raises(ValueError):
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_on_structures=declarations,
-            )
-
-        assert not cs.settings_path().exists()
-        assert not cs.lock_path().exists()
-
-    def test_constructed_model_is_strict_about_assigned_on_structures(self):
-        for declarations in (
-            "custom-project",
-            None,
-            {PROJECT_STRUCTURE: ""},
-            {"": PROJECT_ASSIGNED_ON_PROPERTY},
-            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},
-            {PROJECT_STRUCTURE: True},
-        ):
-            with pytest.raises(ValueError):
-                cs.CapacitiesSettings(assigned_on_structures=declarations)
-        assert cs.CapacitiesSettings().assigned_on_structures == {}
+        assert saved.structure_ids("native") == ("a", "b")
+        assert saved.structure_ids() == ("a", "b", "c")
 
 
 # ---------------------------------------------------------------------------
-# Contradictory declarations refused at save
+# The statuses document
 # ---------------------------------------------------------------------------
-# A structure may declare an ``Assigned`` checkbox OR an ``Assigned On`` date.
-# Declaring both is not a preference: the adapter branches on the date first, so
-# the boolean can never read and an object with ``Assigned = true`` plus a
-# future date silently leaves the plan. The save seam therefore refuses the
-# pairing before any file access — atomically, leaving the stored bytes and
-# revision untouched — while the read path stays tolerant so a hand-edited or
-# already-saved contradiction still loads and only warns.
 
 
-class TestContradictoryDeclarations:
-    def test_save_refuses_a_structure_declared_in_both_maps(self, tmp_path):
-        with pytest.raises(cs.SettingsDeclarationConflictError) as excinfo:
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                },
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            )
-
-        conflicts = excinfo.value.conflicts
-        assert [(c.structure_id, c.assigned_property, c.assigned_on_property)
-                for c in conflicts] == [
-            (
-                PROJECT_STRUCTURE,
-                PROJECT_ASSIGNED_PROPERTY,
-                PROJECT_ASSIGNED_ON_PROPERTY,
-            )
-        ]
-        # Names the structure, both properties, and the required action.
-        message = conflicts[0].message()
-        assert PROJECT_STRUCTURE in message
-        assert PROJECT_ASSIGNED_PROPERTY in message
-        assert PROJECT_ASSIGNED_ON_PROPERTY in message
-        assert "clear one of the two mappings" in message
-        # Nothing was created and nothing was locked: the refusal precedes all
-        # I/O, so no partial write is even possible.
-        assert not cs.settings_path().exists()
-        assert not cs.lock_path().exists()
-
-    def test_refused_save_preserves_existing_bytes_byte_for_byte(self, tmp_path):
-        cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_structures={
-                PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-            },
-        )
-        before = _bytes()
-        stored_before = cs.read_settings()
-
-        with pytest.raises(cs.SettingsDeclarationConflictError):
-            cs.save_settings(
-                expected_revision=1,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-                    PRESS_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-                },
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            )
-
-        assert _bytes() == before
-        after = cs.read_settings()
-        assert after.settings.revision == stored_before.settings.revision
-        assert after.settings.assigned_structures == {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-        }
-        assert after.settings.assigned_on_structures == {}
-
-    def test_every_conflicting_structure_is_reported_sorted_by_id(self, tmp_path):
-        with pytest.raises(cs.SettingsDeclarationConflictError) as excinfo:
-            cs.save_settings(
-                expected_revision=0,
-                native_task_auto=_default_policy(), excluded=[],
-                assigned_structures={
-                    PRESS_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-                },
-                assigned_on_structures={
-                    PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
-                    PROJECT_STRUCTURE: ADVENTURE_ASSIGNED_ON_PROPERTY,
-                },
-            )
-
-        assert [c.structure_id for c in excinfo.value.conflicts] == sorted(
-            [PROJECT_STRUCTURE, PRESS_STRUCTURE]
-        )
-
-    def test_one_mapping_per_structure_still_saves(self, tmp_path):
-        saved = cs.save_settings(
-            expected_revision=0,
-            native_task_auto=_default_policy(), excluded=[],
-            assigned_structures={
-                PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-            },
-            assigned_on_structures={
-                PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-            },
-        )
-
-        assert saved.assigned_structures == {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-        }
-        assert saved.assigned_on_structures == {
-            PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+class TestStatusVocabulary:
+    def test_defaults(self):
+        vocabulary = cs.StatusVocabulary()
+        assert vocabulary.open == frozenset({"active"})
+        assert vocabulary.completed == frozenset({"Completed", "Dropped"})
+        assert vocabulary.as_dict() == {
+            "open": ["active"],
+            "completed": ["Completed", "Dropped"],
         }
 
-    def test_a_stored_contradiction_still_reads_and_only_warns(self, tmp_path):
-        # Belt and braces: bytes already on disk (hand-edited, or written
-        # before this guard existed) must keep loading. The read path is not
-        # the place to refuse — a refusal there would lock the owner out of the
-        # very screen that clears the mapping.
-        _write_json(
-            _valid_payload(
-                assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            )
+    def test_statuses_round_trip_verbatim(self, tmp_path):
+        saved = _saved(
+            statuses={"open": ["In Progress", "Next"], "completed": ["Closed"]}
+        )
+        assert saved.statuses.open == frozenset({"In Progress", "Next"})
+        assert cs.read_settings().settings.statuses.completed == frozenset(
+            {"Closed"}
         )
 
-        result = cs.read_settings()
+    def test_status_names_are_never_pre_normalized(self, tmp_path):
+        saved = _saved(statuses={"open": ["In Progress"], "completed": []})
+        assert saved.statuses.open == frozenset({"In Progress"})
 
-        assert result.settings.assigned_structures == {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-        }
-        assert result.settings.assigned_on_structures == {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-        }
+    def test_invalid_status_inputs_are_rejected_before_io(self):
+        for bad in (
+            {"open": "active", "completed": []},
+            {"open": [""], "completed": []},
+            {"open": ["a", "a"], "completed": []},
+            {"open": [1], "completed": []},
+            {"open": ["a"], "completed": [], "extra": []},
+            ["active"],
+        ):
+            with pytest.raises(ValueError):
+                _validated(statuses=bad)
 
-    def test_the_error_is_a_store_error_and_not_a_stale_revision_conflict(self):
-        # Callers already branch on ``SettingsConflictError`` (retry after a
-        # re-read); a contradiction is not retryable and must not be mistaken
-        # for one.
-        assert issubclass(cs.SettingsDeclarationConflictError, cs.SettingsStoreError)
-        assert not issubclass(
-            cs.SettingsDeclarationConflictError, cs.SettingsConflictError
-        )
+    def test_native_policy_inputs_are_rejected_before_io(self):
+        for bad in (
+            {"deadline_horizon_days": -1},
+            {"deadline_horizon_days": True},
+            {"deadline_horizon_days": 1.5},
+            {},
+            {"deadline_horizon_days": 1, "extra": 1},
+            [1],
+        ):
+            with pytest.raises(ValueError):
+                _validated(native=bad)
