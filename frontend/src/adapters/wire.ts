@@ -57,7 +57,10 @@ import type {
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
   CapacitiesSourceStructure,
-  CapacitiesNativeTaskAutoPolicy,
+  CapacitiesStatusVocabulary,
+  CapacitiesTypeDeclaration,
+  CapacitiesTypeMode,
+  CapacitiesNativePolicy,
   CommitReport,
   CommitSurface,
   DaySetup,
@@ -228,12 +231,12 @@ export function isCanonicalCapacitiesIdentity(value: unknown): value is string {
   );
 }
 
-const CAPACITIES_SETTINGS_NATIVE_KEYS = [
-  "active_enabled",
-  "due_enabled",
-  "deadline_enabled",
-  "deadline_horizon_days",
-] as const;
+const CAPACITIES_SETTINGS_NATIVE_KEYS = ["deadline_horizon_days"] as const;
+const CAPACITIES_SETTINGS_STATUS_KEYS = ["open", "completed"] as const;
+const CAPACITIES_TYPE_DECLARATION_KEYS = ["mode", "property", "statuses"] as const;
+const CAPACITIES_TYPE_MODES = ["off", "active", "assigned", "assignedOn", "native"] as const;
+/** Modes whose declaration is meaningless without a raw provider property id. */
+const CAPACITIES_PROPERTY_MODES = ["assigned", "assignedOn"] as const;
 
 /** Validate and return an Active-enabled custom structure id, mirroring the
     backend's ``canonical_active_structure_id``: a non-empty, whitespace-free
@@ -261,9 +264,9 @@ function isUsableStructureTitle(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-/** Project one plain admission list (``native_task_structures`` /
-    ``active_statuses``) — a strict array of non-empty strings, deduplicated
-    and sorted like the advisory ``available_structures`` inventory. */
+/** Project one plain admission list (a status vocabulary slot or a type's own
+    status names) — a strict array of non-empty strings, deduplicated and
+    sorted like the advisory ``available_structures`` inventory. */
 function projectAdmissionValues(raw: unknown, key: string): string[] {
   if (!Array.isArray(raw)) {
     throw capacitiesSettingsError(`${key} must be an array`);
@@ -311,6 +314,110 @@ function projectDeclarationDiagnostics(raw: unknown): CapacitiesDeclarationDiagn
   });
 }
 
+/** Project the shared ``statuses`` block: the open vocabulary a declaration
+    inherits, plus the closed completed vocabulary. Both are plain name lists
+    and the block is required in schema version 2. */
+function projectStatusVocabulary(raw: unknown): CapacitiesStatusVocabulary {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSettingsError("statuses must be an object");
+  }
+  const record = raw as Wire;
+  if (
+    Object.keys(record).some(
+      (key) => !(CAPACITIES_SETTINGS_STATUS_KEYS as readonly string[]).includes(key),
+    )
+  ) {
+    throw capacitiesSettingsError("statuses has unknown keys");
+  }
+  return {
+    open: projectAdmissionValues(record.open, "statuses.open"),
+    completed: projectAdmissionValues(record.completed, "statuses.completed"),
+  };
+}
+
+/** Project the ``native`` block: the inclusive deadline horizon. */
+function projectNativePolicy(raw: unknown): CapacitiesNativePolicy {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSettingsError("native must be an object");
+  }
+  const record = raw as Wire;
+  if (
+    Object.keys(record).some(
+      (key) => !(CAPACITIES_SETTINGS_NATIVE_KEYS as readonly string[]).includes(key),
+    ) ||
+    !CAPACITIES_SETTINGS_NATIVE_KEYS.every((key) =>
+      Object.prototype.hasOwnProperty.call(record, key),
+    )
+  ) {
+    throw capacitiesSettingsError("native has unknown or missing keys");
+  }
+  const horizon = record.deadline_horizon_days;
+  if (typeof horizon !== "number" || !Number.isSafeInteger(horizon) || horizon < 0) {
+    throw capacitiesSettingsError("deadline_horizon_days must be a nonnegative integer");
+  }
+  return { deadlineHorizonDays: horizon };
+}
+
+/** Project ONE type declaration. ``mode`` is closed and required, ``property``
+    is required iff the mode is one of the two property modes and forbidden
+    otherwise, and ``statuses`` is deliberately tri-state: absent/``null``
+    inherits ``statuses.open``, ``[]`` disables status admission for this
+    structure, and a non-empty list is the structure's own open names. The
+    projection NEVER collapses ``[]`` into ``null`` (or the reverse): the two
+    mean opposite things to the evaluator. */
+function projectTypeDeclaration(
+  structureId: string,
+  raw: unknown,
+): CapacitiesTypeDeclaration {
+  const key = `types.${structureId}`;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSettingsError(`${key} must be an object`);
+  }
+  const record = raw as Wire;
+  if (
+    Object.keys(record).some(
+      (name) => !(CAPACITIES_TYPE_DECLARATION_KEYS as readonly string[]).includes(name),
+    )
+  ) {
+    throw capacitiesSettingsError(`${key} has unknown keys`);
+  }
+  const mode = record.mode;
+  if (
+    typeof mode !== "string" ||
+    !(CAPACITIES_TYPE_MODES as readonly string[]).includes(mode)
+  ) {
+    throw capacitiesSettingsError(`${key}.mode is not a supported admission mode`);
+  }
+  const requiresProperty = (CAPACITIES_PROPERTY_MODES as readonly string[]).includes(mode);
+  const rawProperty = record.property ?? null;
+  let property: string | null = null;
+  if (requiresProperty) {
+    if (!isCanonicalAdmissionValue(rawProperty)) {
+      throw capacitiesSettingsError(`${key}.property is required for mode ${mode}`);
+    }
+    property = rawProperty;
+  } else if (rawProperty !== null) {
+    throw capacitiesSettingsError(`${key}.property is forbidden for mode ${mode}`);
+  }
+  const rawStatuses = record.statuses;
+  const statuses =
+    rawStatuses === undefined || rawStatuses === null
+      ? null
+      : projectAdmissionValues(rawStatuses, `${key}.statuses`);
+  return { mode: mode as CapacitiesTypeMode, property, statuses };
+}
+
+/** Project the additive ``migrated_from`` marker: absent means the stored file
+    is already schema version 2 (projected as null), and the only value a schema
+    version 2 client can act on is the documented ``1``. */
+function projectMigratedFrom(raw: unknown): number | null {
+  if (raw === undefined) return null;
+  if (typeof raw !== "number" || raw !== 1) {
+    throw capacitiesSettingsError("migrated_from is unsupported");
+  }
+  return raw;
+}
+
 /** Project the strict local settings response. The backend is fail-closed;
     the client must not turn a malformed response into a plausible default. */
 export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
@@ -321,35 +428,25 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
   if (typeof wire.persisted !== "boolean") {
     throw capacitiesSettingsError("persisted must be a boolean");
   }
-  if (raw.version !== 1) {
+  if (raw.version !== 2) {
     throw capacitiesSettingsError("version is unsupported");
   }
   if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
     throw capacitiesSettingsError("revision must be a nonnegative safe integer");
   }
-  const native = raw.native_task_auto;
-  if (!native || typeof native !== "object" || Array.isArray(native)) {
-    throw capacitiesSettingsError("native_task_auto is malformed");
+  const statuses = projectStatusVocabulary(raw.statuses);
+  const typesRaw = raw.types;
+  if (!typesRaw || typeof typesRaw !== "object" || Array.isArray(typesRaw)) {
+    throw capacitiesSettingsError("types must be an object");
   }
-  if (
-    Object.keys(native).some((key) => !(CAPACITIES_SETTINGS_NATIVE_KEYS as readonly string[]).includes(key)) ||
-    CAPACITIES_SETTINGS_NATIVE_KEYS.some((key) => !Object.prototype.hasOwnProperty.call(native, key))
-  ) {
-    throw capacitiesSettingsError("native_task_auto has unknown or missing keys");
-  }
-  const boolKeys = ["active_enabled", "due_enabled", "deadline_enabled"] as const;
-  for (const key of boolKeys) {
-    if (typeof native[key] !== "boolean") {
-      throw capacitiesSettingsError(`${key} must be a boolean`);
+  const types: Record<string, CapacitiesTypeDeclaration> = {};
+  for (const [structureId, declaration] of Object.entries(typesRaw)) {
+    if (!isCanonicalCapacitiesStructureId(structureId)) {
+      throw capacitiesSettingsError("types contains an invalid structure id");
     }
+    types[structureId] = projectTypeDeclaration(structureId, declaration);
   }
-  if (
-    typeof native.deadline_horizon_days !== "number" ||
-    !Number.isSafeInteger(native.deadline_horizon_days) ||
-    native.deadline_horizon_days < 0
-  ) {
-    throw capacitiesSettingsError("deadline_horizon_days must be a nonnegative integer");
-  }
+  const native = projectNativePolicy(raw.native);
   const excluded = raw.excluded;
   if (!excluded || typeof excluded !== "object" || Array.isArray(excluded)) {
     throw capacitiesSettingsError("excluded must be an object");
@@ -360,70 +457,6 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     }
     return identity;
   });
-  // ``active_structures`` was added additively to schema version 1: an older
-  // backend/response that omits the key means the empty set. When present it
-  // is strict, matching the excluded-object treatment above.
-  const activeRaw = raw.active_structures;
-  let activeStructures: string[] = [];
-  if (activeRaw !== undefined) {
-    if (!activeRaw || typeof activeRaw !== "object" || Array.isArray(activeRaw)) {
-      throw capacitiesSettingsError("active_structures must be an object");
-    }
-    activeStructures = Object.entries(activeRaw).map(([structureId, flag]) => {
-      if (!isCanonicalCapacitiesStructureId(structureId) || flag !== true) {
-        throw capacitiesSettingsError("active_structures contains an invalid structure id");
-      }
-      return structureId;
-    });
-  }
-  // ``native_task_structures`` and ``active_statuses`` were added additively
-  // to schema version 1 with the same optional-on-read rule as
-  // ``active_structures``. Their documented defaults are non-empty (the store
-  // reads a legacy file that way), so an absent key projects the default
-  // rather than the dangerous empty set.
-  const nativeRaw = raw.native_task_structures;
-  const nativeTaskStructures =
-    nativeRaw === undefined
-      ? ["RootTask", "Task"]
-      : projectAdmissionValues(nativeRaw, "native_task_structures");
-  const statusRaw = raw.active_statuses;
-  const activeStatuses =
-    statusRaw === undefined
-      ? ["active"]
-      : projectAdmissionValues(statusRaw, "active_statuses");
-  // ``assigned_structures`` is optional on read like the admission keys; an
-  // absent key means no declarations. When present it is strict: canonical
-  // structure ids with non-empty opaque property ids kept exactly as stored.
-  const assignedRaw = raw.assigned_structures;
-  let assignedStructures: Record<string, string> = {};
-  if (assignedRaw !== undefined) {
-    if (!assignedRaw || typeof assignedRaw !== "object" || Array.isArray(assignedRaw)) {
-      throw capacitiesSettingsError("assigned_structures must be an object");
-    }
-    for (const [structureId, propertyId] of Object.entries(assignedRaw)) {
-      if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
-        throw capacitiesSettingsError("assigned_structures contains an invalid declaration");
-      }
-      assignedStructures[structureId] = propertyId;
-    }
-  }
-  // ``assigned_on_structures`` follows the identical additive-key contract:
-  // optional on read (an absent key means no declarations), strict when
-  // present, canonical structure ids with non-empty opaque property ids kept
-  // exactly as stored. It declares READ-ONLY date/datetime markers.
-  const assignedOnRaw = raw.assigned_on_structures;
-  let assignedOnStructures: Record<string, string> = {};
-  if (assignedOnRaw !== undefined) {
-    if (!assignedOnRaw || typeof assignedOnRaw !== "object" || Array.isArray(assignedOnRaw)) {
-      throw capacitiesSettingsError("assigned_on_structures must be an object");
-    }
-    for (const [structureId, propertyId] of Object.entries(assignedOnRaw)) {
-      if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
-        throw capacitiesSettingsError("assigned_on_structures contains an invalid declaration");
-      }
-      assignedOnStructures[structureId] = propertyId;
-    }
-  }
   // ``available_structures`` is read-only advisory metadata added at the top
   // level of the settings response. It is tolerant when absent (an older
   // backend) and strict when present.
@@ -469,22 +502,50 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     version: raw.version,
     revision: raw.revision,
     persisted: wire.persisted,
-    nativeTaskAuto: {
-      activeEnabled: native.active_enabled,
-      dueEnabled: native.due_enabled,
-      deadlineEnabled: native.deadline_enabled,
-      deadlineHorizonDays: native.deadline_horizon_days,
-    },
+    statuses,
+    types,
+    native,
     excluded: identities.sort(),
-    activeStructures: activeStructures.sort(),
-    nativeTaskStructures,
-    activeStatuses,
-    assignedStructures,
-    assignedOnStructures,
     availableStructures,
     structureTitles,
     declarationDiagnostics,
+    migratedFrom: projectMigratedFrom(wire.migrated_from),
   };
+}
+
+/** One declaration as the save body states it: ``mode`` always, ``property``
+    always (null outside the two property modes), and ``statuses`` always —
+    null for "inherit", ``[]`` for "status admission off here", names for a
+    custom list. Sending the tri-state explicitly is what keeps ``[]`` and
+    ``null`` distinguishable across the round trip. */
+function typeDeclarationToWire(
+  structureId: string,
+  declaration: CapacitiesTypeDeclaration,
+): Wire {
+  const key = `types.${structureId}`;
+  if (!isCanonicalCapacitiesStructureId(structureId)) {
+    throw new Error("types contains an invalid structure id");
+  }
+  const mode = declaration.mode;
+  if (!(CAPACITIES_TYPE_MODES as readonly string[]).includes(mode)) {
+    throw new Error(`${key}.mode is not a supported admission mode`);
+  }
+  const requiresProperty = (CAPACITIES_PROPERTY_MODES as readonly string[]).includes(mode);
+  if (requiresProperty) {
+    if (!isCanonicalAdmissionValue(declaration.property)) {
+      throw new Error(`${key}.property is required for mode ${mode}`);
+    }
+  } else if (declaration.property !== null) {
+    throw new Error(`${key}.property is forbidden for mode ${mode}`);
+  }
+  let statuses: string[] | null = null;
+  if (declaration.statuses !== null) {
+    statuses = [...new Set(declaration.statuses)].sort();
+    if (!statuses.every(isCanonicalAdmissionValue)) {
+      throw new Error(`${key}.statuses contains an invalid value`);
+    }
+  }
+  return { mode, property: requiresProperty ? declaration.property : null, statuses };
 }
 
 /** Build the full-replacement body expected by POST /settings/capacities/save. */
@@ -492,71 +553,47 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
     throw new Error("expectedRevision must be a nonnegative safe integer");
   }
-  const policy: CapacitiesNativeTaskAutoPolicy = draft.nativeTaskAuto;
+  // The status vocabulary and the declarations are always emitted: the route
+  // is a full replacement, so omission would reset the vocabulary and turn
+  // every structure off.
+  const vocabulary = draft.statuses;
+  if (!vocabulary || !Array.isArray(vocabulary.open) || !Array.isArray(vocabulary.completed)) {
+    throw new Error("statuses must carry open and completed lists");
+  }
+  const open = [...new Set(vocabulary.open)].sort();
+  if (!open.every(isCanonicalAdmissionValue)) {
+    throw new Error("statuses.open contains an invalid value");
+  }
+  const completed = [...new Set(vocabulary.completed)].sort();
+  if (!completed.every(isCanonicalAdmissionValue)) {
+    throw new Error("statuses.completed contains an invalid value");
+  }
+  const policy = draft.native;
   if (
-    typeof policy.activeEnabled !== "boolean" ||
-    typeof policy.dueEnabled !== "boolean" ||
-    typeof policy.deadlineEnabled !== "boolean" ||
+    !policy ||
     !Number.isSafeInteger(policy.deadlineHorizonDays) ||
     policy.deadlineHorizonDays < 0
   ) {
-    throw new Error("native Capacities Task Auto policy is malformed");
+    throw new Error("native Capacities policy is malformed");
   }
   const identities = [...new Set(draft.excluded)].sort();
   if (!identities.every((identity) => isCanonicalCapacitiesIdentity(identity))) {
     throw new Error("excluded contains an invalid Capacities identity");
   }
-  const activeStructures = [...new Set(draft.activeStructures)].sort();
-  if (!activeStructures.every((structureId) => isCanonicalCapacitiesStructureId(structureId))) {
-    throw new Error("activeStructures contains an invalid structure id");
-  }
-  // The admission keys are plain string lists, and every save carries both:
-  // omission would make the full-replacement route reset them to the
-  // documented defaults instead of leaving them unchanged.
-  const nativeTaskStructures = [...new Set(draft.nativeTaskStructures)].sort();
-  if (!nativeTaskStructures.every(isCanonicalAdmissionValue)) {
-    throw new Error("nativeTaskStructures contains an invalid value");
-  }
-  const activeStatuses = [...new Set(draft.activeStatuses)].sort();
-  if (!activeStatuses.every(isCanonicalAdmissionValue)) {
-    throw new Error("activeStatuses contains an invalid value");
-  }
-  // The declaration map is always emitted too: the full-replacement route
-  // replaces it wholesale, so omission would wipe every declaration.
-  const assignedEntries = Object.entries(draft.assignedStructures);
-  for (const [structureId, propertyId] of assignedEntries) {
-    if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
-      throw new Error("assignedStructures contains an invalid declaration");
-    }
-  }
-  const assignedStructures = Object.fromEntries(
-    assignedEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
-  // The Assigned On map is emitted for the same reason: the full-replacement
-  // route replaces it wholesale, so omission would wipe every declaration.
-  const assignedOnEntries = Object.entries(draft.assignedOnStructures);
-  for (const [structureId, propertyId] of assignedOnEntries) {
-    if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
-      throw new Error("assignedOnStructures contains an invalid declaration");
-    }
-  }
-  const assignedOnStructures = Object.fromEntries(
-    assignedOnEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  const types = Object.fromEntries(
+    Object.entries(draft.types ?? {})
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([structureId, declaration]) => [
+        structureId,
+        typeDeclarationToWire(structureId, declaration),
+      ]),
   );
   return {
     expected_revision: draft.expectedRevision,
-    native_task_auto: {
-      active_enabled: policy.activeEnabled,
-      due_enabled: policy.dueEnabled,
-      deadline_enabled: policy.deadlineEnabled,
-      deadline_horizon_days: policy.deadlineHorizonDays,
-    },
+    statuses: { open, completed },
+    types,
+    native: { deadline_horizon_days: policy.deadlineHorizonDays },
     excluded: Object.fromEntries(identities.map((identity) => [identity, true])),
-    active_structures: Object.fromEntries(activeStructures.map((structureId) => [structureId, true])),
-    native_task_structures: nativeTaskStructures,
-    active_statuses: activeStatuses,
-    assigned_structures: assignedStructures,
-    assigned_on_structures: assignedOnStructures,
   };
 }
 

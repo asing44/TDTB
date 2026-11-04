@@ -1,6 +1,14 @@
-/* CapacitiesSettingsPanel — local TDTB assignment policy. This surface reads
-   and saves the versioned local settings route only; it never discovers or
-   mutates Capacities objects.
+/* CapacitiesSettingsPanel — local TDTB admission policy. This surface reads and
+   saves the versioned local settings route only; it never discovers or mutates
+   Capacities objects.
+
+   Schema version 2 states ONE rule per item type, so the panel is:
+     - one shared status vocabulary (open + completed),
+     - the native deadline horizon,
+     - one row per type with a five-option rule selector.
+   The previous three overlapping surfaces (automatic-task toggles, per-type
+   Active/Assigned/Assigned On switches, and a bare status list) are gone; every
+   one of them was a partial statement of the same rule.
 
    The body is mounted by SettingsShell for the life of the shell (whether or
    not this tab is selected), so unsaved drafts survive panel switches; the
@@ -13,7 +21,14 @@ import {
   CapacitiesAdmissionRow,
   admissionModeOf,
   applyAdmissionMode,
+  applyCustomStatusNames,
+  applyStatusChoice,
+  declarationOf,
+  statusChoiceOf,
+  usesStatus,
+  isPropertyMode,
   type CapacitiesAdmissionMode,
+  type CapacitiesStatusChoice,
 } from "./CapacitiesAdmissionRow";
 import { CapacitiesSourceEditor } from "./CapacitiesSourceEditor";
 import { CapacitiesRefreshPanel } from "./CapacitiesRefreshPanel";
@@ -29,61 +44,46 @@ import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
   CapacitiesCatalog,
-  CapacitiesNativeTaskAutoPolicy,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesTypeDeclaration,
 } from "../model/types";
 import {
   capacitiesAssignedOnWarnings,
   capacitiesAssignmentWarnings,
+  capacitiesSettingsToWire,
   isCanonicalCapacitiesIdentity,
 } from "../adapters/wire";
-import { ApiError } from "../adapters/api";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** POST /settings/capacities/save refuses a contradictory dual declaration (one
-    item type declaring an Assigned checkbox AND an Assigned On date) with its
-    own 422 code before any write. The server's sentence names the structure and
-    both properties, so it is shown verbatim in the save-error notice instead of
-    being flattened into a generic failure. Any other status or code answers
-    null, so the caller keeps the ordinary error path. */
-function declarationConflictMessageOf(error: unknown): string | null {
-  if (!(error instanceof ApiError) || error.status !== 422) return null;
-  const detail = error.detail;
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
-  const record = detail as { code?: unknown; message?: unknown };
-  if (record.code !== "capacities_settings_declaration_conflict") return null;
-  if (typeof record.message === "string" && record.message.trim() !== "") {
-    return record.message;
-  }
-  return "This save was refused: one item type cannot declare both an Assigned checkbox and an Assigned On date.";
-}
-
 /** Advisories listed inline before the rest fold into one "and N more" tail,
-    so a long drift list cannot push the mapping controls off the panel. */
+    so a long drift list cannot push the rule controls off the panel. */
 export const CAPACITIES_DECLARATION_DIAGNOSTIC_CAP = 5;
 
+/** The draft is a full-replacement document: every key the save route replaces
+    wholesale is copied here, including each declaration's `statuses`
+    tri-state, which must reach the wire unchanged. */
 function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
+  const types: Record<string, CapacitiesTypeDeclaration> = {};
+  for (const [structureId, declaration] of Object.entries(settings.types)) {
+    types[structureId] = {
+      mode: declaration.mode,
+      property: declaration.property,
+      statuses: declaration.statuses === null ? null : [...declaration.statuses],
+    };
+  }
   return {
     expectedRevision: settings.revision,
-    nativeTaskAuto: { ...settings.nativeTaskAuto },
+    statuses: {
+      open: [...settings.statuses.open],
+      completed: [...settings.statuses.completed],
+    },
+    types,
+    native: { deadlineHorizonDays: settings.native.deadlineHorizonDays },
     excluded: [...settings.excluded],
-    // Round-tripped verbatim: this slice adds no editor, but a save must not
-    // silently clear the server's active-structure inclusion set.
-    activeStructures: [...settings.activeStructures],
-    // Both admission keys are always sent: the save route is a full
-    // replacement, so omitting either would reset it to the documented
-    // default instead of leaving it unchanged.
-    nativeTaskStructures: [...settings.nativeTaskStructures],
-    activeStatuses: [...settings.activeStatuses],
-    // The settings-declared assignment map is always sent: the save route is
-    // a full replacement, so omitting it would wipe every declaration.
-    assignedStructures: { ...settings.assignedStructures },
-    // The read-only Assigned On map follows the same full-replacement rule.
-    assignedOnStructures: { ...settings.assignedOnStructures },
   };
 }
 
@@ -120,16 +120,14 @@ export function CapacitiesSettingsPanel({
   const [phase, setPhase] = useState<"loading" | "ready" | "saving" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [horizonText, setHorizonText] = useState("");
-  const [statusText, setStatusText] = useState("");
+  const [openText, setOpenText] = useState("");
+  const [completedText, setCompletedText] = useState("");
   // Admission pickers read the same provider discovery the source mapping
   // editor does. Nothing is fetched until the operator asks for it: the
   // lookup is one token-guarded read, never a mount-time provider call.
   const [catalog, setCatalog] = useState<CapacitiesCatalog | null>(null);
   const [spaceId, setSpaceId] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
-  // A Requires mode has no declaration until a property is picked, so the draft
-  // alone cannot show it: the chosen mode is kept here until a property lands.
-  const [pendingModes, setPendingModes] = useState<Record<string, CapacitiesAdmissionMode>>({});
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const close = () => store.dispatch({ type: "UI", patch: { settingsPanel: null } });
 
@@ -140,7 +138,7 @@ export function CapacitiesSettingsPanel({
       const loaded = await controller.loadCapacitiesSettings();
       setSettings(loaded);
       setDraft(draftOf(loaded));
-      setHorizonText(String(loaded.nativeTaskAuto.deadlineHorizonDays));
+      setHorizonText(String(loaded.native.deadlineHorizonDays));
       setPhase("ready");
     } catch (e) {
       setPhase("error");
@@ -157,8 +155,8 @@ export function CapacitiesSettingsPanel({
   const known = knownCapacitiesItems(s.inputs?.assigned ?? []);
   const knownIds = new Set(known.map(identityOf).filter((id): id is string => id !== null));
   const hiddenExclusions = (draft?.excluded ?? []).filter((identity) => !knownIds.has(identity));
-  // The source mapping is the only non-circular inventory of
-  // structures to offer. Ids the server already honours but the mapping no
+  // The source mapping is the only non-circular inventory of structures to
+  // offer. Ids the server already holds a declaration for but the mapping no
   // longer lists are preserved on save, mirroring hiddenExclusions — and
   // surfaced rather than silently dropped.
   const availableStructures = settings?.availableStructures ?? [];
@@ -171,23 +169,7 @@ export function CapacitiesSettingsPanel({
     return title && title !== structureId ? title : null;
   };
   const availableStructureIds = new Set(availableStructures);
-  const staleActiveStructures = (draft?.activeStructures ?? []).filter(
-    (structureId) => !availableStructureIds.has(structureId),
-  );
-  // Same retention rule as the Active-pull set: an id the server already
-  // honours but the mapping no longer lists is preserved on save and surfaced
-  // instead of silently dropped.
-  const staleNativeStructures = (draft?.nativeTaskStructures ?? []).filter(
-    (structureId) => !availableStructureIds.has(structureId),
-  );
-  // A declaration whose structure the server honours but the mapping no longer
-  // lists is retained on save and surfaced, exactly like the stale set above.
-  const assignedStructures = draft?.assignedStructures ?? {};
-  const staleAssignedStructures = Object.keys(assignedStructures)
-    .filter((structureId) => !availableStructureIds.has(structureId))
-    .sort();
-  const assignedOnStructures = draft?.assignedOnStructures ?? {};
-  const staleAssignedOnStructures = Object.keys(assignedOnStructures)
+  const staleStructureIds = Object.keys(draft?.types ?? {})
     .filter((structureId) => !availableStructureIds.has(structureId))
     .sort();
   // The backend emits one warning per declaration it could not honour. The
@@ -195,16 +177,12 @@ export function CapacitiesSettingsPanel({
   // deliberately NOT part of the readiness rail (the operator flagged the
   // rail as too verbose, and a configuration fact belongs beside the control
   // that declares it).
-  const assignmentWarnings = capacitiesAssignmentWarnings(
-    s.inputs?.sourceWarnings ?? [],
-  );
-  const assignedOnWarnings = capacitiesAssignedOnWarnings(
-    s.inputs?.sourceWarnings ?? [],
-  );
+  const assignmentWarnings = capacitiesAssignmentWarnings(s.inputs?.sourceWarnings ?? []);
+  const assignedOnWarnings = capacitiesAssignedOnWarnings(s.inputs?.sourceWarnings ?? []);
   // Read-only advisories from the server: a saved declaration names a property
   // the last published Capacities contract does not define, so it admits
   // nothing today. Non-blocking — the panel still saves, and nothing here
-  // edits a mapping. The list is bounded so a long drift list stays compact.
+  // edits a declaration. The list is bounded so a long drift list stays compact.
   const declarationDiagnostics = settings?.declarationDiagnostics ?? [];
   const shownDeclarationDiagnostics = declarationDiagnostics.slice(
     0,
@@ -214,15 +192,43 @@ export function CapacitiesSettingsPanel({
     declarationDiagnostics.length - shownDeclarationDiagnostics.length;
   const horizonValue = Number(horizonText);
   const horizonTextValid = /^\d+$/.test(horizonText) && Number.isSafeInteger(horizonValue);
-  const policy = draft?.nativeTaskAuto;
-  const horizonInvalid = policy?.deadlineEnabled === true && !horizonTextValid;
+  // A property rule with no property cannot be saved: the route requires a raw
+  // property id for exactly those two modes. The panel says which types are
+  // unfinished instead of letting the save fail.
+  const unfinishedPropertyIds = Object.entries(draft?.types ?? {})
+    .filter(([, declaration]) => isPropertyMode(declaration.mode) && declaration.property === null)
+    .map(([structureId]) => structureId)
+    .sort();
+  const saveBlocked = !horizonTextValid || unfinishedPropertyIds.length > 0;
 
-  const updatePolicy = (patch: Partial<CapacitiesNativeTaskAutoPolicy>) => {
-    setDraft((current) =>
-      current
-        ? { ...current, nativeTaskAuto: { ...current.nativeTaskAuto, ...patch } }
-        : current,
-    );
+  const setStatusNameList = (
+    values: (current: CapacitiesSettingsDraft) => CapacitiesSettingsDraft,
+  ) => setDraft((current) => (current ? values(current) : current));
+
+  const addVocabularyName = (dimension: "open" | "completed") => {
+    const text = dimension === "open" ? openText : completedText;
+    const value = text.trim();
+    if (dimension === "open") setOpenText("");
+    else setCompletedText("");
+    if (value === "") return;
+    setStatusNameList((current) => {
+      const names = current.statuses[dimension];
+      if (names.includes(value)) return current;
+      return {
+        ...current,
+        statuses: { ...current.statuses, [dimension]: [...names, value].sort() },
+      };
+    });
+  };
+
+  const removeVocabularyName = (dimension: "open" | "completed", name: string) => {
+    setStatusNameList((current) => ({
+      ...current,
+      statuses: {
+        ...current.statuses,
+        [dimension]: current.statuses[dimension].filter((value) => value !== name),
+      },
+    }));
   };
 
   const toggleExclusion = (identity: string) => {
@@ -235,89 +241,49 @@ export function CapacitiesSettingsPanel({
     });
   };
 
-  const toggleActiveStructure = (structureId: string) => {
+  const setMode = (structureId: string, mode: CapacitiesAdmissionMode) => {
     setDraft((current) => {
       if (!current) return current;
-      const activeStructures = current.activeStructures.includes(structureId)
-        ? current.activeStructures.filter((value) => value !== structureId)
-        : [...current.activeStructures, structureId].sort();
-      return { ...current, activeStructures };
-    });
-  };
-
-  const toggleNativeStructure = (structureId: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const nativeTaskStructures = current.nativeTaskStructures.includes(structureId)
-        ? current.nativeTaskStructures.filter((value) => value !== structureId)
-        : [...current.nativeTaskStructures, structureId].sort();
-      return { ...current, nativeTaskStructures };
-    });
-  };
-
-  // An emptied field removes the declaration; any other value is kept exactly
-  // as typed (the property id is an opaque provider identifier), matching the
-  // store's validation.
-  const setAssignedProperty = (structureId: string, propertyId: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const next = { ...current.assignedStructures };
-      if (propertyId === "") delete next[structureId];
-      else next[structureId] = propertyId;
-      return { ...current, assignedStructures: next };
-    });
-  };
-
-  const setAssignedOnProperty = (structureId: string, propertyId: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const next = { ...current.assignedOnStructures };
-      if (propertyId === "") delete next[structureId];
-      else next[structureId] = propertyId;
-      return { ...current, assignedOnStructures: next };
-    });
-  };
-
-  // One control per type: the mode decides which draft keys exist, and any
-  // Requires mode also switches the structure on. The property id travels
-  // with the mode so switching between the two Requires modes keeps the
-  // operator's pick when it still applies.
-  const setAdmission = (structureId: string, mode: CapacitiesAdmissionMode) => {
-    setPendingModes((current) => {
-      const next = { ...current };
-      if (mode === "assigned" || mode === "assignedOn") next[structureId] = mode;
-      else delete next[structureId];
-      return next;
-    });
-    setDraft((current) => {
-      if (!current) return current;
-      // Only the id already declared for THIS mode travels with the change: a
-      // checkbox property is never written into the date map, or the reverse.
-      const propertyId =
-        mode === "assigned"
-          ? (current.assignedStructures[structureId] ?? "")
-          : mode === "assignedOn"
-            ? (current.assignedOnStructures[structureId] ?? "")
-            : "";
+      const declared = declarationOf(current, structureId);
+      // Switching between the two property rules keeps the operator's pick
+      // when it still applies; anything else drops the raw id, because a mode
+      // that declares no property must not send one.
+      const propertyId = isPropertyMode(mode) && isPropertyMode(declared.mode)
+        ? (declared.property ?? "")
+        : "";
       return applyAdmissionMode(current, structureId, mode, propertyId);
     });
   };
 
-  const setAdmissionProperty = (
+  const setProperty = (structureId: string, propertyId: string) => {
+    setDraft((current) =>
+      current
+        ? applyAdmissionMode(current, structureId, admissionModeOf(current, structureId), propertyId)
+        : current,
+    );
+  };
+
+  const setStatusChoice = (
     structureId: string,
-    mode: CapacitiesAdmissionMode,
-    propertyId: string,
+    choice: CapacitiesStatusChoice,
   ) => {
-    setPendingModes((current) => {
-      const next = { ...current };
-      if (propertyId === "") next[structureId] = mode;
-      else delete next[structureId];
-      return next;
-    });
     setDraft((current) => {
       if (!current) return current;
-      return applyAdmissionMode(current, structureId, mode, propertyId);
+      const declared = declarationOf(current, structureId);
+      // Picking "custom" for a declaration that inherits starts from the shared
+      // list, so the operator edits names instead of an empty field.
+      const names =
+        choice === "custom" && declared.statuses === null
+          ? [...(current.statuses.open ?? [])]
+          : (declared.statuses ?? []);
+      return applyStatusChoice(current, structureId, choice, names);
     });
+  };
+
+  const setCustomStatusNames = (structureId: string, names: string[]) => {
+    setDraft((current) =>
+      current ? applyCustomStatusNames(current, structureId, names) : current,
+    );
   };
 
   // Discovery needs the space id, which only the source mapping record
@@ -353,65 +319,48 @@ export function CapacitiesSettingsPanel({
       : (catalog.structures.find((structure) => structure.structureId === structureId)
           ?.properties ?? []);
 
-  // ``active_statuses`` is free text: the settings API exposes no status
-  // inventory (the source mapping's per-structure status values never
-  // cross the wire), so every saved value is an explicit entry that is kept
-  // verbatim and removed only by hand.
-  const addStatus = () => {
-    const value = statusText.trim();
-    setStatusText("");
-    if (value === "") return;
-    setDraft((current) => {
-      if (!current || current.activeStatuses.includes(value)) return current;
-      return { ...current, activeStatuses: [...current.activeStatuses, value] };
-    });
-  };
-
-  const removeStatus = (status: string) => {
-    setDraft((current) =>
-      current
-        ? { ...current, activeStatuses: current.activeStatuses.filter((value) => value !== status) }
-        : current,
-    );
-  };
-
   const save = async () => {
-    if (!draft || horizonInvalid) return;
-    // The backend requires a valid stored horizon even when the rule is off.
-    // If the disabled control contains an unfinished edit, preserve the last
-    // valid policy value rather than turning an empty field into zero.
-    const horizon = horizonTextValid
-      ? horizonValue
-      : draft.nativeTaskAuto.deadlineHorizonDays;
+    if (!draft || saveBlocked) return;
+    // The backend requires a valid stored horizon even when no type uses the
+    // native rules today.
+    const horizon = horizonTextValid ? horizonValue : draft.native.deadlineHorizonDays;
     if (!Number.isSafeInteger(horizon) || horizon < 0) {
       setError("Deadline horizon must be a nonnegative whole number of days.");
       return;
     }
     const next: CapacitiesSettingsDraft = {
       ...draft,
-      nativeTaskAuto: { ...draft.nativeTaskAuto, deadlineHorizonDays: horizon },
+      native: { deadlineHorizonDays: horizon },
     };
+    // A malformed draft must fail here, in the operator's own words, rather
+    // than at the route: the wire builder owns the exact schema-v2 contract.
+    try {
+      capacitiesSettingsToWire(next);
+    } catch (e) {
+      setError(messageOf(e));
+      return;
+    }
     setPhase("saving");
     setError(null);
     try {
       const saved = await controller.saveCapacitiesSettings(next);
       setSettings(saved);
       setDraft(draftOf(saved));
-      setHorizonText(String(saved.nativeTaskAuto.deadlineHorizonDays));
+      setHorizonText(String(saved.native.deadlineHorizonDays));
       close();
     } catch (e) {
       setPhase("ready");
-      setError(declarationConflictMessageOf(e) ?? messageOf(e));
+      setError(messageOf(e));
     }
   };
 
+  const migrated = settings?.migratedFrom === 1;
+
   return (
     <div class="settings-panel settings-panel--capacities">
-        <ul class="capacities-settings__concepts" aria-label="Which section to use">
-          <li>Use “How each item type gets in” to pick which Capacities types can appear, by Assigned or Assigned On date, or when Active.</li>
-          <li>Use “Automatic task rules” to bring in task-type items that are active, due, or have a deadline soon.</li>
-          <li>Use “Fine-tune by item type” (in What shows up in my plan?) only rarely, for per-type tweaks to what you already see.</li>
-        </ul>
+        <p class="capacities-settings__concepts">
+          Each type has one rule for getting into your plan.
+        </p>
         <p class="capacities-settings__intro">
           TDTB assignment policy is stored locally and keyed by stable Capacities identity.
           Saving here does not write object properties, discover provider data, or activate a live route.
@@ -430,6 +379,11 @@ export function CapacitiesSettingsPanel({
 
         {draft && phase !== "loading" && (
           <>
+            {migrated && (
+              <section class="capacities-rule__notice capacities-settings__migration" role="status">
+                Your saved settings use the older format; saving rewrites them and keeps a backup.
+              </section>
+            )}
             {declarationDiagnostics.length > 0 && (
               <section
                 class="capacities-rule__notice capacities-declarations"
@@ -443,7 +397,7 @@ export function CapacitiesSettingsPanel({
                   </span>
                   <span>
                     This is a saved setting, not a read failure. Planning still works; pick a live
-                    property under “How each item type gets in”, or clear the mapping.
+                    property in the rule below, or switch that type off.
                   </span>
                 </p>
                 <ul class="capacities-declarations__list">
@@ -467,9 +421,10 @@ export function CapacitiesSettingsPanel({
                 )}
               </section>
             )}
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-auto">
+
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-per-type" data-settings-section="admission-per-type">
               <div class="setup-section__head">
-                <h3 id="capacities-sec-auto">Automatic task rules</h3>
+                <h3 id="capacities-sec-per-type">How each item type gets in</h3>
                 <Tooltip
                   label={NATIVE_RULES_LABEL}
                   detail={NATIVE_RULES_DETAIL}
@@ -485,41 +440,69 @@ export function CapacitiesSettingsPanel({
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  These rules are OR conditions for the structures admitted below. Completed and dropped objects remain excluded.
+                  Each type has exactly one rule. “Active by status” brings in items whose status is
+                  one of the open names below. “Assigned checkbox” and “Assigned On date” need a
+                  Capacities property of their own kind. “Native task rules” use status, the due
+                  date, and the deadline window together.
                 </p>
-                <label class="capacities-setting-row">
-                  <input
-                    type="checkbox"
-                    checked={policy?.activeEnabled ?? false}
-                    onChange={(e) => updatePolicy({ activeEnabled: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                  <span>
-                    <strong>Active status</strong>
-                    <small>Include a task when its source status matches a configured status value.</small>
-                  </span>
-                </label>
-                <label class="capacities-setting-row">
-                  <input
-                    type="checkbox"
-                    checked={policy?.dueEnabled ?? false}
-                    onChange={(e) => updatePolicy({ dueEnabled: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                  <span>
-                    <strong>Due today or overdue</strong>
-                    <small>Include a task whose due date is today or earlier.</small>
-                  </span>
-                </label>
-                <label class="capacities-setting-row">
-                  <input
-                    type="checkbox"
-                    checked={policy?.deadlineEnabled ?? false}
-                    onChange={(e) => updatePolicy({ deadlineEnabled: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                  <span>
-                    <strong>Deadline window</strong>
-                    <small>Include a task whose deadline is overdue or within the horizon below.</small>
-                  </span>
-                </label>
+
+                <div class="capacities-settings__vocabulary">
+                  {(["open", "completed"] as const).map((dimension) => (
+                    <div class="field" key={dimension}>
+                      <h4>
+                        {dimension === "open" ? "Open statuses" : "Completed statuses"}
+                      </h4>
+                      <p class="capacities-settings__hint">
+                        {dimension === "open"
+                          ? "A type that inherits this list treats these names as open. Names are compared case- and whitespace-insensitively."
+                          : "These names always stay out of the plan, whatever a type's rule is."}
+                      </p>
+                      <div class="capacities-settings__horizon-control">
+                        <input
+                          type="text"
+                          aria-label={`Add an ${dimension} status name`}
+                          placeholder={dimension === "open" ? "e.g. In Progress" : "e.g. Dropped"}
+                          value={dimension === "open" ? openText : completedText}
+                          onInput={(e) => {
+                            const text = (e.currentTarget as HTMLInputElement).value;
+                            if (dimension === "open") setOpenText(text);
+                            else setCompletedText(text);
+                          }}
+                        />
+                        <button
+                          class="btn"
+                          onClick={() => addVocabularyName(dimension)}
+                          disabled={(dimension === "open" ? openText : completedText).trim() === ""}
+                        >
+                          Add name
+                        </button>
+                      </div>
+                      {draft.statuses[dimension].length === 0 ? (
+                        <p class="capacities-settings__empty">
+                          {dimension === "open"
+                            ? "No open names are configured, so inheriting types admit nothing by status."
+                            : "No completed names are configured."}
+                        </p>
+                      ) : (
+                        <div class="capacities-exclusion-list">
+                          {draft.statuses[dimension].map((name) => (
+                            <div class="capacities-exclusion-row" key={name}>
+                              <code>{name}</code>
+                              <button
+                                class="btn"
+                                aria-label={`Remove ${dimension} status ${name}`}
+                                onClick={() => removeVocabularyName(dimension, name)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
                 <div class="field capacities-settings__horizon">
                   <label for="capacities-deadline-horizon">Deadline coming up</label>
                   <div class="capacities-settings__horizon-control">
@@ -529,147 +512,30 @@ export function CapacitiesSettingsPanel({
                       min="0"
                       step="1"
                       value={horizonText}
-                      disabled={!policy?.deadlineEnabled}
                       onInput={(e) => {
                         const text = (e.currentTarget as HTMLInputElement).value;
                         setHorizonText(text);
                         const value = Number(text);
                         if (Number.isSafeInteger(value) && value >= 0) {
-                          updatePolicy({ deadlineHorizonDays: value });
+                          setDraft((current) =>
+                            current
+                              ? { ...current, native: { deadlineHorizonDays: value } }
+                              : current,
+                          );
                         }
                       }}
                     />
                     <span>calendar days</span>
                   </div>
-                  {horizonInvalid && <span class="field-error" role="alert">Use a nonnegative whole number.</span>}
-                </div>
-              </div>
-            </section>
-
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission">
-              <div class="setup-section__head">
-                <h3 id="capacities-sec-admission">What counts as active</h3>
-                {staleNativeStructures.length > 0 && (
-                  <span class="capacities-settings__revision">
-                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} not set up to appear
+                  <span class="capacities-settings__hint">
+                    Applies to “Native task rules”: a task whose deadline is overdue or within this
+                    many days comes in.
                   </span>
-                )}
-              </div>
-              <div class="setup-section__body">
-                <h4>Types with automatic task rules</h4>
-                <p class="capacities-settings__hint">
-                  Automatic task rules apply only to the types switched on here. The list comes from your Capacities setup (the same list as the per-type admission control below), not from today's plan.
-                </p>
-                {availableStructures.length === 0 ? (
-                  <p class="capacities-settings__empty">
-                    Your Capacities setup lists no types yet; saved choices are kept when you save.
-                  </p>
-                ) : (
-                  <div class="capacities-object-list" role="group" aria-label="Capacities structures admitted to the native Task Auto rules">
-                    {availableStructures.map((structureId) => {
-                      const admitted = draft.nativeTaskStructures.includes(structureId);
-                      const title = structureTitleOf(structureId);
-                      return (
-                        <div class="capacities-object-row" key={structureId}>
-                          <div class="capacities-object-row__identity">
-                            {title !== null && <strong>{title}</strong>}
-                            <code>{structureId}</code>
-                          </div>
-                          <div class="capacities-object-row__admission">
-                            <label class="capacities-object-row__toggle">
-                              <input
-                                type="checkbox"
-                                checked={admitted}
-                                aria-label={`Native admission for ${structureId}`}
-                                onChange={() => toggleNativeStructure(structureId)}
-                              />
-                              <span>{admitted ? "Automatic rules on" : "Automatic rules off"}</span>
-                            </label>
-                            {/* The row sits at the right edge of the panel, so
-                                a centred 340px bubble would run off the window
-                                and clip its own text. */}
-                            <Tooltip
-                              label={NATIVE_RULES_LABEL}
-                              detail={NATIVE_RULES_DETAIL}
-                              bubbleClass="tooltip--wide"
-                              align="end"
-                            >
-                              <button
-                                type="button"
-                                class="iconbtn"
-                                aria-label={NATIVE_RULES_TRIGGER_LABEL}
-                              >
-                                ?
-                              </button>
-                            </Tooltip>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {staleNativeStructures.length > 0 && (
-                  <div class="capacities-exclusion-list">
-                    <h4>Types not set up to appear (automatic rules)</h4>
-                    <p class="capacities-settings__hint">
-                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
-                    </p>
-                    {staleNativeStructures.map((structureId) => (
-                      <div class="capacities-exclusion-row" key={structureId}>
-                        <code>{structureId}</code>
-                        <button class="btn" onClick={() => toggleNativeStructure(structureId)}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <h4>Status values</h4>
-                <p class="capacities-settings__hint">
-                  A native-structure task is admitted by the Active status rule when its status matches one of these values (case- and whitespace-insensitive). The API exposes no status inventory, so this list is free-text; saved values are kept exactly.
-                </p>
-                <div class="field">
-                  <label for="capacities-status-value">Add a status value</label>
-                  <div class="capacities-settings__horizon-control">
-                    <input
-                      id="capacities-status-value"
-                      type="text"
-                      value={statusText}
-                      placeholder="e.g. In Progress"
-                      onInput={(e) => setStatusText((e.currentTarget as HTMLInputElement).value)}
-                    />
-                    <button class="btn" onClick={addStatus} disabled={statusText.trim() === ""}>Add status</button>
-                  </div>
+                  {!horizonTextValid && (
+                    <span class="field-error" role="alert">Use a nonnegative whole number.</span>
+                  )}
                 </div>
-                {draft.activeStatuses.length === 0 ? (
-                  <p class="capacities-settings__empty">
-                    No status values are configured, so the Active status rule admits nothing.
-                  </p>
-                ) : (
-                  <div class="capacities-exclusion-list">
-                    {draft.activeStatuses.map((status) => (
-                      <div class="capacities-exclusion-row" key={status}>
-                        <code>{status}</code>
-                        <button class="btn" onClick={() => removeStatus(status)} aria-label={`Remove status ${status}`}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
 
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission-per-type" data-settings-section="admission-per-type">
-              <div class="setup-section__head">
-                <h3 id="capacities-sec-admission-per-type">How each item type gets in</h3>
-                {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length > 0 && (
-                  <span class="capacities-settings__revision">
-                    {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length} saved {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length === 1 ? "structure" : "structures"} not set up to appear
-                  </span>
-                )}
-              </div>
-              <div class="setup-section__body">
-                <p class="capacities-settings__hint">
-                  One control per type says how its items get in. “Status only” brings in items whose status is Active. A Requires mode also brings the type in, and additionally needs a Capacities property: a date (the “Assigned to me” date, today or earlier) or an older checkbox. The list comes from your Capacities setup, not from today's plan.
-                </p>
                 {discoveryError !== null && (
                   <div class="capacities-admission__warn" role="alert">
                     {discoveryError}
@@ -701,6 +567,14 @@ export function CapacitiesSettingsPanel({
                     ))}
                   </div>
                 )}
+                {unfinishedPropertyIds.length > 0 && (
+                  <div class="capacities-settings__save-error" role="alert">
+                    <span>
+                      Pick a property for {unfinishedPropertyIds.join(", ")} — a checkbox or date
+                      rule cannot be saved without one.
+                    </span>
+                  </div>
+                )}
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
                     Your Capacities setup lists no types yet; saved settings are kept when you save.
@@ -708,25 +582,25 @@ export function CapacitiesSettingsPanel({
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities admission per item type">
                     {availableStructures.map((structureId) => {
-                      const mode = pendingModes[structureId] ?? admissionModeOf(draft, structureId);
-                      const declaredPropertyId =
-                        assignedOnStructures[structureId] ?? assignedStructures[structureId] ?? "";
+                      const declared = declarationOf(draft, structureId);
+                      const mode = admissionModeOf(draft, structureId);
                       return (
                         <CapacitiesAdmissionRow
                           key={structureId}
                           structureId={structureId}
                           title={structureTitleOf(structureId)}
                           mode={mode}
-                          declaredPropertyId={declaredPropertyId}
+                          propertyId={declared.property ?? ""}
                           properties={discoveredPropertiesOf(structureId)}
                           discovering={discovering}
-                          declaredButOff={
-                            declaredPropertyId !== "" &&
-                            !draft.activeStructures.includes(structureId)
-                          }
-                          onModeChange={(next) => setAdmission(structureId, next)}
-                          onPropertyChange={(propertyId) =>
-                            setAdmissionProperty(structureId, mode, propertyId)
+                          statusChoice={statusChoiceOf(declared)}
+                          customStatuses={declared.statuses ?? []}
+                          openStatuses={draft.statuses.open}
+                          onModeChange={(next) => setMode(structureId, next)}
+                          onPropertyChange={(propertyId) => setProperty(structureId, propertyId)}
+                          onStatusChoiceChange={(choice) => setStatusChoice(structureId, choice)}
+                          onCustomStatusesChange={(names) =>
+                            setCustomStatusNames(structureId, names)
                           }
                           onLookUp={() => void lookUpProperties()}
                         />
@@ -734,48 +608,28 @@ export function CapacitiesSettingsPanel({
                     })}
                   </div>
                 )}
-                {staleActiveStructures.length > 0 && (
+                {staleStructureIds.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Active-item types that are not set up to appear</h4>
+                    <h4>Types with a saved rule that are not set up to appear</h4>
                     <p class="capacities-settings__hint">
-                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
+                      These {staleStructureIds.length} saved {staleStructureIds.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
                     </p>
-                    {staleActiveStructures.map((structureId) => (
-                      <div class="capacities-exclusion-row" key={structureId}>
-                        <code>{structureId}</code>
-                        <button class="btn" onClick={() => toggleActiveStructure(structureId)}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {staleAssignedStructures.length > 0 && (
-                  <div class="capacities-exclusion-list">
-                    <h4>Types with settings that are not set up to appear</h4>
-                    <p class="capacities-settings__hint">
-                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
-                    </p>
-                    {staleAssignedStructures.map((structureId) => (
-                      <div class="capacities-exclusion-row" key={structureId}>
-                        <code>{structureId}</code>
-                        <code>{assignedStructures[structureId]}</code>
-                        <button class="btn" onClick={() => setAssignedProperty(structureId, "")}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {staleAssignedOnStructures.length > 0 && (
-                  <div class="capacities-exclusion-list">
-                    <h4>Types with an “Assigned to me” date that are not set up to appear</h4>
-                    <p class="capacities-settings__hint">
-                      These {staleAssignedOnStructures.length} saved {staleAssignedOnStructures.length === 1 ? "id is" : "ids are"} not set up to appear in your Capacities setup. They are kept as they are when you save.
-                    </p>
-                    {staleAssignedOnStructures.map((structureId) => (
-                      <div class="capacities-exclusion-row" key={structureId}>
-                        <code>{structureId}</code>
-                        <code>{assignedOnStructures[structureId]}</code>
-                        <button class="btn" onClick={() => setAssignedOnProperty(structureId, "")}>Remove</button>
-                      </div>
-                    ))}
+                    {staleStructureIds.map((structureId) => {
+                      const declared = declarationOf(draft, structureId);
+                      return (
+                        <div class="capacities-exclusion-row" key={structureId}>
+                          <code>{structureId}</code>
+                          <code>{usesStatus(declared.mode) ? `${declared.mode} · status` : declared.mode}</code>
+                          <button
+                            class="btn"
+                            aria-label={`Switch off the saved rule for ${structureId}`}
+                            onClick={() => setMode(structureId, "off")}
+                          >
+                            Switch off
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -844,7 +698,7 @@ export function CapacitiesSettingsPanel({
             )}
             <div class="editor__actions setup__actions">
               <button class="btn" onClick={close}>Cancel</button>
-              <button class="btn btn--primary" onClick={() => void save()} disabled={phase === "saving" || horizonInvalid}>
+              <button class="btn btn--primary" onClick={() => void save()} disabled={phase === "saving" || saveBlocked}>
                 {phase === "saving" ? "Saving…" : "Save Capacities settings"}
               </button>
             </div>
