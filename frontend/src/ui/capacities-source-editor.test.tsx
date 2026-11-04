@@ -35,24 +35,17 @@ function settingsFixture(
   overrides: Partial<CapacitiesSettings> = {},
 ): CapacitiesSettings {
   return {
-    version: 1,
+    version: 2,
     revision: 0,
     persisted: true,
-    nativeTaskAuto: {
-      activeEnabled: false,
-      dueEnabled: false,
-      deadlineEnabled: false,
-      deadlineHorizonDays: 0,
-    },
+    statuses: { open: [], completed: [] },
+    types: {},
+    native: { deadlineHorizonDays: 0 },
     excluded: [],
-    activeStructures: [],
-    nativeTaskStructures: [],
-    activeStatuses: [],
-    assignedStructures: {},
-    assignedOnStructures: {},
     availableStructures: [],
     structureTitles: {},
     declarationDiagnostics: [],
+    migratedFrom: null,
     ...overrides,
   };
 }
