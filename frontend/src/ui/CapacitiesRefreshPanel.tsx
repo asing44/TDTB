@@ -24,10 +24,10 @@
    - A 409 from start (single-flight) is surfaced as "a job is already
      running", never retried automatically.
    - A stored schema-change notice rides the SAME status read as ONE banner
-     above the job's own warnings: 'warn' is an alert, 'info' a quieter
-     notice. Its sentence is rendered verbatim (the panel adds no names or
+     above the job's own warnings: both severities are advisory
+     (role=status; 'warn' amber, 'info' accent), never an error. Its sentence is rendered verbatim (the panel adds no names or
      counts), nothing is shown once it is acknowledged, and the notice's own
-     "Got it" button posts its to_hash and then re-reads the status — a stale
+     "Mark as seen" button posts its to_hash and then re-reads the status — a stale
      409 means a newer notice exists, so it re-reads without reporting a
      failure. */
 
@@ -309,31 +309,23 @@ export function CapacitiesRefreshPanel({
                 </p>
               {schemaNotice && (
                 <>
-                  {schemaNotice.severity === "warn" ? (
-                    <section class="capacities-settings__error" role="alert">
-                      <span>{schemaNotice.summary}</span>
-                      <button
-                        class="btn"
-                        disabled={ackBusy}
-                        aria-label="Dismiss the Capacities change notice"
-                        onClick={() => void acknowledge(schemaNotice.toHash)}
-                      >
-                        {ackBusy ? "Saving…" : "Got it"}
-                      </button>
-                    </section>
-                  ) : (
-                    <div class="capacities-rule__notice" role="status">
-                      <span>{schemaNotice.summary}</span>{" "}
-                      <button
-                        class="btn"
-                        disabled={ackBusy}
-                        aria-label="Dismiss the Capacities change notice"
-                        onClick={() => void acknowledge(schemaNotice.toHash)}
-                      >
-                        {ackBusy ? "Saving…" : "Got it"}
-                      </button>
-                    </div>
-                  )}
+                  <div
+                    class={`capacities-rule__notice schema-notice${
+                      schemaNotice.severity === "warn" ? " capacities-rule__notice--draft" : ""
+                    }`}
+                    role="status"
+                    data-severity={schemaNotice.severity}
+                  >
+                    <span>{schemaNotice.summary}</span>
+                    <button
+                      class="btn"
+                      disabled={ackBusy}
+                      onClick={() => void acknowledge(schemaNotice.toHash)}
+                    >
+                      {ackBusy ? "Saving…" : "Mark as seen"}
+                    </button>
+                    <small class="schema-notice__hint">Hides this notice; your settings are unchanged.</small>
+                  </div>
                   {ackError && (
                     <div class="capacities-settings__save-error" role="alert">
                       <span>{ackError}</span>

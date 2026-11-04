@@ -104,6 +104,10 @@
   border: 1px solid var(--t-text); border-radius: 8px; background: var(--t-surface-2); color: var(--t-text);
 }
 .calendar-settings__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+/* Schema notice: advisory callout, dismiss button beside the copy, helper line below. */
+.settings-hub__panel .schema-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.settings-hub__panel .schema-notice > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.settings-hub__panel .schema-notice__hint { flex-basis: 100%; color: var(--t-muted); font-size: 12px; }
 /* One "Needs attention" block: notice first, then refresh warnings and hub notes. */
 .settings-hub__attention { display: grid; gap: 6px; padding: 8px 12px; border-left: 3px solid var(--t-muted); background: var(--t-surface-2); border-radius: 8px; }
 .settings-hub__attention-head { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }

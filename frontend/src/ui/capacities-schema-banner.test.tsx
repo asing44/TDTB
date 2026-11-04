@@ -1,7 +1,7 @@
 /* capacities-schema-banner.test.tsx — the one schema-change banner in the
    Settings → Source refresh panel.
 
-   Covers: a warn notice (role=alert) and an info notice (role=status), the
+   Covers: a warn notice (advisory, role=status) and an info notice (role=status), the
    verbatim server summary with no invented names or counts, no banner when the
    notice is acknowledged or absent, the Acknowledge action posting the exact
    to_hash and then clearing the banner from a re-read status, a 409 stale
@@ -24,7 +24,7 @@ const SUMMARY =
   "Capacities changed since the last refresh: 1 status option removed. Review the mapping in Connections.";
 const INFO_SUMMARY =
   "Capacities changed since the last refresh: 2 properties added. Review the mapping in Connections.";
-const ACK_NAME = "Dismiss the Capacities change notice";
+const ACK_NAME = "Mark as seen";
 
 afterEach(() => {
   cleanup();
@@ -94,10 +94,15 @@ function deferred<T>() {
 }
 
 describe("CapacitiesRefreshPanel schema-change banner", () => {
-  it("shows a warn notice as an alert with the server's sentence", async () => {
+  it("shows a warn notice as an advisory status with the server's sentence", async () => {
     const { rendered } = await renderPanel(statusWith(notice()));
 
-    const banner = rendered.getByRole("alert");
+    const banner = rendered.getByRole("status");
+    expect(rendered.queryByRole("alert")).toBeNull();
+    expect(banner.className).not.toContain("capacities-settings__error");
+    expect(rendered.container.querySelector(".capacities-settings__error")).toBeNull();
+    expect(rendered.getByText("Hides this notice; your settings are unchanged.")).toBeTruthy();
+    expect((rendered.getByRole("button", { name: "Mark as seen" })).textContent).toBe("Mark as seen");
     expect(banner.textContent).toContain(SUMMARY);
     // The sentence is the server's, verbatim: the panel adds no names, no
     // counts, and no wrapper prose of its own.
@@ -167,7 +172,7 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
     // A stale hash means a newer notice already replaced this one: read the
     // current truth and say nothing about a failure.
     await waitFor(() => expect(load.mock.calls.length).toBeGreaterThanOrEqual(2));
-    expect(rendered.queryByRole("alert")).toBeTruthy();
+    expect(rendered.queryByRole("alert")).toBeNull();
     expect(rendered.queryByText(/request failed/i)).toBeNull();
     expect(rendered.queryByText(/stale/i)).toBeNull();
     expect((rendered.getByRole("button", { name: ACK_NAME }) as HTMLButtonElement).disabled).toBe(false);
@@ -185,7 +190,7 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
     const button = rendered.getByRole("button", { name: ACK_NAME });
     fireEvent.click(button);
 
-    await waitFor(() => expect(rendered.getAllByRole("alert").length).toBe(2));
+    await waitFor(() => expect(rendered.getAllByRole("alert").length).toBe(1));
     // The notice sentence survives; the failure is its own short line.
     expect(rendered.getByText(SUMMARY)).toBeTruthy();
     expect(rendered.getByText(/request failed before a response/i)).toBeTruthy();
@@ -201,7 +206,8 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
 
     fireEvent.click(rendered.getByRole("button", { name: ACK_NAME }));
     await waitFor(() => expect(ack).toHaveBeenCalledTimes(1));
-    expect((rendered.getByRole("button", { name: ACK_NAME }) as HTMLButtonElement).disabled).toBe(true);
+    // While in flight the visible label, and so the accessible name, is "Saving…".
+    expect((rendered.getByRole("button", { name: "Saving…" }) as HTMLButtonElement).disabled).toBe(true);
 
     pending.resolve();
     await waitFor(() =>
@@ -232,7 +238,7 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
       statusWith(notice(), ["Capacities partial - 2 evaluated, 51 deferred."]),
     );
 
-    const banner = rendered.getByRole("alert");
+    const banner = rendered.getByRole("status");
     const warnings = rendered.getByText("Capacities partial - 2 evaluated, 51 deferred.");
 
     // DOCUMENT_POSITION_FOLLOWING means the Warnings heading comes after the
@@ -246,6 +252,6 @@ describe("CapacitiesRefreshPanel schema-change banner", () => {
     // The notice counts once and adds no warning line of its own.
     expect(rendered.container.querySelector("[data-attention-count]")!.textContent).toBe("1");
     expect(rendered.container.querySelectorAll(".settings-hub__attention-list li").length).toBe(0);
-    expect(rendered.getByRole("alert").textContent).toContain(SUMMARY);
+    expect(rendered.getByRole("status").textContent).toContain(SUMMARY);
   });
 });
