@@ -434,6 +434,29 @@ def test_type_checked_before_the_newest_check_is_marked_unchanged_since(
     assert not any(CUSTOM in w and "unchanged since" in w for w in warnings)
 
 
+def test_stale_type_warning_offers_only_the_refresh_remedy(
+    no_token_no_provider,
+):
+    """A mapped type is already enabled, so a stale one is a Refresh, not a
+    Settings change: the notice reads exactly as the Sources popover matches
+    it, with no contradictory Settings clause."""
+    _save_record()
+    _publish(
+        [_object("root-assigned", ROOT), _object("custom-assigned", CUSTOM)],
+        structures=_contract(),
+        checked={ROOT: OLD_TS, CUSTOM: NEW_TS},
+    )
+
+    _assigned, _pool, warnings, _ = _load()
+
+    stale = [w for w in warnings if "unchanged since" in w]
+    assert stale == [
+        "Capacities structure 'RootTask' unchanged since 2026-10-01; "
+        "Refresh to check it again."
+    ]
+    assert not [w for w in warnings if "Enable it in Settings" in w]
+
+
 FOUR_TYPES = (ROOT, CUSTOM, "T3", "T4")
 
 

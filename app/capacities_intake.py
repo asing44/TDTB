@@ -298,8 +298,7 @@ def _type_warnings(read: capacities_builder.DirectIntakeRead) -> list[str]:
             if newest - checked[type_key] > _TYPE_CHECK_SKEW_SECONDS:
                 warnings.append(
                     f"Capacities structure {type_key!r} unchanged since "
-                    f"{_local_day(checked[type_key])}; Refresh to check it again. "
-                    "Enable it in Settings, then Refresh."
+                    f"{_local_day(checked[type_key])}; Refresh to check it again."
                 )
     return warnings
 
