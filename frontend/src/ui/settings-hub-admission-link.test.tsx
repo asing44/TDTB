@@ -26,6 +26,7 @@ const CAP: CapacitiesSettings = {
   assignedOnStructures: {},
   availableStructures: ["RootTask", "Other"],
   structureTitles: { RootTask: "Task", Other: "Project" },
+  declarationDiagnostics: [],
 };
 
 describe("hub · admission link", () => {

@@ -306,6 +306,7 @@ describe("SettingsHub", () => {
       assignedOnStructures: {},
       availableStructures: [],
       structureTitles: {},
+      declarationDiagnostics: [],
     } satisfies CapacitiesSettings);
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);

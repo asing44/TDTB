@@ -54,6 +54,7 @@ function capSettings(overrides: Partial<CapacitiesSettings> = {}): CapacitiesSet
     assignedOnStructures: {},
     availableStructures: ["RootTask", "Other", "Idle"],
     structureTitles: { RootTask: "Task", Other: "Project", Idle: "Note" },
+    declarationDiagnostics: [],
     ...overrides,
   };
 }

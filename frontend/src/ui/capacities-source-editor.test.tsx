@@ -52,6 +52,7 @@ function settingsFixture(
     assignedOnStructures: {},
     availableStructures: [],
     structureTitles: {},
+    declarationDiagnostics: [],
     ...overrides,
   };
 }

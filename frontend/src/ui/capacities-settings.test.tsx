@@ -3,7 +3,12 @@ import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
 import { makeHarness } from "./test-harness";
 import { capacitiesSettingsToWire } from "../adapters/wire";
-import type { AssignedItem, CapacitiesCatalogProperty } from "../model/types";
+import { ApiError } from "../adapters/api";
+import type {
+  AssignedItem,
+  CapacitiesCatalogProperty,
+  CapacitiesDeclarationDiagnostic,
+} from "../model/types";
 
 afterEach(() => {
   cleanup();
@@ -198,6 +203,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -279,6 +285,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -320,6 +327,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -363,6 +371,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: [],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -399,6 +408,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -510,6 +520,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -558,6 +569,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -616,6 +628,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -658,6 +671,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -788,6 +802,7 @@ describe("CapacitiesSettingsDrawer", () => {
       // The server falls back to the id when a structure has no display
       // name, so the repeated title must render as the id, not twice.
       structureTitles: { "root-task": "root-task" },
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -826,6 +841,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: { "legacy-structure": "Legacy Project" },
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -863,6 +879,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -924,6 +941,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: { "custom-project": "assigned-on-id" },
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -967,6 +985,7 @@ describe("CapacitiesSettingsDrawer", () => {
       assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
+      declarationDiagnostics: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -1002,5 +1021,146 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(save.mock.calls[0][0].assignedStructures).toEqual({
       "custom-project": "assigned-prop-id",
     });
+  });
+});
+
+describe("CapacitiesSettingsDrawer declaration advisories", () => {
+  /** The drawer's own hub stops: the policy sections sit behind “Repair
+      tools” > “Show technical details”. */
+  function openPanel(h: ReturnType<typeof makeHarness>) {
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
+    return rendered;
+  }
+
+  function settingsWith(diagnostics: CapacitiesDeclarationDiagnostic[]) {
+    return {
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: [],
+      activeStatuses: ["active"],
+      assignedStructures: {},
+      assignedOnStructures: {},
+      availableStructures: [],
+      structureTitles: {},
+      declarationDiagnostics: diagnostics,
+    };
+  }
+
+  /** One server-shaped diagnostic: the reason is the backend's own sentence. */
+  function diagnostic(
+    structureId: string,
+    structureLabel: string,
+    propertyId: string,
+    declaration = "Assigned",
+  ): CapacitiesDeclarationDiagnostic {
+    return {
+      structureId,
+      structureLabel,
+      reason: `${declaration} declaration names property '${propertyId}', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.`,
+    };
+  }
+
+  const NOTICE_NAME = /Saved mappings the last published Capacities contract does not define/i;
+
+  it("lists each diagnostic with its cached title, falling back to the id", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(
+      settingsWith([
+        diagnostic("custom-project", "Custom project", "gone"),
+        // No observed title: the id is the label, never an invented name.
+        diagnostic("0d194525-c5a1-4af5-bb62-202b83006b5e", "", "gone-on", "Assigned On"),
+      ]),
+    );
+    const rendered = openPanel(h);
+
+    const notice = await waitFor(() => rendered.getByRole("region", { name: NOTICE_NAME }));
+    expect(within(notice).getByText("Custom project")).toBeTruthy();
+    expect(within(notice).getByText("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBeTruthy();
+    expect(within(notice).getByText(/names property 'gone'/)).toBeTruthy();
+    expect(within(notice).getByText(/names property 'gone-on'/)).toBeTruthy();
+    expect(within(notice).getByText("2 mappings do nothing yet")).toBeTruthy();
+    // Advisory only: the mapping controls and the Save control stay available.
+    expect(rendered.getByRole("button", { name: "Save Capacities settings" })).toBeTruthy();
+  });
+
+  it("collapses past five advisories into one bounded tail", async () => {
+    const h = makeHarness("ready");
+    const diagnostics = Array.from({ length: 7 }, (_, index) =>
+      diagnostic(`structure-${index}`, index === 6 ? "" : `Structure ${index}`, `prop-${index}`),
+    );
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(
+      settingsWith(diagnostics),
+    );
+    const rendered = openPanel(h);
+
+    const notice = await waitFor(() => rendered.getByRole("region", { name: NOTICE_NAME }));
+    expect(within(notice).getAllByRole("listitem").length).toBe(5);
+    expect(within(notice).getByText("7 mappings do nothing yet")).toBeTruthy();
+    expect(within(notice).getByText("and 2 more")).toBeTruthy();
+    // The folded tail is not rendered at all, not merely hidden by CSS.
+    expect(within(notice).queryByText("Structure 5")).toBeNull();
+    expect(within(notice).queryByText("structure-6")).toBeNull();
+  });
+
+  it("renders nothing when no declaration drifts", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(settingsWith([]));
+    const rendered = openPanel(h);
+
+    await waitFor(() => expect(rendered.getByText("How each item type gets in")).toBeTruthy());
+    expect(rendered.queryByRole("region", { name: NOTICE_NAME })).toBeNull();
+    expect(rendered.queryByText(/mappings do nothing yet/)).toBeNull();
+  });
+
+  it("shows the 422 dual-declaration message as the save error, not a generic failure", async () => {
+    const h = makeHarness("ready");
+    const message =
+      "capacities:space-1:RootTask:task-1 declares both Assigned property 'assigned' and Assigned On property 'assigned-on'; clear one mapping.";
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(
+      settingsWith([diagnostic("custom-project", "Custom project", "gone")]),
+    );
+    // The ApiError's own message is deliberately the generic fallback: only the
+    // code-narrowed 422 path can put the server's sentence in the notice.
+    vi.spyOn(h.controller, "saveCapacitiesSettings").mockRejectedValue(
+      new ApiError(
+        422,
+        {
+          code: "capacities_settings_declaration_conflict",
+          message,
+          conflicts: [
+            {
+              structure_id: "custom-project",
+              assigned_property: "assigned",
+              assigned_on_property: "assigned-on",
+            },
+          ],
+        },
+        "request failed (422)",
+        "/settings/capacities/save",
+      ),
+    );
+    const rendered = openPanel(h);
+
+    await waitFor(() => expect(rendered.getByText("Custom project")).toBeTruthy());
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+
+    const alert = await waitFor(() => rendered.getByRole("alert"));
+    expect(alert.textContent).toContain(message);
+    // The generic failure wording never replaces the server's own sentence.
+    expect(alert.textContent).not.toContain("request failed (422)");
+    // Still the ordinary save-error affordance: reload stays reachable.
+    expect(within(alert).getByRole("button", { name: /reload settings/i })).toBeTruthy();
   });
 });

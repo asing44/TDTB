@@ -51,6 +51,7 @@ import type {
   CapacitiesCatalogLabelOption,
   CapacitiesCatalogProperty,
   CapacitiesCatalogStructure,
+  CapacitiesDeclarationDiagnostic,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -276,6 +277,40 @@ function projectAdmissionValues(raw: unknown, key: string): string[] {
   return [...new Set(values)].sort();
 }
 
+/** Project the read-only advisory ``declaration_diagnostics`` list: one entry
+    per saved Assigned / Assigned On declaration naming a property the last
+    published Capacities contract does not define. Tolerant when absent (an
+    older backend) and strict when present, like ``available_structures``. The
+    order the server sent is kept: it is already stable and sorted, and a
+    diagnostic has no client-side identity worth re-sorting on. */
+function projectDeclarationDiagnostics(raw: unknown): CapacitiesDeclarationDiagnostic[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw capacitiesSettingsError("declaration_diagnostics must be an array");
+  }
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw capacitiesSettingsError("declaration_diagnostics contains an invalid entry");
+    }
+    const record = entry as Wire;
+    const structureId = record.structure_id;
+    const structureLabel = record.structure_label;
+    const reason = record.reason;
+    if (!isCanonicalCapacitiesStructureId(structureId)) {
+      throw capacitiesSettingsError("declaration_diagnostics contains an invalid structure id");
+    }
+    // An empty label means "no observed title", which the panel renders as the
+    // id. A non-string label or a blank reason is malformed, not a fallback.
+    if (typeof structureLabel !== "string" || structureLabel !== structureLabel.trim()) {
+      throw capacitiesSettingsError("declaration_diagnostics contains an invalid structure label");
+    }
+    if (typeof reason !== "string" || reason.trim().length === 0) {
+      throw capacitiesSettingsError("declaration_diagnostics contains an invalid reason");
+    }
+    return { structureId, structureLabel, reason };
+  });
+}
+
 /** Project the strict local settings response. The backend is fail-closed;
     the client must not turn a malformed response into a plausible default. */
 export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
@@ -423,6 +458,13 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
       structureTitles[structureId] = title;
     }
   }
+  // ``declaration_diagnostics`` is read-only advisory metadata added at the
+  // top level alongside ``structure_titles``. It describes declarations the
+  // client cannot resolve on its own (the published contract is server state),
+  // so the client shows what it is told and defaults an absent key to [].
+  const declarationDiagnostics = projectDeclarationDiagnostics(
+    wire.declaration_diagnostics,
+  );
   return {
     version: raw.version,
     revision: raw.revision,
@@ -441,6 +483,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     assignedOnStructures,
     availableStructures,
     structureTitles,
+    declarationDiagnostics,
   };
 }
 

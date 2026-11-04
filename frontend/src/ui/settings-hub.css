@@ -115,3 +115,17 @@
 .settings-hub__attention-list code { overflow-wrap: anywhere; }
 .capacities-settings__concepts { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; color: var(--t-muted); }
 .capacities-settings__concepts b { color: var(--t-text); font-weight: 600; }
+/* Saved-mapping advisories: one compact, non-blocking notice listing the
+   declarations the last published Capacities contract cannot resolve. Reuses
+   the capacities-rule__notice frame and the chip--warn skin; only the list
+   layout is new. Advisory only — it never gates a save or a plan read. */
+.capacities-declarations__head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  margin: 0; font-size: 12px;
+}
+.capacities-declarations__head > span:last-child { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.capacities-declarations__list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.capacities-declarations__list li { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.capacities-declarations__list strong { flex: none; overflow-wrap: anywhere; }
+.capacities-declarations__reason { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.capacities-declarations__more { margin: 4px 0 0; color: var(--t-muted); font-size: 12px; }

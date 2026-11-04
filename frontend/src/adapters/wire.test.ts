@@ -1917,6 +1917,75 @@ describe("capacities settings active_structures (additive schema v1)", () => {
     }
   });
 
+  it("projects an absent declaration_diagnostics key to [] (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.declarationDiagnostics).toEqual([]);
+  });
+
+  it("parses a well-formed declaration_diagnostics list in server order", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: baseSettings(),
+      declaration_diagnostics: [
+        {
+          structure_id: "custom-project",
+          structure_label: "Custom project",
+          reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+        },
+        {
+          // An unobserved title is the empty string, not a fallback id.
+          structure_id: "0d194525-c5a1-4af5-bb62-202b83006b5e",
+          structure_label: "",
+          reason: "Assigned On declaration names property 'gone-on', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+        },
+      ],
+    });
+    expect(projected.declarationDiagnostics).toEqual([
+      {
+        structureId: "custom-project",
+        structureLabel: "Custom project",
+        reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+      },
+      {
+        structureId: "0d194525-c5a1-4af5-bb62-202b83006b5e",
+        structureLabel: "",
+        reason: "Assigned On declaration names property 'gone-on', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+      },
+    ]);
+  });
+
+  it("throws when declaration_diagnostics is not an array", () => {
+    for (const bad of [{}, "nope", 1, null]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          declaration_diagnostics: bad,
+        }),
+      ).toThrow(/declaration_diagnostics/);
+    }
+  });
+
+  it("throws when declaration_diagnostics contains an invalid entry", () => {
+    for (const bad of [
+      [{ structure_id: "bad id", structure_label: "x", reason: "y" }],
+      [{ structure_id: "custom-project", structure_label: 1, reason: "y" }],
+      [{ structure_id: "custom-project", structure_label: " x ", reason: "y" }],
+      [{ structure_id: "custom-project", structure_label: "x", reason: "" }],
+      [{ structure_id: "custom-project", structure_label: "x", reason: "   " }],
+      [{ structure_id: "custom-project", structure_label: "x" }],
+      [null],
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          declaration_diagnostics: bad,
+        }),
+      ).toThrow(/declaration_diagnostics/);
+    }
+  });
+
   it("recognizes canonical structure ids", () => {
     expect(isCanonicalCapacitiesStructureId("custom-project")).toBe(true);
     expect(isCanonicalCapacitiesStructureId("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBe(true);

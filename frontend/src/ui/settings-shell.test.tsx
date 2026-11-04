@@ -60,6 +60,7 @@ function capacitiesFixture(
     assignedOnStructures: {},
     availableStructures: [],
     structureTitles: {},
+    declarationDiagnostics: [],
     ...overrides,
   };
 }

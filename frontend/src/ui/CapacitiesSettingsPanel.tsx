@@ -38,10 +38,33 @@ import {
   capacitiesAssignmentWarnings,
   isCanonicalCapacitiesIdentity,
 } from "../adapters/wire";
+import { ApiError } from "../adapters/api";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** POST /settings/capacities/save refuses a contradictory dual declaration (one
+    item type declaring an Assigned checkbox AND an Assigned On date) with its
+    own 422 code before any write. The server's sentence names the structure and
+    both properties, so it is shown verbatim in the save-error notice instead of
+    being flattened into a generic failure. Any other status or code answers
+    null, so the caller keeps the ordinary error path. */
+function declarationConflictMessageOf(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.status !== 422) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as { code?: unknown; message?: unknown };
+  if (record.code !== "capacities_settings_declaration_conflict") return null;
+  if (typeof record.message === "string" && record.message.trim() !== "") {
+    return record.message;
+  }
+  return "This save was refused: one item type cannot declare both an Assigned checkbox and an Assigned On date.";
+}
+
+/** Advisories listed inline before the rest fold into one "and N more" tail,
+    so a long drift list cannot push the mapping controls off the panel. */
+export const CAPACITIES_DECLARATION_DIAGNOSTIC_CAP = 5;
 
 function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
   return {
@@ -178,6 +201,17 @@ export function CapacitiesSettingsPanel({
   const assignedOnWarnings = capacitiesAssignedOnWarnings(
     s.inputs?.sourceWarnings ?? [],
   );
+  // Read-only advisories from the server: a saved declaration names a property
+  // the last published Capacities contract does not define, so it admits
+  // nothing today. Non-blocking — the panel still saves, and nothing here
+  // edits a mapping. The list is bounded so a long drift list stays compact.
+  const declarationDiagnostics = settings?.declarationDiagnostics ?? [];
+  const shownDeclarationDiagnostics = declarationDiagnostics.slice(
+    0,
+    CAPACITIES_DECLARATION_DIAGNOSTIC_CAP,
+  );
+  const hiddenDeclarationDiagnosticCount =
+    declarationDiagnostics.length - shownDeclarationDiagnostics.length;
   const horizonValue = Number(horizonText);
   const horizonTextValid = /^\d+$/.test(horizonText) && Number.isSafeInteger(horizonValue);
   const policy = draft?.nativeTaskAuto;
@@ -367,7 +401,7 @@ export function CapacitiesSettingsPanel({
       close();
     } catch (e) {
       setPhase("ready");
-      setError(messageOf(e));
+      setError(declarationConflictMessageOf(e) ?? messageOf(e));
     }
   };
 
@@ -396,6 +430,43 @@ export function CapacitiesSettingsPanel({
 
         {draft && phase !== "loading" && (
           <>
+            {declarationDiagnostics.length > 0 && (
+              <section
+                class="capacities-rule__notice capacities-declarations"
+                aria-label="Saved mappings the last published Capacities contract does not define"
+              >
+                <p class="capacities-declarations__head">
+                  <span class="chip chip--warn">
+                    {declarationDiagnostics.length === 1
+                      ? "1 mapping does nothing yet"
+                      : `${declarationDiagnostics.length} mappings do nothing yet`}
+                  </span>
+                  <span>
+                    This is a saved setting, not a read failure. Planning still works; pick a live
+                    property under “How each item type gets in”, or clear the mapping.
+                  </span>
+                </p>
+                <ul class="capacities-declarations__list">
+                  {shownDeclarationDiagnostics.map((diagnostic) => (
+                    <li key={`${diagnostic.structureId}:${diagnostic.reason}`}>
+                      {/* The cached title is display-only and may be absent, so
+                          the id is the fallback rather than an invented name. */}
+                      <strong>
+                        {diagnostic.structureLabel !== ""
+                          ? diagnostic.structureLabel
+                          : diagnostic.structureId}
+                      </strong>
+                      <span class="capacities-declarations__reason">{diagnostic.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+                {hiddenDeclarationDiagnosticCount > 0 && (
+                  <p class="capacities-declarations__more">
+                    and {hiddenDeclarationDiagnosticCount} more
+                  </p>
+                )}
+              </section>
+            )}
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-auto">
               <div class="setup-section__head">
                 <h3 id="capacities-sec-auto">Automatic task rules</h3>

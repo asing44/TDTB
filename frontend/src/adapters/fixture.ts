@@ -391,6 +391,9 @@ export class FixtureAdapter implements Adapter {
     structureTitles: {
       "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
     },
+    // No advisory declaration drift in the fixture default: the diagnostics
+    // block stays absent unless a test supplies one.
+    declarationDiagnostics: [],
   };
   private calendarSettings: CalendarSettings = {
     version: 1,
@@ -912,6 +915,10 @@ export class FixtureAdapter implements Adapter {
       // Titles are read-only advisory metadata, never part of the save
       // payload, so a save carries the observed ones through unchanged.
       structureTitles: { ...this.capacitiesSettings.structureTitles },
+      // Diagnostics are server-computed advisory metadata, never part of the
+      // save payload; the fixture keeps the observed list rather than
+      // pretending to recompute the published contract.
+      declarationDiagnostics: [...this.capacitiesSettings.declarationDiagnostics],
     };
     return structuredClone(this.capacitiesSettings);
   }

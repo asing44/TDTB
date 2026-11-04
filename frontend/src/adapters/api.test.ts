@@ -94,6 +94,13 @@ describe("reads", () => {
         "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
         "custom-project": "custom-project",
       },
+      declaration_diagnostics: [
+        {
+          structure_id: "custom-project",
+          structure_label: "custom-project",
+          reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+        },
+      ],
     });
     const settings = await new ApiAdapter().loadCapacitiesSettings();
     expect(settings).toEqual({
@@ -120,6 +127,15 @@ describe("reads", () => {
         "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
         "custom-project": "custom-project",
       },
+      // Read-only advisory drift from the same read; the GET route now carries
+      // it, so the projected view model always has the key.
+      declarationDiagnostics: [
+        {
+          structureId: "custom-project",
+          structureLabel: "custom-project",
+          reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
+        },
+      ],
     });
     expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
   });

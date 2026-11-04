@@ -22,6 +22,21 @@ export interface CapacitiesNativeTaskAutoPolicy {
   deadlineHorizonDays: number;
 }
 
+/** One advisory declaration diagnostic from the settings read/save: a saved
+    Assigned or Assigned On mapping names a property the last published
+    Capacities contract does not define, so that mapping does nothing today.
+    Read-only metadata — it never edits a mapping and never blocks a save or a
+    plan read. */
+export interface CapacitiesDeclarationDiagnostic {
+  /** Canonical structure id the declaration was saved against. */
+  structureId: string;
+  /** Cached display title for that structure, or `""` when none was
+      observed; the panel falls back to the id rather than inventing a name. */
+  structureLabel: string;
+  /** The server's one-sentence explanation, shown verbatim. */
+  reason: string;
+}
+
 /** The local, versioned Capacities policy returned by the settings API. */
 export interface CapacitiesSettings {
   version: number;
@@ -67,6 +82,14 @@ export interface CapacitiesSettings {
       consumers never handle an absent value, exactly like
       `availableStructures`. */
   structureTitles: Record<string, string>;
+  /** Read-only advisory diagnostics projected from the persisted settings and
+      the last published Capacities contract: one entry per saved Assigned or
+      Assigned On declaration naming a property that contract does not define.
+      An older backend omits it on the wire, which the projection tolerates by
+      projecting an empty list — so the projected field is always present and
+      consumers never handle an absent value, exactly like
+      `availableStructures`. */
+  declarationDiagnostics: CapacitiesDeclarationDiagnostic[];
 }
 
 /** Full replacement body for the settings save route. */
