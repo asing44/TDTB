@@ -1,9 +1,14 @@
 """Public-interface tests for the pure effective-assignment evaluator.
 
 The evaluator is a public seam: these tests exercise it only through
-``AssignmentCandidate``, ``AssignmentSettings``, ``evaluate_assignment``, and
-``parse_capacities_identity``. Everything is fake and in-process; no provider,
-credential, network, or live source is touched.
+``AssignmentCandidate``, ``TypeMode``, ``AssignmentSettings``,
+``evaluate_assignment``, and ``parse_capacities_identity``. Everything is fake
+and in-process; no provider, credential, network, or live source is touched.
+
+Admission is mode-driven (schema version 2): one ``mode`` per structure and
+exactly the signals that mode declares. The tables below walk every mode
+through admit / reject / unknown so a mode can never silently inherit another
+mode's signal.
 """
 from __future__ import annotations
 
@@ -15,10 +20,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import capacities_settings as cs  # noqa: E402
 from capacities_assignment import (  # noqa: E402
     AssignmentCandidate,
     AssignmentMode,
     AssignmentSettings,
+    TypeMode,
     evaluate_assignment,
     parse_capacities_identity,
 )
@@ -26,17 +33,32 @@ from capacities_assignment import (  # noqa: E402
 
 SPACE = "space-1"
 TODAY = date(2026, 9, 29)
+ROOT = "RootTask"
+CUSTOM = "custom-project"
 
 NATIVE = f"capacities:{SPACE}:RootTask:task-1"
-CUSTOM = f"capacities:{SPACE}:custom-project:project-1"
+CUSTOM_ID = f"capacities:{SPACE}:custom-project:obj-1"
+
+
+def _cand(structure: str = CUSTOM, **kwargs) -> AssignmentCandidate:
+    return AssignmentCandidate(
+        identity=f"capacities:{SPACE}:{structure}:obj-1", **kwargs
+    )
 
 
 def _native(**kwargs) -> AssignmentCandidate:
     return AssignmentCandidate(identity=NATIVE, **kwargs)
 
 
-def _custom(**kwargs) -> AssignmentCandidate:
-    return AssignmentCandidate(identity=CUSTOM, **kwargs)
+def _settings(types=None, *, open_statuses=None, horizon=None, excluded=None):
+    kwargs: dict = {"types": {} if types is None else types}
+    if open_statuses is not None:
+        kwargs["open_statuses"] = open_statuses
+    if horizon is not None:
+        kwargs["deadline_horizon_days"] = horizon
+    if excluded is not None:
+        kwargs["excluded_identities"] = excluded
+    return AssignmentSettings(**kwargs)
 
 
 def _eval(candidate, *, day=TODAY, settings=None):
@@ -44,15 +66,33 @@ def _eval(candidate, *, day=TODAY, settings=None):
 
 
 # --------------------------------------------------------------------------
-# Precedence: source Assigned > TDTB Excluded > TDTB Auto
+# Precedence: source Assigned > TDTB Excluded > declared mode
 # --------------------------------------------------------------------------
 
 
-def test_source_assigned_true_wins_over_exclusion():
-    decision = _eval(
-        _custom(source_assigned=True, status_is_open=True),
-        settings=AssignmentSettings(excluded_identities=frozenset({CUSTOM})),
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "off",
+        "active",
+        "assigned",
+        "assignedOn",
+        "native",
+    ],
+)
+def test_source_assigned_true_wins_over_exclusion_in_every_mode(mode):
+    settings = _settings({CUSTOM: _declared(mode)}, excluded=frozenset({CUSTOM_ID}))
+    candidate = _cand(
+        source_assigned=True,
+        status="Active",
+        status_is_open=True,
+        due=TODAY,
+        deadline=TODAY,
+        assigned_property=True,
+        assigned_on=TODAY,
     )
+
+    decision = _eval(candidate, settings=settings)
 
     assert decision.mode is AssignmentMode.ASSIGNED
     assert decision.eligible is True
@@ -61,11 +101,23 @@ def test_source_assigned_true_wins_over_exclusion():
     assert decision.provenance.source_assigned is True
 
 
-def test_source_assigned_false_with_exclusion_is_excluded():
-    decision = _eval(
-        _custom(source_assigned=False, status_is_open=True),
-        settings=AssignmentSettings(excluded_identities=frozenset({CUSTOM})),
+@pytest.mark.parametrize(
+    "mode",
+    ["off", "active", "assigned", "assignedOn", "native"],
+)
+def test_exclusion_outranks_the_declared_mode(mode):
+    settings = _settings({CUSTOM: _declared(mode)}, excluded=frozenset({CUSTOM_ID}))
+    candidate = _cand(
+        source_assigned=False,
+        status="Active",
+        status_is_open=True,
+        due=TODAY,
+        deadline=TODAY,
+        assigned_property=True,
+        assigned_on=TODAY,
     )
+
+    decision = _eval(candidate, settings=settings)
 
     assert decision.mode is AssignmentMode.EXCLUDED
     assert decision.eligible is False
@@ -73,109 +125,284 @@ def test_source_assigned_false_with_exclusion_is_excluded():
     assert decision.provenance.exclusion_matched is True
 
 
-def test_source_assigned_absent_with_exclusion_is_excluded():
-    decision = _eval(
-        _custom(status_is_open=True),
-        settings=AssignmentSettings(excluded_identities=frozenset({CUSTOM})),
-    )
-
-    assert decision.mode is AssignmentMode.EXCLUDED
-    assert decision.eligible is False
-    assert decision.provenance.source_assigned is None
-
-
-def test_source_assigned_false_without_exclusion_is_not_eligible():
-    decision = _eval(_custom(source_assigned=False, status_is_open=True))
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-    assert decision.reason_codes == ("no-effective-assignment",)
-    assert decision.provenance.auto_conditions == ()
-
-
 def test_exclusion_set_is_accepted_directly_as_the_settings_seam():
-    decision = _eval(_custom(status_is_open=True), settings=frozenset({CUSTOM}))
+    decision = _eval(_cand(status_is_open=True), settings=frozenset({CUSTOM_ID}))
 
     assert decision.mode is AssignmentMode.EXCLUDED
     assert decision.reason_codes == ("tdtb-excluded",)
 
 
+def test_exclusion_keys_on_qualified_identity_not_object_id_or_title():
+    settings = _settings({ROOT: "native"}, excluded=frozenset({NATIVE}))
+    candidate = _native(status_is_open=True, due=TODAY)
+
+    assert _eval(candidate, settings=frozenset({"task-1"})).mode is AssignmentMode.NONE
+    assert _eval(candidate, settings=frozenset({"Write brief"})).mode is AssignmentMode.NONE
+    assert _eval(candidate, settings=settings).mode is AssignmentMode.EXCLUDED
+
+
 # --------------------------------------------------------------------------
-# Native Task Auto: status / due / deadline are OR conditions
+# Mode table: admit / reject / unknown per mode
 # --------------------------------------------------------------------------
+# Each row is (mode declaration, candidate signals, expected mode, expected
+# reason codes). The candidate always carries every signal, so a row proves
+# the mode reads only its own declaration and never a neighbouring one.
 
 
-def test_native_auto_matches_on_active_status_alone():
-    decision = _eval(_native(status="Active", status_is_open=True))
+MODE_TABLE = [
+    pytest.param(
+        TypeMode(mode="off"),
+        {},
+        AssignmentMode.NONE,
+        ("mode-off",),
+        id="off-ignores-every-signal",
+    ),
+    pytest.param(
+        TypeMode(mode="active"),
+        {"status": "Active", "status_is_open": True},
+        AssignmentMode.AUTO,
+        ("auto-status-active",),
+        id="active-admits-open-name",
+    ),
+    pytest.param(
+        TypeMode(mode="active"),
+        {"status": "Inbox", "status_is_open": True},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="active-rejects-other-name",
+    ),
+    pytest.param(
+        TypeMode(mode="active"),
+        {"status_is_open": True, "assigned_property": True, "assigned_on": TODAY, "due": TODAY},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="active-unknown-status-never-admits",
+    ),
+    pytest.param(
+        TypeMode(mode="assigned", property_id="tdtb"),
+        {"assigned_property": True, "status_is_open": True},
+        AssignmentMode.AUTO,
+        ("auto-assigned-property",),
+        id="assigned-admits-true-property",
+    ),
+    pytest.param(
+        TypeMode(mode="assigned", property_id="tdtb"),
+        {"assigned_property": False, "status_is_open": True},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="assigned-rejects-false-property",
+    ),
+    pytest.param(
+        TypeMode(mode="assigned", property_id="tdtb"),
+        {"status_is_open": True, "assigned_on": TODAY, "due": TODAY, "status": "Active"},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="assigned-unknown-property-never-admits",
+    ),
+    pytest.param(
+        TypeMode(mode="assignedOn", property_id="date"),
+        {"assigned_on": TODAY, "status_is_open": True},
+        AssignmentMode.AUTO,
+        ("auto-assigned-on",),
+        id="assigned-on-admits-today",
+    ),
+    pytest.param(
+        TypeMode(mode="assignedOn", property_id="date"),
+        {"assigned_on": TODAY - timedelta(days=9), "status_is_open": True},
+        AssignmentMode.AUTO,
+        ("auto-assigned-on",),
+        id="assigned-on-admits-past",
+    ),
+    pytest.param(
+        TypeMode(mode="assignedOn", property_id="date"),
+        {"assigned_on": TODAY + timedelta(days=1), "status_is_open": True},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="assigned-on-rejects-future",
+    ),
+    pytest.param(
+        TypeMode(mode="assignedOn", property_id="date"),
+        {"status_is_open": True, "due": TODAY, "assigned_property": True},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="assigned-on-unknown-date-never-admits",
+    ),
+    pytest.param(
+        TypeMode(mode="native"),
+        {"status": "Active", "status_is_open": True},
+        AssignmentMode.AUTO,
+        ("auto-status-active",),
+        id="native-admits-open-status",
+    ),
+    pytest.param(
+        TypeMode(mode="native"),
+        {"status_is_open": True, "due": TODAY},
+        AssignmentMode.AUTO,
+        ("auto-due-today-or-overdue",),
+        id="native-admits-due-today",
+    ),
+    pytest.param(
+        TypeMode(mode="native"),
+        {"status_is_open": True, "deadline": TODAY + timedelta(days=2)},
+        AssignmentMode.AUTO,
+        ("auto-deadline-within-horizon",),
+        id="native-admits-deadline-at-horizon",
+    ),
+    pytest.param(
+        TypeMode(mode="native"),
+        {"status_is_open": True},
+        AssignmentMode.NONE,
+        ("no-effective-assignment",),
+        id="native-unknown-signals-never-admit",
+    ),
+]
 
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.eligible is True
-    assert decision.provenance.auto_conditions == ("status-active",)
-    assert decision.reason_codes == ("auto-status-active",)
-    assert decision.provenance.native_task is True
+
+@pytest.mark.parametrize("declaration,candidate_kwargs,expected_mode,expected_codes", MODE_TABLE)
+def test_mode_reads_only_its_own_declared_signals(
+    declaration, candidate_kwargs, expected_mode, expected_codes
+):
+    settings = _settings({CUSTOM: declaration})
+
+    decision = _eval(_cand(**candidate_kwargs), settings=settings)
+
+    assert decision.mode is expected_mode
+    assert decision.reason_codes == expected_codes
+    assert decision.eligible is (expected_mode is AssignmentMode.AUTO)
+    assert decision.provenance.type_mode == declaration.mode
 
 
-def test_native_auto_does_not_match_open_but_not_active_status_without_dates():
-    decision = _eval(_native(status="open", status_is_open=True))
+def test_undeclared_structure_reports_mode_off_and_is_never_admitted():
+    decision = _eval(
+        _cand(status="Active", status_is_open=True, due=TODAY, assigned_property=True),
+        settings=_settings({ROOT: "native"}),
+    )
 
     assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
+    assert decision.reason_codes == ("mode-off",)
+    assert decision.provenance.type_mode == "off"
+
+
+def test_property_modes_report_their_condition_in_provenance():
+    assigned = _eval(
+        _cand(assigned_property=True, status_is_open=True),
+        settings=_settings({CUSTOM: _declared("assigned")}),
+    )
+    assigned_on = _eval(
+        _cand(assigned_on=TODAY - timedelta(days=2), status_is_open=True),
+        settings=_settings({CUSTOM: _declared("assignedOn")}),
+    )
+
+    assert assigned.provenance.auto_conditions == ("assigned-property",)
+    assert assigned_on.provenance.auto_conditions == ("assigned-on-or-before-day",)
+    assert assigned.provenance.native_task is False
+
+
+def test_plain_mode_strings_are_accepted_as_shorthand():
+    settings = _settings({ROOT: "native"})
+
+    decision = _eval(
+        _native(status_is_open=True, due=TODAY), settings=settings
+    )
+
+    assert settings.mode_of(ROOT) == "native"
+    assert settings.types[ROOT] == TypeMode(mode="native")
+    assert decision.mode is AssignmentMode.AUTO
+
+
+# --------------------------------------------------------------------------
+# Status admission is tri-state: inherit / disabled / own names
+# --------------------------------------------------------------------------
+
+
+def test_inherited_status_names_match_the_shared_vocabulary():
+    settings = _settings(
+        {CUSTOM: TypeMode(mode="active")},
+        open_statuses=frozenset({"In Progress"}),
+    )
+
+    decision = _eval(_cand(status="in  progress", status_is_open=True), settings=settings)
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.reason_codes == ("auto-status-active",)
+    assert settings.open_statuses_for(CUSTOM) == frozenset({"In Progress"})
+
+
+def test_disabled_status_admits_nothing_on_status():
+    settings = _settings({CUSTOM: TypeMode(mode="active", open_statuses=frozenset())})
+
+    decision = _eval(_cand(status="Active", status_is_open=True), settings=settings)
+
+    assert settings.status_admission_enabled(CUSTOM) is False
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.reason_codes == ("no-status-vocabulary",)
+
+
+def test_own_names_override_and_ignore_the_shared_vocabulary():
+    settings = _settings(
+        {CUSTOM: TypeMode(mode="active", open_statuses=frozenset({"Started"}))},
+        open_statuses=frozenset({"Active"}),
+    )
+
+    own = _eval(_cand(status="Started", status_is_open=True), settings=settings)
+    shared = _eval(_cand(status="Active", status_is_open=True), settings=settings)
+
+    assert settings.open_statuses_for(CUSTOM) == frozenset({"Started"})
+    assert own.mode is AssignmentMode.AUTO
+    assert shared.mode is AssignmentMode.NONE
+
+
+def test_configured_names_are_normalized_only_at_comparison_time():
+    settings = _settings(
+        {CUSTOM: TypeMode(mode="active", open_statuses=frozenset({"In   Progress"}))}
+    )
+
+    decision = _eval(_cand(status="in progress", status_is_open=True), settings=settings)
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert settings.types[CUSTOM].open_statuses == frozenset({"In   Progress"})
+
+
+def test_a_non_status_mode_resolves_no_open_names_at_all():
+    settings = _settings(
+        {
+            CUSTOM: TypeMode(mode="assigned", property_id="tdtb"),
+            ROOT: "native",
+        }
+    )
+
+    assert settings.open_statuses_for(CUSTOM) == frozenset()
+    assert settings.status_admission_enabled(CUSTOM) is False
+    assert settings.open_statuses_for(ROOT) == settings.open_statuses
+
+
+def test_a_missing_status_signal_never_reads_as_open():
+    settings = _settings(
+        {CUSTOM: TypeMode(mode="active", open_statuses=frozenset({"Active"}))}
+    )
+
+    decision = _eval(_cand(status_is_open=True), settings=settings)
+
+    assert decision.mode is AssignmentMode.NONE
     assert decision.reason_codes == ("no-effective-assignment",)
 
 
-def test_native_auto_matches_due_today_and_overdue():
-    today = _eval(_native(status="open", status_is_open=True, due=TODAY))
-    overdue = _eval(_native(status="open", status_is_open=True, due=TODAY - timedelta(days=3)))
-
-    assert today.provenance.auto_conditions == ("due-today-or-overdue",)
-    assert overdue.provenance.auto_conditions == ("due-today-or-overdue",)
-    assert today.eligible is True and overdue.eligible is True
+# --------------------------------------------------------------------------
+# Native is an OR of status-open / due / deadline, and date-only when disabled
+# --------------------------------------------------------------------------
 
 
-def test_native_auto_does_not_match_a_future_due_date():
-    decision = _eval(
-        _native(status="open", status_is_open=True, due=TODAY + timedelta(days=1))
-    )
+def test_native_conditions_are_or_ed_and_report_every_match():
+    settings = _settings({ROOT: "native"})
 
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-
-
-def test_native_auto_matches_deadline_within_the_inclusive_two_day_horizon():
-    same_day = _eval(_native(status="open", status_is_open=True, deadline=TODAY))
-    plus_one = _eval(_native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=1)))
-    plus_two = _eval(_native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)))
-    overdue = _eval(_native(status="open", status_is_open=True, deadline=TODAY - timedelta(days=4)))
-
-    for decision in (same_day, plus_one, plus_two, overdue):
-        assert decision.mode is AssignmentMode.AUTO
-        assert decision.provenance.auto_conditions == ("deadline-within-horizon",)
-
-
-def test_native_auto_does_not_match_deadline_beyond_the_horizon():
-    decision = _eval(
-        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=3))
-    )
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-
-
-def test_native_auto_missing_dates_do_not_match():
-    decision = _eval(_native(status="open", status_is_open=True, due=None, deadline=None))
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_native_auto_conditions_are_or_ed_and_report_every_match():
     decision = _eval(
         _native(
             status="active",
             status_is_open=True,
             due=TODAY - timedelta(days=1),
             deadline=TODAY + timedelta(days=2),
-        )
+        ),
+        settings=settings,
     )
 
     assert decision.mode is AssignmentMode.AUTO
@@ -191,118 +418,149 @@ def test_native_auto_conditions_are_or_ed_and_report_every_match():
     )
 
 
-def test_native_active_rule_can_be_disabled_without_affecting_other_rules():
-    decision = _eval(
-        _native(status="active", status_is_open=True),
-        settings=AssignmentSettings(active_enabled=False),
-    )
+def test_native_with_disabled_status_is_dates_only():
+    # The owner's ``RootTask`` decision: tasks stay date-only, so a status label
+    # never admits and the dates still do.
+    settings = _settings({ROOT: TypeMode(mode="native", open_statuses=frozenset())})
 
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_native_due_rule_can_be_disabled_without_affecting_other_rules():
-    decision = _eval(
-        _native(status="open", status_is_open=True, due=TODAY),
-        settings=AssignmentSettings(due_enabled=False),
-    )
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_native_deadline_rule_can_be_disabled_without_affecting_other_rules():
-    decision = _eval(
-        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)),
-        settings=AssignmentSettings(deadline_enabled=False),
-    )
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_all_native_auto_rules_disabled_preserve_assignment_precedence():
-    settings = AssignmentSettings(
-        active_enabled=False,
-        due_enabled=False,
-        deadline_enabled=False,
-        excluded_identities=frozenset({NATIVE}),
-    )
-
-    assigned = _eval(
-        _custom(source_assigned=True, status_is_open=True),
+    by_status = _eval(_native(status="Active", status_is_open=True), settings=settings)
+    by_due = _eval(_native(status="Active", status_is_open=True, due=TODAY), settings=settings)
+    by_deadline = _eval(
+        _native(
+            status="Active",
+            status_is_open=True,
+            deadline=TODAY + timedelta(days=2),
+        ),
         settings=settings,
     )
-    excluded = _eval(_native(status="active", status_is_open=True), settings=settings)
 
-    assert assigned.mode is AssignmentMode.ASSIGNED
-    assert assigned.eligible is True
-    assert excluded.mode is AssignmentMode.EXCLUDED
-    assert excluded.eligible is False
+    assert by_status.mode is AssignmentMode.NONE
+    assert by_status.reason_codes == ("no-effective-assignment",)
+    assert by_due.reason_codes == ("auto-due-today-or-overdue",)
+    assert by_deadline.reason_codes == ("auto-deadline-within-horizon",)
 
 
-def test_native_deadline_horizon_handles_large_values_without_date_overflow():
+def test_native_does_not_match_a_future_due_date():
+    settings = _settings({ROOT: TypeMode(mode="native", open_statuses=frozenset())})
+
     decision = _eval(
-        _native(status="open", status_is_open=True, deadline=date.max),
-        day=date.min,
-        settings=AssignmentSettings(deadline_horizon_days=10**12),
+        _native(status_is_open=True, due=TODAY + timedelta(days=1)), settings=settings
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+
+
+def test_native_own_status_names_replace_the_shared_vocabulary():
+    settings = _settings(
+        {ROOT: TypeMode(mode="native", open_statuses=frozenset({"In Progress"}))},
+        open_statuses=frozenset({"Active"}),
+    )
+
+    own = _eval(_native(status="In Progress", status_is_open=True), settings=settings)
+    shared = _eval(_native(status="Active", status_is_open=True), settings=settings)
+
+    assert own.reason_codes == ("auto-status-active",)
+    assert shared.reason_codes == ("no-effective-assignment",)
+
+
+# --------------------------------------------------------------------------
+# Deadline horizon boundary
+# --------------------------------------------------------------------------
+
+
+def test_deadline_horizon_is_inclusive_and_fails_closed_past_it():
+    settings = _settings({ROOT: TypeMode(mode="native", open_statuses=frozenset())})
+
+    for offset, eligible in ((0, True), (2, True), (3, False)):
+        decision = _eval(
+            _native(status_is_open=True, deadline=TODAY + timedelta(days=offset)),
+            settings=settings,
+        )
+        assert decision.eligible is eligible, offset
+
+
+def test_deadline_horizon_follows_the_configured_value():
+    settings = _settings(
+        {ROOT: TypeMode(mode="native", open_statuses=frozenset())}, horizon=5
+    )
+
+    at_edge = _eval(
+        _native(status_is_open=True, deadline=TODAY + timedelta(days=5)), settings=settings
+    )
+    beyond = _eval(
+        _native(status_is_open=True, deadline=TODAY + timedelta(days=6)), settings=settings
+    )
+
+    assert at_edge.mode is AssignmentMode.AUTO
+    assert beyond.mode is AssignmentMode.NONE
+
+
+def test_logical_day_moves_the_due_and_deadline_window():
+    settings = _settings({ROOT: TypeMode(mode="native", open_statuses=frozenset())})
+    due_tomorrow = _native(status_is_open=True, due=TODAY + timedelta(days=1))
+    deadline_two_days_out = _native(
+        status_is_open=True, deadline=TODAY + timedelta(days=2)
+    )
+
+    assert _eval(due_tomorrow, settings=settings).mode is AssignmentMode.NONE
+    assert (
+        _eval(due_tomorrow, day=TODAY + timedelta(days=1), settings=settings).mode
+        is AssignmentMode.AUTO
+    )
+    assert (
+        _eval(deadline_two_days_out, day=TODAY - timedelta(days=1), settings=settings).mode
+        is AssignmentMode.NONE
+    )
+    assert _eval(deadline_two_days_out, settings=settings).mode is AssignmentMode.AUTO
+
+
+def test_an_enormous_horizon_cannot_overflow_the_date_window():
+    settings = _settings(
+        {ROOT: TypeMode(mode="native", open_statuses=frozenset())}, horizon=10 ** 12
+    )
+
+    decision = _eval(
+        _native(status_is_open=True, deadline=date.max), day=date.min, settings=settings
     )
 
     assert decision.mode is AssignmentMode.AUTO
     assert decision.provenance.auto_conditions == ("deadline-within-horizon",)
 
 
-def test_native_active_status_matches_even_with_a_future_due_date():
-    decision = _eval(
-        _native(status="active", status_is_open=True, due=TODAY + timedelta(days=9))
-    )
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.provenance.auto_conditions == ("status-active",)
-
-
-# --------------------------------------------------------------------------
-# Logical-day boundary
-# --------------------------------------------------------------------------
-
-
-def test_logical_day_boundary_moves_the_due_and_deadline_window():
-    due_tomorrow = _native(
-        status="open", status_is_open=True, due=TODAY + timedelta(days=1)
-    )
-    deadline_two_days_out = _native(
-        status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)
-    )
-
-    assert _eval(due_tomorrow).mode is AssignmentMode.NONE
-    assert _eval(due_tomorrow, day=TODAY + timedelta(days=1)).mode is AssignmentMode.AUTO
-
-    # deadline == logical_day + 2 is the inclusive edge and moves with the day.
-    assert _eval(deadline_two_days_out).mode is AssignmentMode.AUTO
-    assert _eval(deadline_two_days_out, day=TODAY + timedelta(days=1)).mode is AssignmentMode.AUTO
-    assert _eval(deadline_two_days_out, day=TODAY - timedelta(days=1)).mode is AssignmentMode.NONE
-
-
 def test_logical_day_is_recorded_in_provenance():
-    decision = _eval(_native(status="active", status_is_open=True))
+    decision = _eval(_native(status_is_open=True, due=TODAY), settings=_settings({ROOT: "native"}))
 
     assert decision.provenance.logical_day == TODAY.isoformat()
 
 
 # --------------------------------------------------------------------------
-# Open-status / safety filter
+# Safety preconditions: closed evidence drops on every mode, unknown never does
 # --------------------------------------------------------------------------
 
 
-def test_closed_source_status_is_not_eligible_even_with_a_stale_due_date():
-    decision = _eval(
-        _native(
-            status="done",
-            status_is_open=False,
-            due=TODAY - timedelta(days=30),
-            deadline=TODAY - timedelta(days=30),
-        )
+def _declared(mode: str) -> TypeMode:
+    """One declaration per mode, with the property each one requires."""
+    if mode == "assigned":
+        return TypeMode(mode=mode, property_id="tdtb")
+    if mode == "assignedOn":
+        return TypeMode(mode=mode, property_id="date")
+    return TypeMode(mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["off", "active", "assigned", "assignedOn", "native"])
+def test_closed_source_status_drops_even_with_a_matching_mode(mode):
+    settings = _settings({CUSTOM: _declared(mode)})
+    candidate = _cand(
+        source_assigned=True,
+        status="Completed",
+        status_is_open=False,
+        due=TODAY - timedelta(days=30),
+        deadline=TODAY - timedelta(days=30),
+        assigned_property=True,
+        assigned_on=TODAY,
     )
+
+    decision = _eval(candidate, settings=settings)
 
     assert decision.mode is AssignmentMode.NONE
     assert decision.eligible is False
@@ -310,41 +568,55 @@ def test_closed_source_status_is_not_eligible_even_with_a_stale_due_date():
     assert decision.provenance.auto_conditions == ()
 
 
-def test_closed_source_status_blocks_explicit_assignment():
+def test_unknown_status_stays_an_unassigned_candidate_never_a_drop():
+    settings = _settings({CUSTOM: TypeMode(mode="active", open_statuses=frozenset({"Active"}))})
+
     decision = _eval(
-        _custom(source_assigned=True, status="dropped", status_is_open=False),
-        settings=AssignmentSettings(excluded_identities=frozenset({CUSTOM})),
+        _cand(status="Planning", status_is_open=True), settings=settings
     )
 
     assert decision.mode is AssignmentMode.NONE
-    assert decision.reason_codes == ("closed-source-status",)
+    assert decision.eligible is False
+    assert decision.reason_codes == ("no-effective-assignment",)
+
+
+def test_an_unreadable_status_is_kept_as_a_candidate():
+    settings = _settings({CUSTOM: TypeMode(mode="native", open_statuses=frozenset({"Active"}))})
+
+    decision = _eval(_cand(status_is_open=None), settings=settings)
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.reason_codes == ("no-effective-assignment",)
 
 
 def test_malformed_source_row_is_not_eligible():
-    decision = _eval(_custom(source_assigned=True, well_formed=False, status_is_open=True))
+    settings = _settings({CUSTOM: "native"}, excluded=frozenset({CUSTOM_ID}))
+
+    decision = _eval(
+        _cand(well_formed=False, source_assigned=True, status_is_open=True),
+        settings=settings,
+    )
 
     assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
     assert decision.reason_codes == ("malformed-source-row",)
 
 
 def test_cross_space_row_is_not_eligible():
+    settings = _settings({CUSTOM: "native"})
+
     decision = _eval(
-        _custom(source_assigned=True, space_matches=False, status_is_open=True)
+        _cand(source_assigned=True, space_matches=False, status_is_open=True),
+        settings=settings,
     )
 
     assert decision.mode is AssignmentMode.NONE
     assert decision.reason_codes == ("cross-space-row",)
 
 
-# --------------------------------------------------------------------------
-# Stable identity requirements
-# --------------------------------------------------------------------------
-
-
-def test_missing_identity_fails_closed():
+def test_missing_identity_fails_closed_before_any_mode_is_read():
     decision = _eval(
-        AssignmentCandidate(identity="", source_assigned=True, status_is_open=True)
+        AssignmentCandidate(identity="", source_assigned=True, status_is_open=True),
+        settings=_settings({CUSTOM: "native"}),
     )
 
     assert decision.mode is AssignmentMode.NONE
@@ -353,7 +625,13 @@ def test_missing_identity_fails_closed():
 
 @pytest.mark.parametrize(
     "identity",
-    ["Write brief", "task-1", "todoist:1:2:3", "capacities:space-1:RootTask", "capacities:space-1:RootTask: task-1"],
+    [
+        "Write brief",
+        "task-1",
+        "todoist:1:2:3",
+        "capacities:space-1:RootTask",
+        "capacities:space-1:RootTask: task-1",
+    ],
 )
 def test_unstable_identity_fails_closed(identity):
     decision = _eval(
@@ -362,25 +640,6 @@ def test_unstable_identity_fails_closed(identity):
 
     assert decision.mode is AssignmentMode.NONE
     assert decision.reason_codes == ("unstable-identity",)
-
-
-def test_exclusion_keys_on_qualified_identity_not_object_id_or_title():
-    bare_object_id = _eval(
-        _native(status="active", status_is_open=True),
-        settings=frozenset({"task-1"}),
-    )
-    title = _eval(
-        _native(status="active", status_is_open=True),
-        settings=frozenset({"Write brief"}),
-    )
-    qualified = _eval(
-        _native(status="active", status_is_open=True),
-        settings=frozenset({NATIVE}),
-    )
-
-    assert bare_object_id.mode is AssignmentMode.AUTO
-    assert title.mode is AssignmentMode.AUTO
-    assert qualified.mode is AssignmentMode.EXCLUDED
 
 
 def test_surrounding_whitespace_on_the_identity_is_normalized():
@@ -406,127 +665,144 @@ def test_parse_capacities_identity_round_trips_components():
 
 
 # --------------------------------------------------------------------------
-# Missing / malformed values and custom type policy
+# Structural validation of the declared seam
 # --------------------------------------------------------------------------
 
 
-def test_custom_object_without_open_status_or_dates_is_not_eligible():
-    decision = _eval(_custom())
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.reason_codes == ("no-effective-assignment",)
-
-
-def test_custom_open_status_does_not_implicitly_assign():
-    # Custom-object Auto is not yet specified: an open status is a safety
-    # pass-through, not an inclusion signal.
-    decision = _eval(_custom(status="active", status_is_open=True))
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-    assert decision.reason_codes == ("no-effective-assignment",)
-    assert decision.provenance.native_task is False
-    assert decision.provenance.auto_conditions == ()
+@pytest.mark.parametrize("mode", ["custom", "", "assignedon", "native "])
+def test_an_unknown_mode_is_rejected_at_construction(mode):
+    with pytest.raises(ValueError):
+        TypeMode(mode=mode)
 
 
-def test_custom_dates_do_not_implicitly_assign():
-    candidates = (
-        _custom(due=TODAY),
-        _custom(deadline=TODAY),
-        _custom(
-            status="active",
-            status_is_open=True,
-            due=TODAY - timedelta(days=5),
-            deadline=TODAY + timedelta(days=1),
-        ),
+def test_a_property_is_required_exactly_for_the_property_modes():
+    with pytest.raises(ValueError):
+        TypeMode(mode="assigned")
+    with pytest.raises(ValueError):
+        TypeMode(mode="assignedOn")
+    with pytest.raises(ValueError):
+        TypeMode(mode="native", property_id="tdtb")
+    assert TypeMode(mode="assigned", property_id="tdtb").property_id == "tdtb"
+
+
+def test_a_negative_or_non_integer_horizon_is_rejected():
+    with pytest.raises(ValueError):
+        AssignmentSettings(deadline_horizon_days=-1)
+    with pytest.raises(ValueError):
+        AssignmentSettings(deadline_horizon_days=True)
+
+
+def test_structure_ids_are_enumerable_per_mode():
+    settings = _settings(
+        {
+            "b-active": "active",
+            "a-native": "native",
+            "c-assigned": TypeMode(mode="assigned", property_id="tdtb"),
+        }
     )
 
-    for candidate in candidates:
-        decision = _eval(candidate)
-        assert decision.mode is AssignmentMode.NONE
-        assert decision.eligible is False
-        assert decision.reason_codes == ("no-effective-assignment",)
-        assert decision.provenance.auto_conditions == ()
+    assert settings.structure_ids() == ("a-native", "b-active", "c-assigned")
+    assert settings.structure_ids("native") == ("a-native",)
+    assert settings.mode_of("missing") == "off"
 
 
-def test_custom_dates_and_open_status_still_yield_to_exclusion():
-    # Precedence is unchanged: exclusion is evaluated before the (absent)
-    # custom Auto policy, so an excluded custom row is Excluded, not None.
-    decision = _eval(
-        _custom(status="active", status_is_open=True, due=TODAY),
-        settings=frozenset({CUSTOM}),
+# --------------------------------------------------------------------------
+# End to end from a version-2 settings document
+# --------------------------------------------------------------------------
+
+
+def _v2_settings():
+    return cs.CapacitiesSettings(
+        revision=4,
+        statuses=cs.StatusVocabulary(open=frozenset({"In Progress"}), completed=frozenset({"Completed"})),
+        types={
+            ROOT: cs.TypeDeclaration(mode="native", statuses=()),
+            "project": cs.TypeDeclaration(mode="active"),
+            "task-list": cs.TypeDeclaration(mode="active", statuses=("Doing",)),
+            "bill": cs.TypeDeclaration(mode="assigned", property_id="paid"),
+            "event": cs.TypeDeclaration(mode="assignedOn", property_id="when"),
+            "archive": cs.TypeDeclaration(mode="off"),
+        },
+        native=cs.NativePolicy(deadline_horizon_days=3),
+        excluded=frozenset({f"capacities:{SPACE}:bill:obj-1"}),
     )
 
-    assert decision.mode is AssignmentMode.EXCLUDED
-    assert decision.eligible is False
-    assert decision.provenance.exclusion_matched is True
 
+def test_a_v2_document_becomes_the_evaluator_seam_end_to_end():
+    settings = AssignmentSettings.from_v2(_v2_settings())
 
-def test_settings_can_override_the_native_task_structures():
-    settings = AssignmentSettings(native_task_structures=frozenset({"custom-project"}))
+    assert settings.deadline_horizon_days == 3
+    assert settings.open_statuses == frozenset({"In Progress"})
+    assert settings.excluded_identities == frozenset({f"capacities:{SPACE}:bill:obj-1"})
+    # ``off`` declarations are dropped: an absent structure and an ``off``
+    # structure are indistinguishable, and neither is ever enumerated.
+    assert "archive" not in settings.types
+    assert settings.mode_of("archive") == "off"
+    assert settings.structure_ids() == ("RootTask", "bill", "event", "project", "task-list")
 
-    decision = _eval(_custom(status="active", status_is_open=True), settings=settings)
-
-    assert decision.provenance.native_task is True
-    assert decision.provenance.auto_conditions == ("status-active",)
-
-
-def test_settings_can_narrow_the_native_task_structures():
-    # A structure left out of the configured set falls to the custom path even
-    # though it is a default native, so it can never match the native rules.
-    settings = AssignmentSettings(native_task_structures=frozenset({"custom-project"}))
-
-    decision = _eval(_native(status="active", status_is_open=True), settings=settings)
-
-    assert decision.provenance.native_task is False
-    assert decision.mode is AssignmentMode.NONE
-
-
-def test_empty_native_task_structures_sends_every_structure_to_the_custom_path():
-    settings = AssignmentSettings(native_task_structures=frozenset())
-
-    decision = _eval(_native(status="active", status_is_open=True), settings=settings)
-
-    assert decision.provenance.native_task is False
-    assert decision.mode is AssignmentMode.NONE
-
-
-def test_settings_can_extend_the_active_statuses():
-    settings = AssignmentSettings(active_statuses=frozenset({"active", "in progress"}))
-
-    decision = _eval(_native(status="In Progress", status_is_open=True), settings=settings)
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.provenance.auto_conditions == ("status-active",)
-    assert decision.reason_codes == ("auto-status-active",)
-
-
-def test_default_active_statuses_alone_do_not_match_other_statuses():
-    decision = _eval(_native(status="In Progress", status_is_open=True))
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_configured_active_statuses_are_normalized_at_comparison_time():
-    # The configured form keeps the operator's exact text; the comparison still
-    # normalizes case and whitespace, so any equivalent spelling matches.
-    settings = AssignmentSettings(active_statuses=frozenset({"In   Progress"}))
-
-    decision = _eval(_native(status="in progress", status_is_open=True), settings=settings)
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.provenance.auto_conditions == ("status-active",)
-
-
-def test_settings_can_override_the_deadline_horizon():
-    settings = AssignmentSettings(deadline_horizon_days=5)
-    decision = _eval(
-        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=5)),
+    # native: date-only (statuses disabled by the document)
+    assert _eval(
+        _cand(ROOT, status="In Progress", status_is_open=True), settings=settings
+    ).reason_codes == ("no-effective-assignment",)
+    assert _eval(
+        _cand(ROOT, status_is_open=True, deadline=TODAY + timedelta(days=3)),
         settings=settings,
+    ).reason_codes == ("auto-deadline-within-horizon",)
+    assert _eval(
+        _cand(ROOT, status_is_open=True, deadline=TODAY + timedelta(days=4)),
+        settings=settings,
+    ).mode is AssignmentMode.NONE
+
+    # active: inherits the document vocabulary
+    assert _eval(
+        _cand("project", status="In Progress", status_is_open=True), settings=settings
+    ).reason_codes == ("auto-status-active",)
+    # active: own names replace it
+    assert _eval(
+        _cand("task-list", status="In Progress", status_is_open=True), settings=settings
+    ).reason_codes == ("no-effective-assignment",)
+    assert _eval(
+        _cand("task-list", status="Doing", status_is_open=True), settings=settings
+    ).reason_codes == ("auto-status-active",)
+
+    # assigned: boolean property, and the document's exclusion still wins
+    assert _eval(
+        _cand("bill", assigned_property=True, status_is_open=True), settings=settings
+    ).mode is AssignmentMode.EXCLUDED
+    assert _eval(
+        _cand("other-bill", assigned_property=True, status_is_open=True), settings=settings
+    ).mode is AssignmentMode.NONE
+
+    # assignedOn: date on or before the logical day
+    assert _eval(
+        _cand("event", assigned_on=TODAY, status_is_open=True), settings=settings
+    ).reason_codes == ("auto-assigned-on",)
+    assert _eval(
+        _cand("event", assigned_on=TODAY + timedelta(days=1), status_is_open=True),
+        settings=settings,
+    ).mode is AssignmentMode.NONE
+
+
+def test_from_v2_carries_the_declared_property_ids_for_the_adapter():
+    settings = AssignmentSettings.from_v2(_v2_settings())
+
+    assert settings.types["bill"].property_id == "paid"
+    assert settings.types["event"].property_id == "when"
+    assert settings.types["project"].property_id is None
+
+
+def test_from_v2_of_a_default_document_admits_nothing():
+    # A sparse document declares no structures, so every structure is ``off``.
+    settings = AssignmentSettings.from_v2(cs.CapacitiesSettings())
+
+    decision = _eval(
+        _cand(status="Active", status_is_open=True, due=TODAY), settings=settings
     )
 
-    assert decision.mode is AssignmentMode.AUTO
+    assert settings.types == {}
+    assert settings.deadline_horizon_days == cs.NativePolicy().deadline_horizon_days
+    assert settings.open_statuses == cs.StatusVocabulary().open
+    assert decision.reason_codes == ("mode-off",)
 
 
 # --------------------------------------------------------------------------
@@ -536,32 +812,36 @@ def test_settings_can_override_the_deadline_horizon():
 
 def test_evaluation_is_pure_and_repeatable():
     candidate = _native(status="active", status_is_open=True, due=TODAY)
-    settings = AssignmentSettings(excluded_identities=frozenset({CUSTOM}))
+    settings = _settings({ROOT: "native"}, excluded=frozenset({CUSTOM_ID}))
 
     first = _eval(candidate, settings=settings)
     second = _eval(candidate, settings=settings)
 
     assert first == second
     assert candidate == _native(status="active", status_is_open=True, due=TODAY)
-    assert settings.excluded_identities == frozenset({CUSTOM})
+    assert settings.excluded_identities == frozenset({CUSTOM_ID})
+    assert settings.mode_of(ROOT) == "native"
 
 
 def test_every_decision_carries_a_non_empty_explanation_and_provenance():
-    decision = _eval(_native(status="open", status_is_open=True, due=TODAY))
+    decision = _eval(_native(status_is_open=True, due=TODAY), settings=_settings({ROOT: "native"}))
 
     assert decision.reasons
     assert all(reason.code and reason.detail and reason.origin for reason in decision.reasons)
     assert decision.provenance.identity == NATIVE
     assert decision.provenance.source == "capacities"
-    assert decision.provenance.structure_id == "RootTask"
+    assert decision.provenance.structure_id == ROOT
     assert decision.provenance.object_id == "task-1"
+    assert decision.provenance.native_task is True
 
 
 def test_eligible_is_true_exactly_for_assigned_and_auto_modes():
-    assigned = _eval(_custom(source_assigned=True, status_is_open=True))
-    auto = _eval(_native(status="active", status_is_open=True))
-    excluded = _eval(_custom(status_is_open=True), settings=frozenset({CUSTOM}))
-    none = _eval(_native(status="open", status_is_open=True))
+    settings = _settings({ROOT: "native"}, excluded=frozenset({CUSTOM_ID}))
+
+    assigned = _eval(_cand(source_assigned=True, status_is_open=True), settings=settings)
+    auto = _eval(_native(status_is_open=True, due=TODAY), settings=settings)
+    excluded = _eval(_cand(status_is_open=True), settings=settings)
+    none = _eval(_native(status_is_open=True), settings=settings)
 
     assert (assigned.mode, assigned.eligible) == (AssignmentMode.ASSIGNED, True)
     assert (auto.mode, auto.eligible) == (AssignmentMode.AUTO, True)
@@ -572,270 +852,3 @@ def test_eligible_is_true_exactly_for_assigned_and_auto_modes():
 def test_invalid_settings_type_fails_loudly():
     with pytest.raises(TypeError):
         evaluate_assignment(_native(), logical_day=TODAY, settings="task-1")
-
-
-# --------------------------------------------------------------------------
-# Compatibility with existing adapter rows
-# --------------------------------------------------------------------------
-
-
-def _prop(kind: str, key: str, value):
-    return {"type": kind, key: value}
-
-
-def _definition(prop_id: str, kind: str, *, labels=None):
-    row = {"id": prop_id, "name": prop_id.title(), "type": kind, "writable": True}
-    if labels is not None:
-        row["labelSet"] = [{"id": key, "name": name} for key, name in labels]
-    return row
-
-
-def _custom_object():
-    return {
-        "id": "project-1",
-        "spaceId": SPACE,
-        "structureId": "custom-project",
-        "properties": {
-            "title": _prop("title", "title", {"value": "Ship project"}),
-            "tdtb": _prop("label", "label", [{"id": "yes"}]),
-            "date": _prop("date", "date", {"dateResolution": "day", "start": "2026-09-29T00:00:00.000Z"}),
-            "minutes": _prop("number", "number", {"value": 60}),
-            "state": _prop("label", "label", [{"id": "active"}]),
-        },
-    }
-
-
-def test_decision_is_compatible_with_an_adapter_projected_row():
-    from capacities_adapter import (
-        CapacitiesAdapter,
-        CapacitiesConfig,
-        StructureMapping,
-    )
-
-    structures = [
-        {
-            "id": "RootTask",
-            "title": "Task",
-            "propertyDefinitions": [_definition("title", "title"), _definition("status", "label")],
-        },
-        {
-            "id": "custom-project",
-            "title": "Project",
-            "propertyDefinitions": [
-                _definition("title", "title"),
-                _definition("tdtb", "label", labels=[("yes", "TDTB")]),
-                _definition("date", "date"),
-                _definition("minutes", "number"),
-                _definition("state", "label", labels=[("active", "Active")]),
-            ],
-        },
-    ]
-
-    class _Provider:
-        def fetch_structures(self):
-            return structures
-
-        def list_objects(self, structure_id, cursor=None):
-            return {"objects": [], "next_cursor": None}
-
-        def get_object(self, object_id):
-            raise AssertionError("read-only compatibility check")
-
-        def patch_object(self, object_id, properties):
-            raise AssertionError("read-only compatibility check")
-
-    adapter = CapacitiesAdapter(
-        _Provider(),
-        CapacitiesConfig(
-            space_id=SPACE,
-            mappings=(
-                StructureMapping(
-                    structure_id="RootTask",
-                    assignment_property="title",
-                    assignment_values=frozenset({"task"}),
-                    title_property="title",
-                ),
-                StructureMapping(
-                    structure_id="custom-project",
-                    assignment_property="tdtb",
-                    assignment_values=frozenset({"yes"}),
-                    date_property="date",
-                    open_status_property="state",
-                    open_status_values=frozenset({"active"}),
-                    duration_property="minutes",
-                ),
-            ),
-        ),
-    )
-
-    row = adapter.items_for_day_from_objects(TODAY, [_custom_object()]).items[0]
-    assert row["assigned"] is True
-    assert row["identity"] == CUSTOM
-
-    decision = _eval(
-        AssignmentCandidate(
-            identity=row["identity"],
-            source_assigned=True,
-            status="active",
-            status_is_open=True,
-            due=TODAY,
-        )
-    )
-
-    assert decision.identity == row["identity"]
-    assert decision.eligible is row["assigned"]
-    assert decision.provenance.source == row["source"]
-    assert decision.provenance.space_id == row["capacities_space_id"]
-    assert decision.provenance.structure_id == row["capacities_structure_id"]
-    assert decision.provenance.object_id == row["capacities_id"]
-    assert decision.provenance.structure_id == row["types"][0]
-
-
-# --------------------------------------------------------------------------
-# Custom Active pull: an Active-enabled custom structure + typed label name
-# --------------------------------------------------------------------------
-# This is the ONLY custom Auto inference TDTB permits. It keys on the typed
-# label *name* (``Active``), never the label id (the native Task's Active
-# option is id ``in-progress``) and never raw frontmatter text. A structure
-# must be explicitly Active-enabled by the caller's settings; every other
-# custom signal stays a precondition/display value and never implies inclusion.
-
-
-CUSTOM_STRUCTURE = "custom-project"
-
-
-def _active_settings(**kwargs) -> AssignmentSettings:
-    return AssignmentSettings(
-        active_structures=frozenset({CUSTOM_STRUCTURE}), **kwargs
-    )
-
-
-def test_custom_active_pull_includes_an_enabled_structure():
-    decision = _eval(
-        _custom(status="Active", status_is_open=True),
-        settings=_active_settings(),
-    )
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.eligible is True
-    assert decision.provenance.native_task is False
-    assert decision.provenance.auto_conditions == ("custom-status-active",)
-    assert decision.reason_codes == ("auto-custom-status-active",)
-
-
-def test_custom_active_pull_requires_the_structure_to_be_enabled():
-    decision = _eval(_custom(status="Active", status_is_open=True))
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-    assert decision.reason_codes == ("no-effective-assignment",)
-    assert decision.provenance.auto_conditions == ()
-
-
-@pytest.mark.parametrize(
-    "status", ["In Progress", "Started", "Todo", "in-progress", "Planning"]
-)
-def test_custom_active_pull_requires_the_typed_label_name_active(status):
-    decision = _eval(
-        _custom(status=status, status_is_open=True),
-        settings=_active_settings(),
-    )
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.eligible is False
-    assert decision.provenance.auto_conditions == ()
-
-
-def test_custom_active_pull_matches_the_label_name_even_when_the_id_differs():
-    # The native Task's Active option has label id ``in-progress`` but display
-    # name ``Active``. The custom pull keys on the typed label name, not id.
-    decision = _eval(
-        _custom(status="Active", status_is_open=True),
-        settings=_active_settings(),
-    )
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.reason_codes == ("auto-custom-status-active",)
-
-
-def test_custom_active_pull_does_not_apply_to_native_structures():
-    # A native structure always uses the native Auto rules, never the custom
-    # pull — even if its id appears in the Active-enabled set.
-    settings = AssignmentSettings(active_structures=frozenset({"RootTask"}))
-
-    decision = _eval(_native(status="Active", status_is_open=True), settings=settings)
-
-    assert decision.provenance.auto_conditions == ("status-active",)
-    assert decision.reason_codes == ("auto-status-active",)
-
-
-def test_custom_active_pull_yields_to_exclusion():
-    decision = _eval(
-        _custom(status="Active", status_is_open=True),
-        settings=AssignmentSettings(
-            excluded_identities=frozenset({CUSTOM}),
-            active_structures=frozenset({CUSTOM_STRUCTURE}),
-        ),
-    )
-
-    assert decision.mode is AssignmentMode.EXCLUDED
-    assert decision.eligible is False
-    assert decision.reason_codes == ("tdtb-excluded",)
-
-
-def test_custom_active_pull_yields_to_source_assigned():
-    decision = _eval(
-        _custom(source_assigned=True, status="Active", status_is_open=True),
-        settings=_active_settings(),
-    )
-
-    assert decision.mode is AssignmentMode.ASSIGNED
-    assert decision.reason_codes == ("source-assigned",)
-
-
-def test_custom_active_pull_is_blocked_by_a_closed_source_status():
-    decision = _eval(
-        _custom(status="Active", status_is_open=False),
-        settings=_active_settings(),
-    )
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.reason_codes == ("closed-source-status",)
-
-
-def test_custom_active_pull_requires_a_status_signal():
-    decision = _eval(_custom(status_is_open=True), settings=_active_settings())
-
-    assert decision.mode is AssignmentMode.NONE
-    assert decision.reason_codes == ("no-effective-assignment",)
-
-
-def test_custom_active_pull_cannot_include_a_structure_without_an_active_option():
-    # Adventure offers Inbox/Planning/Scheduled/Completed/Dropped and no Active
-    # option, so no value can satisfy the rule even if the structure is (mis)
-    # enabled.
-    identity = f"capacities:{SPACE}:adventure:adv-1"
-    settings = AssignmentSettings(active_structures=frozenset({"adventure"}))
-
-    for status in ("Inbox", "Planning", "Scheduled", "Completed", "Dropped"):
-        decision = _eval(
-            AssignmentCandidate(identity=identity, status=status, status_is_open=True),
-            settings=settings,
-        )
-        assert decision.mode is AssignmentMode.NONE
-        assert decision.provenance.auto_conditions == ()
-
-
-def test_native_auto_rules_are_unchanged_when_active_structures_is_set():
-    settings = AssignmentSettings(active_structures=frozenset({CUSTOM_STRUCTURE}))
-
-    active = _eval(_native(status="Active", status_is_open=True), settings=settings)
-    due = _eval(_native(status="open", status_is_open=True, due=TODAY), settings=settings)
-    deadline = _eval(
-        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)),
-        settings=settings,
-    )
-
-    assert active.reason_codes == ("auto-status-active",)
-    assert due.reason_codes == ("auto-due-today-or-overdue",)
-    assert deadline.reason_codes == ("auto-deadline-within-horizon",)
