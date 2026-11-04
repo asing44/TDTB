@@ -868,6 +868,7 @@ class TestStructureTitles:
             "persisted",
             "available_structures",
             "structure_titles",
+            "declaration_diagnostics",
         }
         assert set(body["settings"]) == {
             "version",

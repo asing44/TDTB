@@ -291,6 +291,37 @@ def _write_settings_with_declarations(
     )
 
 
+def _write_dual_declaration_settings() -> None:
+    """A hand-edited file declaring BOTH an Assigned and an Assigned On mapping.
+
+    ``save_settings`` now refuses this shape, so the read path's tolerance for a
+    pre-existing file is exercised by writing the bytes directly.
+    """
+    path = cs.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "revision": 0,
+            "native_task_auto": {
+                "active_enabled": True,
+                "due_enabled": True,
+                "deadline_enabled": True,
+                "deadline_horizon_days": 2,
+            },
+            "excluded": {EXCLUDED: True},
+            "active_structures": {},
+            "native_task_structures": list(cs.NATIVE_TASK_STRUCTURES),
+            "active_statuses": list(cs.DEFAULT_ACTIVE_STATUSES),
+            "assigned_structures": {"custom-project": SETTINGS_ASSIGNED_PROPERTY},
+            "assigned_on_structures": {
+                "custom-project": SETTINGS_ASSIGNED_ON_PROPERTY
+            },
+        }),
+        encoding="utf-8",
+    )
+
+
 def _write_legacy_settings() -> None:
     """A pre-existing version-1 file written before the additive key existed."""
     path = cs.settings_path()
@@ -2138,10 +2169,7 @@ def test_assigned_on_declaration_resolves_only_the_declared_structure(tmp_path):
 
 
 def test_assigned_on_and_boolean_declarations_coexist_on_one_structure(tmp_path):
-    _write_settings_with_declarations(
-        {"custom-project": SETTINGS_ASSIGNED_PROPERTY},
-        {"custom-project": SETTINGS_ASSIGNED_ON_PROPERTY},
-    )
+    _write_dual_declaration_settings()
 
     mappings = {
         m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())

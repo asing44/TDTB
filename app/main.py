@@ -1595,6 +1595,76 @@ def _capacities_structure_titles(
     }
 
 
+def _capacities_published_contract_schema() -> dict[str, dict[str, str]]:
+    """``{structure_id: {property_id: kind}}`` from the installed generation's
+    structure contract, or ``{}`` when it is unavailable.
+
+    Offline and fail-soft: it reads the app-owned mapping record for the space
+    and the already-published contract, so there is no provider call, no
+    credential read, and no store write — only the store's own lock artifact.
+    A missing source, a missing contract, or an unreadable store answers
+    ``{}`` ("no discovered shape"), which callers must treat as "nothing to
+    compare against" rather than "every property vanished"."""
+    try:
+        record = capacities_builder.read_source()
+    except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+        print(f"capacities source read failed: {exc}", file=sys.stderr)
+        return {}
+    if record is None:
+        return {}
+    schema_by_structure, contract_available = _capacities_rules_contract_schema(
+        record.space_id
+    )
+    return schema_by_structure if contract_available else {}
+
+
+def _capacities_declaration_diagnostics(
+    settings: capacities_settings.CapacitiesSettings,
+    structure_titles: dict[str, str],
+) -> list[dict[str, str]]:
+    """One bounded entry per declared property the published contract lacks.
+
+    The adapter's read-path warnings for a dead declaration
+    (``assigned_structures`` / ``assigned_on_structures`` naming an unknown
+    property) only reach ``source_warnings`` AFTER a plan read, so the Settings
+    drawer cannot tell the owner that a mapping does nothing. This projects the
+    same drift from the already-published generation contract plus the stored
+    settings — no provider call, no store write, no source content: a structure
+    id, its cached display title (empty when unobserved), and one sentence.
+
+    A contract that is missing or unusable yields ``[]``: absence of evidence
+    is not evidence of drift, and the drawer then simply shows nothing."""
+    declarations: list[tuple[str, str, str]] = [
+        (structure_id, property_id, "Assigned")
+        for structure_id, property_id in settings.assigned_structures.items()
+    ] + [
+        (structure_id, property_id, "Assigned On")
+        for structure_id, property_id in settings.assigned_on_structures.items()
+    ]
+    if not declarations:
+        return []
+    schema_by_structure = _capacities_published_contract_schema()
+    if not schema_by_structure:
+        return []
+    diagnostics: list[dict[str, str]] = []
+    for structure_id, property_id, declaration in sorted(declarations):
+        if property_id in schema_by_structure.get(structure_id, {}):
+            continue
+        diagnostics.append(
+            {
+                "structure_id": structure_id,
+                "structure_label": structure_titles.get(structure_id, ""),
+                "reason": (
+                    f"{declaration} declaration names property {property_id!r}, "
+                    "which the last published Capacities contract does not "
+                    "define; pick a live property in Settings or clear the "
+                    "mapping."
+                ),
+            }
+        )
+    return diagnostics
+
+
 def _exclusion_policy_or_block() -> tag_exclusions.ExclusionPolicy:
     """Read the tag-exclusion policy for a planning surface, failing closed.
 
@@ -3965,7 +4035,15 @@ def create_app() -> FastAPI:
         record, and the machine-local structure-title cache; it never builds a
         Capacities adapter, reads a credential, calls a provider, or touches
         runstate. Malformed/unsupported settings storage fails closed with a
-        bounded error and leaves the bytes untouched."""
+        bounded error and leaves the bytes untouched.
+
+        ``declaration_diagnostics`` projects declaration drift from the
+        already-published generation contract: a stored ``assigned_structures``
+        or ``assigned_on_structures`` entry naming a property that contract
+        does not define can never read, and until now only a plan read reported
+        it. The field is bounded (structure id, cached title, one sentence) and
+        carries no property values or source content; a missing or unusable
+        contract answers an empty list rather than a guess."""
         try:
             result = capacities_settings.read_settings()
         except (capacities_settings.SettingsStoreError, OSError) as exc:
@@ -3982,12 +4060,14 @@ def create_app() -> FastAPI:
                 },
             ) from exc
         available_structures = _available_capacities_structures()
+        structure_titles = _capacities_structure_titles(available_structures)
         return {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
             "available_structures": available_structures,
-            "structure_titles": _capacities_structure_titles(
-                available_structures
+            "structure_titles": structure_titles,
+            "declaration_diagnostics": _capacities_declaration_diagnostics(
+                result.settings, structure_titles
             ),
         }
 
@@ -4078,12 +4158,14 @@ def create_app() -> FastAPI:
                 },
             ) from exc
         available_structures = _available_capacities_structures()
+        structure_titles = _capacities_structure_titles(available_structures)
         return {
             "settings": saved.as_dict(),
             "persisted": True,
             "available_structures": available_structures,
-            "structure_titles": _capacities_structure_titles(
-                available_structures
+            "structure_titles": structure_titles,
+            "declaration_diagnostics": _capacities_declaration_diagnostics(
+                saved, structure_titles
             ),
         }
 
