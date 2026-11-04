@@ -224,6 +224,101 @@ describe("U7 stepper header", () => {
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5000 });
   });
 
+  it("opens a refresh menu from the chevron with aria state and focus handling", () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const toggle = r.getByRole("button", { name: "Refresh options" });
+    expect(toggle.getAttribute("aria-haspopup")).toBe("menu");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(r.queryByRole("menu")).toBeNull();
+
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const items = r.getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringContaining("Todoist & Calendar"),
+      expect.stringContaining("Capacities"),
+    ]);
+    // Focus moves to the first item; arrows rove and wrap.
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(r.getByRole("menu"), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(r.getByRole("menu"), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(r.getByRole("menu"), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(r.getByRole("menu"), { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+
+    // Escape closes and returns focus to the chevron.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(r.queryByRole("menu")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+
+    // ArrowDown on the chevron opens it; an outside press closes it.
+    fireEvent.keyDown(toggle, { key: "ArrowDown" });
+    expect(r.getByRole("menu")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(r.queryByRole("menu")).toBeNull();
+  });
+
+  it("menu: Todoist & Calendar reads the snapshot and never starts a Capacities job", () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
+    const snapshot = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    const toggle = r.getByRole("button", { name: "Refresh options" });
+    fireEvent.click(toggle);
+    fireEvent.click(r.getByRole("menuitem", { name: /Todoist & Calendar/ }));
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
+    expect(r.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("menu: Capacities starts the job and does not call refreshSources directly", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(runningStatus());
+    const snapshot = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    fireEvent.click(r.getByRole("button", { name: "Refresh options" }));
+    fireEvent.click(r.getByRole("menuitem", { name: /^Capacities/ }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith("refresh", "all"));
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it("menu: a refused Capacities-only start does not fall back to the snapshot read", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockRejectedValue(
+      new ApiError(503, { code: "capacities_refresh_unavailable", message: "" }, "unavailable"),
+    );
+    const snapshot = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    fireEvent.click(r.getByRole("button", { name: "Refresh options" }));
+    fireEvent.click(r.getByRole("menuitem", { name: /^Capacities/ }));
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    await act(async () => {});
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it("disables the main press and the menu while a start is in flight", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    let release: (v: CapacitiesRefreshStatus) => void = () => {};
+    vi.spyOn(h.controller, "startCapacitiesRefresh").mockReturnValue(
+      new Promise<CapacitiesRefreshStatus>((res) => {
+        release = res;
+      }),
+    );
+    fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
+    expect((r.getByRole("button", { name: "Refresh sources" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((r.getByRole("button", { name: "Refresh options" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => release(runningStatus()));
+  });
+
   it("treats a 409 as already running and still reloads on the next terminal phase", async () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);

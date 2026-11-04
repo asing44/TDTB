@@ -13,6 +13,7 @@
 
 import { footerBlockedReason } from "./Footer";
 import { Fragment } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
 import { formatRelativeShort } from "../model/relative";
@@ -46,25 +47,128 @@ const STEPS: ReadonlyArray<{ id: StepId; label: string }> = [
 
 const stepId = (step: StepId) => `step-tab-${step}`;
 
-export function Header() {
+/** The source-refresh actions shared by the header split-button and the
+    Sources popover, so the two surfaces never duplicate the start logic.
+
+    - `refreshAll`: the main press — Capacities job, then the snapshot read.
+    - `refreshSnapshot`: Todoist & Calendar only (the snapshot read); never
+      starts a Capacities job.
+    - `refreshCapacities`: the Capacities job only, with no snapshot fallback;
+      the terminal phase still reloads the snapshot when `reloadOnTerminal`.
+    Only one mounted surface should pass `reloadOnTerminal` (the header), since
+    every hook instance watches the same shared job. A surface that is not
+    always visible passes `enabled` false until it is, so it issues no status
+    read while hidden. */
+export function useSourcesRefresh(reloadOnTerminal: boolean, enabled = true) {
   const s = useAppState();
-  const { controller, store } = useApp();
+  const { controller } = useApp();
+  // Set only by the full press: a Capacities-only start that is refused must
+  // not silently turn into a Todoist read the owner did not ask for.
+  const fallbackOnRefusal = useRef(false);
   // One action in both pill states (R1, KTD1, KTD2): the pill's press starts
   // the Capacities refresh job, whose terminal phase re-reads the snapshot
-  // (and with it Todoist). Called before the `s.inputs` guard so the hook
+  // (and with it Todoist). Called before any `s.inputs` guard so the hook
   // order stays stable across renders.
   const job = useCapacitiesRefreshJob(
-    s.inputs !== null,
-    () => {
-      void controller.refreshSources();
-    },
+    s.inputs !== null && enabled,
+    reloadOnTerminal
+      ? () => {
+          void controller.refreshSources();
+        }
+      : undefined,
     // A source that cannot be prepared for a job refuses the start with 503.
     // The snapshot read still re-reads Todoist live, so it is the whole
     // refresh and runs directly instead of leaving the press dead.
     (error) => {
-      if (error instanceof ApiError && error.status === 503) void controller.refreshSources();
+      if (fallbackOnRefusal.current && error instanceof ApiError && error.status === 503) {
+        void controller.refreshSources();
+      }
     },
   );
+  const refreshing = s.refresh.phase === "loading" || job.running;
+  // A click is in flight from the POST until the job's first status read: the
+  // action stays disabled across that handoff so a double click cannot race a
+  // second start (which the server would answer with a single-flight 409).
+  const refreshBusy = refreshing || job.busy === "starting";
+  const capacitiesConfigured = job.status?.configured !== false;
+  const refreshSnapshot = () => {
+    if (refreshBusy) return;
+    void controller.refreshSources();
+  };
+  // Unconfigured Capacities has nothing to refresh: the local status read says
+  // so up front, so the snapshot read is the whole action (no doomed POST).
+  const refreshAll = () => {
+    if (refreshBusy) return;
+    if (!capacitiesConfigured) {
+      void controller.refreshSources();
+      return;
+    }
+    fallbackOnRefusal.current = true;
+    void job.start("refresh");
+  };
+  const refreshCapacities = () => {
+    if (refreshBusy || !capacitiesConfigured) return;
+    fallbackOnRefusal.current = false;
+    void job.start("refresh");
+  };
+  return {
+    job,
+    refreshing,
+    refreshBusy,
+    capacitiesConfigured,
+    refreshAll,
+    refreshSnapshot,
+    refreshCapacities,
+  };
+}
+
+export function Header() {
+  const s = useAppState();
+  const { store } = useApp();
+  const {
+    job,
+    refreshing,
+    refreshBusy,
+    capacitiesConfigured,
+    refreshAll,
+    refreshSnapshot,
+    refreshCapacities,
+  } = useSourcesRefresh(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const splitRef = useRef<HTMLSpanElement>(null);
+  const menuItems = () =>
+    Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuItems().find((el) => !el.disabled)?.focus();
+    const onPointer = (e: MouseEvent | TouchEvent) => {
+      if (splitRef.current && !splitRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMenuOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+  // A run that starts elsewhere (or this press) hides the split; close the
+  // menu so it cannot reappear stale when the run ends.
+  useEffect(() => {
+    if (refreshing && menuOpen) setMenuOpen(false);
+  }, [refreshing, menuOpen]);
+
   if (!s.inputs) return null;
 
   const screen = s.ui.screen;
@@ -98,6 +202,34 @@ export function Header() {
     (focusTarget ?? document.getElementById(stepId(step)))?.focus();
   };
 
+  const pickItem = (run: () => void) => {
+    setMenuOpen(false);
+    toggleRef.current?.focus();
+    run();
+  };
+  const onMenuKeyDown = (e: KeyboardEvent) => {
+    const items = menuItems().filter((el) => !el.disabled);
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number;
+    if (e.key === "ArrowDown") next = (at + 1) % items.length;
+    else if (e.key === "ArrowUp") next = (at - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else if (e.key === "Tab") {
+      setMenuOpen(false);
+      return;
+    } else return;
+    e.preventDefault();
+    items[next].focus();
+  };
+  const onToggleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "ArrowDown" && !menuOpen) {
+      e.preventDefault();
+      setMenuOpen(true);
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     const base = STEPS.findIndex((step) => step.id === selectedStep);
     let next = base;
@@ -111,11 +243,6 @@ export function Header() {
   };
 
   const health = s.inputs.sourceHealth;
-  const refreshing = s.refresh.phase === "loading" || job.running;
-  // A click is in flight from the POST until the job's first status read: the
-  // action stays disabled across that handoff so a double click cannot race a
-  // second start (which the server would answer with a single-flight 409).
-  const refreshBusy = refreshing || job.busy === "starting";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
   // One press, one meaning: the label never names a second mode. A run this
   // surface is watching reports its wait countdown and read progress; an old
@@ -123,16 +250,6 @@ export function Header() {
   const refreshingLabel =
     (job.status?.progress.waiting ? refreshProgressText(job.status, job.nowMs) : null) ??
     "Refreshing sources…";
-  // Unconfigured Capacities has nothing to refresh: the local status read says
-  // so up front, so the snapshot read is the whole action (no doomed POST).
-  const startSourcesRefresh = () => {
-    if (refreshBusy) return;
-    if (job.status?.configured === false) {
-      void controller.refreshSources();
-      return;
-    }
-    void job.start("refresh");
-  };
   const pillBase = refreshing
     ? refreshingLabel
     : health === "ok"
@@ -226,14 +343,63 @@ export function Header() {
           // is the same in the healthy and degraded states — one control, no
           // separate Retry path — and a Capacities job that cannot run falls
           // back to the snapshot read inside the handler.
-          <button
-            class="header-pill btn health-pill__retry"
-            onClick={startSourcesRefresh}
-            disabled={refreshBusy}
-            aria-label="Refresh sources"
-          >
-            Refresh sources
-          </button>
+          <span class="header-split" ref={splitRef}>
+            <button
+              class="header-pill btn health-pill__retry"
+              onClick={refreshAll}
+              disabled={refreshBusy}
+              aria-label="Refresh sources"
+            >
+              Refresh sources
+            </button>
+            <button
+              ref={toggleRef}
+              class="header-pill btn header-split__toggle"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-controls="header-refresh-menu"
+              aria-label="Refresh options"
+              title="Choose which sources to refresh"
+              disabled={refreshBusy}
+              onClick={() => setMenuOpen(!menuOpen)}
+              onKeyDown={(e) => onToggleKeyDown(e as unknown as KeyboardEvent)}
+            >
+              <span aria-hidden="true">{menuOpen ? "▴" : "▾"}</span>
+            </button>
+            {menuOpen && (
+              <div
+                class="header-split__menu"
+                id="header-refresh-menu"
+                role="menu"
+                aria-label="Refresh sources by source"
+                ref={menuRef}
+                onKeyDown={(e) => onMenuKeyDown(e as unknown as KeyboardEvent)}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="header-split__item"
+                  disabled={refreshBusy}
+                  onClick={() => pickItem(refreshSnapshot)}
+                >
+                  Todoist &amp; Calendar
+                  <span class="header-split__hint">Fast, no Capacities wait</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="header-split__item"
+                  disabled={refreshBusy || !capacitiesConfigured}
+                  onClick={() => pickItem(refreshCapacities)}
+                >
+                  Capacities
+                  <span class="header-split__hint">
+                    {capacitiesConfigured ? "Paced, billed re-read" : "Not configured"}
+                  </span>
+                </button>
+              </div>
+            )}
+          </span>
         )}
         <button
           class="header-pill btn header__connections"

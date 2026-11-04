@@ -17,6 +17,7 @@ import type { CapacitiesCoverage, CapacitiesIntakeSkipped } from "../model/types
 import { capacitiesCoverageOf } from "../adapters/wire";
 import { display12h } from "../model/time";
 import { formatRelative } from "../model/relative";
+import { useSourcesRefresh } from "./Header";
 import { computePopoverPlacement, type PopoverPlacement } from "./popoverPlacement";
 
 const PANEL_ID = "rail-sources-details";
@@ -103,7 +104,10 @@ export function refreshSummaryText(
 export function ReadinessStrip() {
   const s = useAppState();
   const { controller, store } = useApp();
+  // The popover's Capacities action shares the header's start path; only the
+  // header reloads the snapshot on the job's terminal phase (one reload).
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const sources = useSourcesRefresh(false, detailsOpen);
   const [placement, setPlacement] = useState<PopoverPlacement | null>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
@@ -399,6 +403,25 @@ export function ReadinessStrip() {
                 )}
               </div>
             )}
+
+            <div class="rail__sources-refresh" role="group" aria-label="Refresh by source">
+              <button
+                type="button"
+                class="btn rail__sources-refresh-btn"
+                disabled={sources.refreshBusy}
+                onClick={sources.refreshSnapshot}
+              >
+                Refresh Todoist &amp; Calendar
+              </button>
+              <button
+                type="button"
+                class="btn rail__sources-refresh-btn"
+                disabled={sources.refreshBusy || !sources.capacitiesConfigured}
+                onClick={sources.refreshCapacities}
+              >
+                Refresh Capacities
+              </button>
+            </div>
 
             <p class="rail__sources-action">{action}</p>
           </div>

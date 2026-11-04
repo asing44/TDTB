@@ -151,6 +151,31 @@ describe("sources details popover", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it("popover: Refresh Todoist & Calendar reads the snapshot and never starts a Capacities job", () => {
+    const h = stage();
+    const snapshot = vi.spyOn(h.controller, "refreshSources").mockResolvedValue(undefined as never);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh");
+    const r = h.ui(<ReadinessStrip />);
+    fireEvent.click(r.getByRole("button", { name: "Source details" }));
+    fireEvent.click(r.getByRole("button", { name: "Refresh Todoist & Calendar" }));
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("popover: Refresh Capacities starts the job and does not read the snapshot directly", async () => {
+    const h = stage();
+    const snapshot = vi.spyOn(h.controller, "refreshSources").mockResolvedValue(undefined as never);
+    const start = vi
+      .spyOn(h.controller, "startCapacitiesRefresh")
+      .mockRejectedValue(new Error("fixture: no job"));
+    const r = h.ui(<ReadinessStrip />);
+    fireEvent.click(r.getByRole("button", { name: "Source details" }));
+    fireEvent.click(r.getByRole("button", { name: "Refresh Capacities" }));
+    await act(async () => {});
+    expect(start).toHaveBeenCalledWith("refresh", "all");
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
   it("moves focus into the panel on open and returns it on Escape", () => {
     const h = stage();
     const r = h.ui(<ReadinessStrip />);
