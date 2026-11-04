@@ -73,18 +73,18 @@ describe("reads", () => {
     route("/settings/capacities", {
       persisted: true,
       settings: {
-        version: 1,
+        version: 2,
         revision: 3,
-        native_task_auto: {
-          active_enabled: false,
-          due_enabled: true,
-          deadline_enabled: true,
-          deadline_horizon_days: 4,
+        statuses: {
+          open: ["In Progress", "Active", "In Progress"],
+          completed: ["Completed", "Dropped"],
         },
+        types: {
+          Task: { mode: "native", statuses: [] },
+          Project: { mode: "active", statuses: null },
+        },
+        native: { deadline_horizon_days: 4 },
         excluded: { "capacities:space-1:RootTask:task-1": true },
-        native_task_structures: ["Task", "RootTask"],
-        active_statuses: ["In Progress", "active"],
-        assigned_structures: { "custom-project": "assigned-prop" },
       },
       available_structures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
@@ -104,21 +104,21 @@ describe("reads", () => {
     });
     const settings = await new ApiAdapter().loadCapacitiesSettings();
     expect(settings).toEqual({
-      version: 1,
+      version: 2,
       revision: 3,
       persisted: true,
-      nativeTaskAuto: {
-        activeEnabled: false,
-        dueEnabled: true,
-        deadlineEnabled: true,
-        deadlineHorizonDays: 4,
+      // Both vocabularies land deduplicated and sorted.
+      statuses: { open: ["Active", "In Progress"], completed: ["Completed", "Dropped"] },
+      // One declaration per structure. `property` is null outside the two
+      // property modes, and the tri-state `statuses` survives intact: Task's
+      // `[]` (status admission off here) must not collapse into Project's
+      // `null` (inherit the shared open list).
+      types: {
+        Project: { mode: "active", property: null, statuses: null },
+        Task: { mode: "native", property: null, statuses: [] },
       },
+      native: { deadlineHorizonDays: 4 },
       excluded: ["capacities:space-1:RootTask:task-1"],
-      activeStructures: [],
-      nativeTaskStructures: ["RootTask", "Task"],
-      activeStatuses: ["In Progress", "active"],
-      assignedStructures: { "custom-project": "assigned-prop" },
-      assignedOnStructures: {},
       availableStructures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
@@ -136,6 +136,8 @@ describe("reads", () => {
           reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
         },
       ],
+      // An absent `migrated_from` means the stored file is already schema v2.
+      migratedFrom: null,
     });
     expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
   });
@@ -146,83 +148,103 @@ describe("reads", () => {
       settings: {
         version: 99,
         revision: 0,
-        native_task_auto: {
-          active_enabled: true,
-          due_enabled: true,
-          deadline_enabled: true,
-          deadline_horizon_days: 2,
-        },
+        statuses: { open: ["active"], completed: ["Completed"] },
+        types: {},
+        native: { deadline_horizon_days: 2 },
         excluded: {},
       },
     });
     await expect(new ApiAdapter().loadCapacitiesSettings()).rejects.toThrow(/unsupported/);
   });
 
-  it("round-trips activeStructures through a settings read and save", async () => {
+  it("round-trips the schema-v2 policy through a settings read and save", async () => {
     route("/settings/capacities", {
       persisted: true,
       settings: {
-        version: 1,
+        version: 2,
         revision: 2,
-        native_task_auto: {
-          active_enabled: true,
-          due_enabled: true,
-          deadline_enabled: true,
-          deadline_horizon_days: 2,
+        statuses: { open: ["active", "In Progress"], completed: ["Completed"] },
+        types: {
+          Task: { mode: "native", statuses: [] },
+          Project: { mode: "active", statuses: null },
+          "custom-project": {
+            mode: "assigned",
+            property: "assigned-prop",
+            statuses: ["In Progress"],
+          },
         },
+        native: { deadline_horizon_days: 2 },
         excluded: {},
-        active_structures: { "custom-project": true },
-        native_task_structures: ["Task"],
-        active_statuses: ["active", "In Progress"],
-        assigned_structures: { "custom-project": "assigned-prop" },
       },
     });
     const adapter = new ApiAdapter();
     const loaded = await adapter.loadCapacitiesSettings();
-    expect(loaded.activeStructures).toEqual(["custom-project"]);
-    expect(loaded.nativeTaskStructures).toEqual(["Task"]);
-    expect(loaded.activeStatuses).toEqual(["In Progress", "active"]);
-    expect(loaded.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
+    expect(loaded.statuses).toEqual({ open: ["In Progress", "active"], completed: ["Completed"] });
+    expect(loaded.native).toEqual({ deadlineHorizonDays: 2 });
+    expect(loaded.types).toEqual({
+      Project: { mode: "active", property: null, statuses: null },
+      Task: { mode: "native", property: null, statuses: [] },
+      "custom-project": {
+        mode: "assigned",
+        property: "assigned-prop",
+        statuses: ["In Progress"],
+      },
+    });
 
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 1,
+        version: 2,
         revision: 3,
-        native_task_auto: {
-          active_enabled: true,
-          due_enabled: true,
-          deadline_enabled: true,
-          deadline_horizon_days: 2,
+        statuses: { open: ["In Progress", "active"], completed: ["Completed"] },
+        types: {
+          Task: { mode: "native", statuses: [] },
+          Project: { mode: "active", statuses: null },
+          "custom-project": {
+            mode: "assigned",
+            property: "assigned-prop",
+            statuses: ["In Progress"],
+          },
         },
+        native: { deadline_horizon_days: 2 },
         excluded: {},
-        active_structures: { "custom-project": true },
-        native_task_structures: ["Task"],
-        active_statuses: ["In Progress", "active"],
-        assigned_structures: { "custom-project": "assigned-prop" },
       },
     });
+    // Saving what was loaded is a no-op replacement: the null and [] statuses
+    // both survive, so the round trip cannot silently disable status admission
+    // on Task or enable it on Project.
     const saved = await adapter.saveCapacitiesSettings({
       expectedRevision: loaded.revision,
-      nativeTaskAuto: { ...loaded.nativeTaskAuto },
+      statuses: {
+        open: [...loaded.statuses.open],
+        completed: [...loaded.statuses.completed],
+      },
+      types: { ...loaded.types },
+      native: { ...loaded.native },
       excluded: [...loaded.excluded],
-      activeStructures: [...loaded.activeStructures],
-      nativeTaskStructures: [...loaded.nativeTaskStructures],
-      activeStatuses: [...loaded.activeStatuses],
-      assignedStructures: { ...loaded.assignedStructures },
-      assignedOnStructures: { ...loaded.assignedOnStructures },
     });
-    expect(saved.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
-    expect(saved.activeStructures).toEqual(["custom-project"]);
-    expect(saved.nativeTaskStructures).toEqual(["Task"]);
-    expect(saved.activeStatuses).toEqual(["In Progress", "active"]);
-    expect(postBody("/settings/capacities/save").active_structures).toEqual({
-      "custom-project": true,
+    expect(saved.revision).toBe(3);
+    expect(saved.types.Task.statuses).toEqual([]);
+    expect(saved.types.Project.statuses).toBeNull();
+    expect(saved.types["custom-project"]).toEqual({
+      mode: "assigned",
+      property: "assigned-prop",
+      statuses: ["In Progress"],
     });
-    expect(postBody("/settings/capacities/save").native_task_structures).toEqual(["Task"]);
-    expect(postBody("/settings/capacities/save").active_statuses).toEqual(["In Progress", "active"]);
-    expect(postBody("/settings/capacities/save").assigned_structures).toEqual({
-      "custom-project": "assigned-prop",
+    expect(postBody("/settings/capacities/save")).toEqual({
+      expected_revision: 2,
+      statuses: { open: ["In Progress", "active"], completed: ["Completed"] },
+      types: {
+        Project: { mode: "active", property: null, statuses: null },
+        Task: { mode: "native", property: null, statuses: [] },
+        "custom-project": {
+          mode: "assigned",
+          property: "assigned-prop",
+          statuses: ["In Progress"],
+        },
+      },
+      native: { deadline_horizon_days: 2 },
+      excluded: {},
     });
   });
 
@@ -439,34 +461,32 @@ describe("Capacities settings save", () => {
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 1,
+        version: 2,
         revision: 1,
-        native_task_auto: {
-          active_enabled: true,
-          due_enabled: false,
-          deadline_enabled: true,
-          deadline_horizon_days: 5,
+        statuses: { open: ["active"], completed: ["Completed"] },
+        types: {
+          "custom-project": {
+            mode: "assignedOn",
+            property: "assigned-on-date",
+            statuses: null,
+          },
         },
+        native: { deadline_horizon_days: 5 },
         excluded: { "capacities:space-1:custom:object-1": true },
-        active_structures: { "custom-project": true },
-        native_task_structures: ["RootTask", "Task"],
-        active_statuses: ["active"],
       },
     });
     const result = await new ApiAdapter().saveCapacitiesSettings({
       expectedRevision: 0,
-      nativeTaskAuto: {
-        activeEnabled: true,
-        dueEnabled: false,
-        deadlineEnabled: true,
-        deadlineHorizonDays: 5,
+      statuses: { open: ["active"], completed: ["Completed"] },
+      types: {
+        "custom-project": {
+          mode: "assignedOn",
+          property: "assigned-on-date",
+          statuses: null,
+        },
       },
+      native: { deadlineHorizonDays: 5 },
       excluded: ["capacities:space-1:custom:object-1"],
-      activeStructures: ["custom-project"],
-      nativeTaskStructures: ["RootTask", "Task"],
-      activeStatuses: ["active"],
-      assignedStructures: {},
-      assignedOnStructures: {},
     });
     expect(result.revision).toBe(1);
     expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
@@ -474,62 +494,53 @@ describe("Capacities settings save", () => {
     expect((call.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
     expect(JSON.parse(call.init!.body as string)).toEqual({
       expected_revision: 0,
-      native_task_auto: {
-        active_enabled: true,
-        due_enabled: false,
-        deadline_enabled: true,
-        deadline_horizon_days: 5,
+      statuses: { open: ["active"], completed: ["Completed"] },
+      types: {
+        "custom-project": {
+          mode: "assignedOn",
+          property: "assigned-on-date",
+          statuses: null,
+        },
       },
+      native: { deadline_horizon_days: 5 },
       excluded: { "capacities:space-1:custom:object-1": true },
-      active_structures: { "custom-project": true },
-      native_task_structures: ["RootTask", "Task"],
-      active_statuses: ["active"],
-      assigned_structures: {},
-      assigned_on_structures: {},
     });
   });
 
-  it("always carries both admission keys so a save cannot reset them by omission", async () => {
+  it("always carries every schema-v2 key so a save cannot reset them by omission", async () => {
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 1,
+        version: 2,
         revision: 1,
-        native_task_auto: {
-          active_enabled: true,
-          due_enabled: true,
-          deadline_enabled: true,
-          deadline_horizon_days: 2,
-        },
+        statuses: { open: [], completed: [] },
+        types: {},
+        native: { deadline_horizon_days: 0 },
         excluded: {},
-        native_task_structures: [],
-        active_statuses: [],
       },
     });
     await new ApiAdapter().saveCapacitiesSettings({
       expectedRevision: 0,
-      nativeTaskAuto: {
-        activeEnabled: true,
-        dueEnabled: true,
-        deadlineEnabled: true,
-        deadlineHorizonDays: 2,
-      },
+      // An empty vocabulary and no declarations are legitimate replacements;
+      // the keys must still be sent, because the route treats omission as a
+      // full replacement to the documented defaults.
+      statuses: { open: [], completed: [] },
+      types: {},
+      native: { deadlineHorizonDays: 0 },
       excluded: [],
-      activeStructures: [],
-      // An empty list is a legitimate replacement; the key must still be
-      // sent, because the route treats omission as "reset to the default".
-      nativeTaskStructures: [],
-      activeStatuses: [],
-      assignedStructures: {},
-      assignedOnStructures: {},
     });
     const body = postBody("/settings/capacities/save");
-    expect("native_task_structures" in body).toBe(true);
-    expect("active_statuses" in body).toBe(true);
-    expect("assigned_structures" in body).toBe(true);
-    expect(body.native_task_structures).toEqual([]);
-    expect(body.active_statuses).toEqual([]);
-    expect(body.assigned_structures).toEqual({});
+    expect(Object.keys(body).sort()).toEqual([
+      "excluded",
+      "expected_revision",
+      "native",
+      "statuses",
+      "types",
+    ]);
+    expect(body.statuses).toEqual({ open: [], completed: [] });
+    expect(body.types).toEqual({});
+    expect(body.native).toEqual({ deadline_horizon_days: 0 });
+    expect(body.excluded).toEqual({});
   });
 
   it("surfaces a settings revision conflict as ApiError", async () => {
@@ -541,18 +552,10 @@ describe("Capacities settings save", () => {
     }, 409);
     const error = await new ApiAdapter().saveCapacitiesSettings({
       expectedRevision: 0,
-      nativeTaskAuto: {
-        activeEnabled: true,
-        dueEnabled: true,
-        deadlineEnabled: true,
-        deadlineHorizonDays: 2,
-      },
+      statuses: { open: ["active"], completed: ["Completed"] },
+      types: {},
+      native: { deadlineHorizonDays: 2 },
       excluded: [],
-      activeStructures: [],
-      nativeTaskStructures: [],
-      activeStatuses: [],
-      assignedStructures: {},
-      assignedOnStructures: {},
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);
