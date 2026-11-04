@@ -406,6 +406,7 @@ export class FixtureAdapter implements Adapter {
     // fall back to their id, so the title-with-fallback path is exercised
     // rather than assumed.
     structureTitles: {
+      "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
       "custom-project": "Custom project",
     },
     // No advisory declaration drift in the fixture default: the diagnostics
