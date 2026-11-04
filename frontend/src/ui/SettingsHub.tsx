@@ -39,6 +39,9 @@ export const HUB_ENTRIES: ReadonlyArray<{
   { id: "repair", label: "Repair connections", hint: "Only if something looks wrong" },
 ];
 
+/** `ui.settingsSection` value that opens the per-type admission section. */
+export const ADMISSION_SECTION = "admission-per-type";
+
 export const hubEntryId = (panel: SettingsPanel) => `settings-entry-${panel}`;
 export const hubPanelId = (panel: SettingsPanel) => `settings-panel-${panel}`;
 
@@ -47,6 +50,7 @@ function Fold({
   note,
   live,
   keepMounted = false,
+  openState,
   children,
 }: {
   title: string;
@@ -57,12 +61,15 @@ function Fold({
   /** Once opened, the children stay active (only hidden) when the fold closes
       or the entry is left, so unsaved edits inside are not discarded. */
   keepMounted?: boolean;
+  /** Lets the owner drive the open state (a link can open the fold for the user). */
+  openState?: readonly [boolean, (open: boolean) => void];
   /** Receives whether the fold is open; wrapped panels take it as `active`
       and render nothing (keeping their draft state) while the fold is closed. */
   children: (open: boolean) => ComponentChildren;
 }) {
   // Closed by default; the wrapped components stay mounted so drafts survive.
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const [open, setOpen] = openState ?? [ownOpen, setOwnOpen];
   const [seen, setSeen] = useState(false);
   useEffect(() => {
     if (live && open) setSeen(true);
@@ -76,7 +83,7 @@ function Fold({
           class="settings-fold__toggle"
           aria-expanded={open}
           aria-controls={bodyId}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(!open)}
         >
           <span>{title}</span>
           {note && <span class="settings-fold__note">{note}</span>}
@@ -92,8 +99,26 @@ function Fold({
 function PlanBody({ here }: { here: boolean }) {
   const [savedTags, setSavedTags] = useState<TagExclusionSettings | null>(null);
   const data: PlanData = usePlanData(here, savedTags);
+  const { store } = useApp();
   return (
     <>
+      {here && (
+      <p class="settings-hub__muted">
+        Projects, events and other Capacities types are chosen one type at a time.{" "}
+        <button
+          type="button"
+          class="settings-hub__link"
+          onClick={() =>
+            store.dispatch({
+              type: "UI",
+              patch: { settingsPanel: "repair", settingsSection: ADMISSION_SECTION },
+            })
+          }
+        >
+          How each Capacities type gets in
+        </button>
+      </p>
+      )}
       <CapacitiesPlanPreview data={data} />
       <TagExclusionSettingsPanel active={here} onSettings={setSavedTags} />
       <CalendarSettingsPanel active={here} />
@@ -127,6 +152,37 @@ export function SettingsHub() {
   useEffect(() => {
     if (techOn) setTechShown(true);
   }, [techOn]);
+
+  // The per-type admission section lives inside the Repair fold: a link from
+  // the plan view opens the fold and the technical details, then scrolls to it.
+  const [repairOpen, setRepairOpen] = useState(false);
+  const wantAdmission = panel === "repair" && section === ADMISSION_SECTION;
+  useEffect(() => {
+    if (!wantAdmission) return;
+    setRepairOpen(true);
+    setTechOn(true);
+  }, [wantAdmission, panel, section]);
+  useEffect(() => {
+    if (!wantAdmission || !repairOpen || !techOn) return;
+    const reveal = (): boolean => {
+      const target = document.getElementById("capacities-sec-admission-per-type");
+      if (!target) return false;
+      target.scrollIntoView?.({ block: "start" });
+      const heading = target.querySelector<HTMLElement>("h3");
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+      return true;
+    };
+    if (reveal()) return;
+    // The panel loads its policy asynchronously; finish when the section lands.
+    const observer = new MutationObserver(() => {
+      if (reveal()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [wantAdmission, repairOpen, techOn, section]);
 
   const health = sourceHealthBySource(s.inputs?.sourceWarnings ?? []);
   const healthy = s.inputs?.sourceHealth === "ok";
@@ -221,7 +277,12 @@ export function SettingsHub() {
             <p class="settings-hub__muted">
               Only needed when something looks wrong. It is folded away so it cannot be changed by accident.
             </p>
-            <Fold title="Repair tools" note="changing these can hide items from your plan" live={here}>
+            <Fold
+              title="Repair tools"
+              note="changing these can hide items from your plan"
+              live={here}
+              openState={[repairOpen, setRepairOpen]}
+            >
               {(foldOpen) => (
                 <>
                   {foldOpen && (

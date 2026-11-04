@@ -373,6 +373,11 @@ export function CapacitiesSettingsPanel({
 
   return (
     <div class="settings-panel settings-panel--capacities">
+        <ul class="capacities-settings__concepts" aria-label="Which section to use">
+          <li>Use “How each item type gets in” to pick which Capacities types can appear, by Assigned or Assigned On date, or when Active.</li>
+          <li>Use “Automatic task rules” to bring in task-type items that are active, due, or have a deadline soon.</li>
+          <li>Use “Fine-tune by item type” (in What shows up in my plan?) only rarely, for per-type tweaks to what you already see.</li>
+        </ul>
         <p class="capacities-settings__intro">
           TDTB assignment policy is stored locally and keyed by stable Capacities identity.
           Saving here does not write object properties, discover provider data, or activate a live route.
@@ -581,7 +586,7 @@ export function CapacitiesSettingsPanel({
               </div>
             </section>
 
-            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission-per-type">
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission-per-type" data-settings-section="admission-per-type">
               <div class="setup-section__head">
                 <h3 id="capacities-sec-admission-per-type">How each item type gets in</h3>
                 {staleActiveStructures.length + staleAssignedStructures.length + staleAssignedOnStructures.length > 0 && (
