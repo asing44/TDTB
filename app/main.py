@@ -8001,7 +8001,22 @@ def create_app() -> FastAPI:
 
     # -- static UI (T10: thin, unstyled config + digest views) ----------------
     if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
+        class _RevalidatingStatic(StaticFiles):
+            """Serve HTML with ``no-cache`` so a rebuilt bundle is picked up.
+
+            Without a ``Cache-Control`` header the browser caches the small
+            ``index.html`` heuristically and keeps loading the previous
+            hashed asset after a rebuild. Hashed assets stay cacheable.
+            """
+
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                media = response.headers.get("content-type", "")
+                if media.startswith("text/html"):
+                    response.headers["Cache-Control"] = "no-cache"
+                return response
+
+        app.mount("/static", _RevalidatingStatic(directory=str(_STATIC_DIR), html=True), name="static")
 
     return app
 
