@@ -24,6 +24,7 @@ from capacities_adapter import (  # noqa: E402
     StructureMapping,
 )
 from capacities_assignment import AssignmentSettings  # noqa: E402
+import capacities_settings as cset  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import tag_exclusions as tx  # noqa: E402
 
@@ -956,7 +957,9 @@ def test_native_plain_active_status_outside_vocabulary_is_still_admitted():
 
 def test_project_lowercase_active_status_outside_vocabulary_is_still_admitted():
     # The completed-vocabulary guard must not swallow the user's own lowercase
-    # ``active`` Active status on a project-type structure.
+    # ``active`` Active status on a project-type structure. The requested open
+    # vocabulary names live options the carried status is NOT part of, so the
+    # resolver reads a closed status and only the settings relief opens it.
     provider = _custom_provider(
         [_status_object("garage-buildout", "custom-project", "active", status_property="state")]
     )
@@ -968,7 +971,7 @@ def test_project_lowercase_active_status_outside_vocabulary_is_still_admitted():
             _native_mapping(
                 structure_id="custom-project",
                 open_status_property="state",
-                open_status_values=frozenset({"idle", "on hold"}),
+                open_status_values=frozenset({"planning", "done"}),
                 date_property=None,
                 deadline_property=None,
                 duration_property=None,
@@ -4497,3 +4500,273 @@ def test_mapped_deadline_property_wins_over_the_range_end():
     reasons = row["capacities_assignment"]["reasons"]
     assert "auto-deadline-within-horizon" in reasons
     assert "auto-due-today-or-overdue" not in reasons
+
+
+# ---------------------------------------------------------------------------
+# U2: ONE status vocabulary, resolved against the live label set
+# ---------------------------------------------------------------------------
+# A type's open vocabulary is the requested open names (the version-2 per-type
+# declaration, else the inherited ``statuses.open``) resolved against the
+# options Capacities currently defines. Comparison is by label NAME, so a
+# renamed option id with an unchanged name still matches while a renamed label
+# drops out. A type with no resolvable vocabulary decides nothing: its rows stay
+# unassigned review candidates and the type is reported once per read.
+
+#: The custom type's live label set (``_structures``): ids and names differ, so
+#: every case below distinguishes id matching from name matching.
+PROJECT = "custom-project"
+PROJECT_TITLE = "Project"
+
+
+def _project_provider(objects, *, structures=None):
+    return FakeProvider(
+        structures or _structures(),
+        {(PROJECT, None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def _project_mapping(**overrides):
+    base = dict(
+        structure_id=PROJECT,
+        assignment_property="tdtb",
+        assignment_values=frozenset({"yes"}),
+        date_property=None,
+        open_status_property="state",
+        open_status_values=frozenset({"active"}),
+        duration_property="minutes",
+    )
+    base.update(overrides)
+    return StructureMapping(**base)
+
+
+def _project_object(object_id, member):
+    return _object(
+        object_id,
+        PROJECT,
+        {
+            "title": _prop("title", "title", {"value": object_id}),
+            "tdtb": _prop("label", "label", [{"id": "yes", "name": "TDTB"}]),
+            "state": _prop("label", "label", [member]),
+        },
+    )
+
+
+def _project_settings(*, statuses=None, inherited=frozenset({"In Progress"})):
+    """A real version-2 settings document for the custom type."""
+    declaration = {"mode": "active"}
+    if statuses is not None:
+        declaration["statuses"] = list(statuses)
+    return cset.CapacitiesSettings(
+        statuses=cset.StatusVocabulary(open=inherited),
+        types={PROJECT: declaration},
+    )
+
+
+def _project_read(objects, mapping=None, **kwargs):
+    return _adapter(
+        _project_provider(objects),
+        mappings=(_mapping()[0], mapping or _project_mapping()),
+        **kwargs,
+    ).items_for_day(TODAY)
+
+
+def _status_warning_lines(result):
+    return [line for line in result.warnings if "no-status-vocabulary" in line]
+
+
+@pytest.mark.parametrize(
+    ("case", "member", "requested", "expect_open"),
+    [
+        pytest.param(
+            "fabricated-non-hex-id-name-matches",
+            {"id": "fabricated-id-not-a-uuid", "name": "In Progress"},
+            frozenset({"in progress"}),
+            True,
+            id="fabricated-id-name-match",
+        ),
+        pytest.param(
+            "renamed-id-unchanged-name",
+            {"id": "a-brand-new-option-id", "name": "Planning"},
+            frozenset({"planning"}),
+            True,
+            id="renamed-id-name-match",
+        ),
+        pytest.param(
+            "id-only-payload-misses-a-name-keyed-request",
+            {"id": "option-id"},
+            frozenset({"In Progress"}),
+            False,
+            id="id-only-payload",
+        ),
+        pytest.param(
+            "renamed-label-drops-out",
+            {"id": "option-id", "name": "Planned"},
+            frozenset({"planning"}),
+            False,
+            id="renamed-label",
+        ),
+    ],
+)
+def test_status_vocabulary_matches_by_label_name(case, member, requested, expect_open):
+    result = _project_read(
+        [_project_object("p1", member)],
+        _project_mapping(open_status_values=requested),
+    )
+
+    if not expect_open:
+        # Either a renamed label (resolved into the live set but not into the
+        # open vocabulary) or a payload that only carries an id while the
+        # requested open names are label names: a decided CLOSED status, not a
+        # review gap.
+        assert result.items == []
+        assert result.drop_tally[PROJECT]["closed-source-status"] == 1
+        assert result.review_tally == {}
+        return
+    row = result.items[0]
+    assert row["assigned"] is True
+    assert "capacities_status_state" not in row
+    assert "capacities_review_reasons" not in row
+    assert result.review_tally == {}
+
+
+def test_status_vocabulary_unknown_is_never_silently_closed():
+    # Two rows with distinct payloads, one type: the type-level verdict is
+    # reported ONCE (one line, one tally entry per reason) while every row is
+    # kept as an unassigned review candidate.
+    result = _project_read(
+        [
+            _project_object("p1", {"id": "option-id", "name": "In Progress"}),
+            _project_object("p2", {"id": "planning", "name": "Planning"}),
+        ],
+        _project_mapping(open_status_values=frozenset({"Idle", "On Hold"})),
+    )
+
+    assert [row["capacities_id"] for row in result.items] == ["p1", "p2"]
+    for row in result.items:
+        assert row["assigned"] is False
+        assert row["capacities_status_state"] == "unknown"
+        assert row["capacities_review_reasons"] == ["status_unknown"]
+    assert result.review_tally == {PROJECT: {"no-status-vocabulary": 2}}
+    assert result.drop_tally == {}
+    lines = _status_warning_lines(result)
+    assert len(lines) == 1
+    assert lines[0] == (
+        f"Capacities type {PROJECT_TITLE!r}: 2 objects kept as unassigned "
+        "review candidate(s) — 2 no-status-vocabulary"
+    )
+
+
+def _structures_without_status_labels():
+    structures = []
+    for row in _structures():
+        definitions = [
+            {key: value for key, value in definition.items() if key != "labelSet"}
+            if definition["id"] == "state"
+            else definition
+            for definition in row["propertyDefinitions"]
+        ]
+        structures.append({**row, "propertyDefinitions": definitions})
+    return structures
+
+
+def test_status_property_with_no_live_label_set_keeps_the_token_reading():
+    # A structure that publishes no label set gives nothing to resolve against,
+    # so nothing is dead and no vocabulary verdict is possible: the payload's
+    # own tokens are compared with the requested open names, exactly as before.
+    result = _adapter(
+        _project_provider(
+            [_project_object("p1", {"id": "active", "name": "Active"})],
+            structures=_structures_without_status_labels(),
+        ),
+        mappings=(_mapping()[0], _project_mapping()),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["p1"]
+    assert result.items[0]["assigned"] is True
+    assert "capacities_review_reasons" not in result.items[0]
+    assert result.review_tally == {}
+    assert _status_warning_lines(result) == []
+
+
+@pytest.mark.parametrize(
+    ("case", "mapping_statuses", "inherited", "member", "expect_rows", "expect_open"),
+    [
+        pytest.param(
+            "inherited-open-vocabulary",
+            None,
+            frozenset({"In Progress"}),
+            {"id": "option-id", "name": "In Progress"},
+            1,
+            True,
+            id="inherited-open",
+        ),
+        pytest.param(
+            "inherited-vocabulary-closes-other-live-labels",
+            None,
+            frozenset({"In Progress"}),
+            {"id": "planning", "name": "Planning"},
+            0,
+            False,
+            id="inherited-closed",
+        ),
+        pytest.param(
+            "per-type-override",
+            ("Planning",),
+            frozenset({"In Progress"}),
+            {"id": "planning", "name": "Planning"},
+            1,
+            True,
+            id="per-type-override",
+        ),
+        pytest.param(
+            "status-admission-disabled",
+            (),
+            frozenset({"In Progress"}),
+            {"id": "planning", "name": "Planning"},
+            1,
+            None,
+            id="disabled",
+        ),
+    ],
+)
+def test_per_type_status_vocabulary_from_the_settings_document(
+    case, mapping_statuses, inherited, member, expect_rows, expect_open
+):
+    settings = _project_settings(statuses=mapping_statuses, inherited=inherited)
+    result = _project_read(
+        [_project_object("p1", member)],
+        _project_mapping(open_status_values=frozenset()),
+        settings=settings,
+    )
+
+    assert len(result.items) == expect_rows
+    assert result.review_tally == {}
+    assert _status_warning_lines(result) == []
+    if expect_rows == 0:
+        assert result.drop_tally[PROJECT]["closed-source-status"] == 1
+        return
+    row = result.items[0]
+    assert row["assigned"] is True
+    if expect_open is None:
+        # ``statuses: []`` disables status admission: the mapped status is not
+        # consulted at all, so no state is reported for it.
+        assert "capacities_status_state" not in row
+    else:
+        assert "capacities_review_reasons" not in row
+
+
+def test_disabled_status_admission_ignores_a_closed_live_status():
+    # The same closed payload that the inherited vocabulary drops is admitted
+    # when the type disables status admission, which is the owner's RootTask
+    # date-only decision expressed for a custom type.
+    settings = _project_settings(statuses=(), inherited=frozenset({"In Progress"}))
+
+    result = _project_read(
+        [_project_object("p1", {"id": "planning", "name": "Planning"})],
+        _project_mapping(open_status_values=frozenset()),
+        settings=settings,
+    )
+
+    assert [row["capacities_id"] for row in result.items] == ["p1"]
+    assert result.items[0]["assigned"] is True
+    assert result.drop_tally == {}

@@ -8,6 +8,15 @@ matching, or a generic synchronization model. The optional settings-declared
 ``Assigned On`` marker is READ-ONLY: a date/datetime property whose civil
 date falls on or before the read's logical day is source-assigned, and TDTB
 never writes it.
+
+Status vocabulary has exactly ONE resolver (:func:`_status_resolution`) and
+exactly ONE live-set reader (:func:`_label_identifiers`). A type's open
+vocabulary is the requested open names resolved against the options
+Capacities currently defines, compared by label NAME, so a renamed option id
+with an unchanged name still matches while a renamed label drops out. When a
+type has no resolvable open vocabulary the mapped status decides nothing: the
+row is kept as an unassigned review candidate and the type is reported once
+per read, never silently closed.
 """
 from __future__ import annotations
 
@@ -120,6 +129,10 @@ class StructureMapping:
     date_property: str | None = None
     deadline_property: str | None = None
     open_status_property: str | None = None
+    #: The REQUESTED open status names this type admits on, when the caller
+    #: supplies no version-2 settings document. It is never a live vocabulary
+    #: snapshot: the effective open set is derived at projection time as
+    #: requested-open ∩ the live label set, compared by label NAME.
     open_status_values: frozenset[str] = frozenset()
     duration_property: str | None = None
     completion_property: str | None = None
@@ -178,6 +191,14 @@ class CapacitiesConfig:
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads local files or credentials itself.
     assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
+    #: Optional version-2 settings document (``capacities_settings
+    #: .CapacitiesSettings``), duck-typed: only ``open_statuses_for(sid)`` and
+    #: ``status_admission_enabled(sid)`` are read, so the adapter still opens
+    #: no file. When supplied it is the per-type status vocabulary authority —
+    #: a type's own ``statuses``, ``()`` for disabled status admission, else
+    #: the inherited ``statuses.open``. When absent the mapping's
+    #: ``open_status_values`` carries the same requested names.
+    settings: Any = None
     #: Optional stored per-type rules record (``capacities_rules.RulesRecord``)
     #: for this space. When a structure has an ACTIVE stored rule, that rule is
     #: the SINGLE eligibility authority for its objects: the legacy
@@ -239,6 +260,12 @@ class CapacitiesReadResult:
     #: The count of their objects is deliberately absent: nothing was listed,
     #: so no count exists and none is invented.
     structures_not_read: dict[str, str] = field(default_factory=dict)
+    #: Per-structure REVIEW accounting for this read: objects KEPT as unassigned
+    #: review candidates (structure id -> {reason code: count}). It is not a
+    #: drop tally: these objects stay on the pool surface. It exists so an
+    #: undecidable status vocabulary is reported once per type instead of once
+    #: per row.
+    review_tally: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -425,31 +452,16 @@ def _property_label(
     return f"'{name or default}'"
 
 
-def _label_options(definition: dict[str, Any]) -> set[str]:
-    options = definition.get("labelSet") or []
-    if not isinstance(options, list):
-        raise CapacitiesContractError(
-            f"label property {_structure_id(definition)!r} has malformed labelSet"
-        )
-    result: set[str] = set()
-    for option in options:
-        if not isinstance(option, dict) or not _text(option.get("id")):
-            raise CapacitiesContractError(
-                f"label property {_structure_id(definition)!r} has malformed option"
-            )
-        result.add(_normalized(option["id"]))
-    return result
-
-
 def _label_identifiers(definition: Any) -> set[str]:
     """Normalized LIVE identifiers of one label property's ``labelSet``.
 
-    This is the reference set that tells a status option Capacities still
-    defines from one it no longer does. A member contributes its ``id``, and
-    its display ``name`` only when it carries no id. Unlike ``_label_options``
-    (strict, ids only, used by the completion contract check) this read never
-    raises: a missing, empty, or malformed label set simply knows no live option
-    identity, so nothing can be classified dead from it.
+    The ONLY live-set reader in this module: a status option Capacities still
+    defines is decided here and nowhere else. A member contributes its ``id``
+    and its display ``name``, so a configured or carried value may legitimately
+    be either form and ``_normalized`` comparison covers case and whitespace.
+    The read never raises: a missing, empty, or malformed label set simply
+    knows no live option identity, which is a real answer ("no live
+    vocabulary") rather than a contract failure.
     """
     if not isinstance(definition, Mapping):
         return set()
@@ -460,9 +472,10 @@ def _label_identifiers(definition: Any) -> set[str]:
     for option in options:
         if not isinstance(option, dict):
             continue
-        ident = _text(option.get("id")) or _text(option.get("name"))
-        if ident:
-            result.add(_normalized(ident))
+        for key in ("id", "name"):
+            ident = _text(option.get(key))
+            if ident:
+                result.add(_normalized(ident))
     return result
 
 
@@ -652,137 +665,274 @@ def _rule_status_tokens(prop: Any, prop_id: str) -> tuple[set[str], bool]:
     return tokens, unreadable
 
 
-def _classify_open_status(
-    prop: Any, prop_id: str, open_values: frozenset[str]
-) -> str:
-    """Open / unknown / closed classification for a mapped status.
+def _rule_status_state(resolution: StatusResolution) -> str:
+    """The stored-rule status state for one resolution.
 
-    Used on the stored-rule path, where an under-evaluated status must keep
-    the object visible as an unassigned candidate instead of failing the
-    object (legacy) or silently excluding it. The payload is read strictly
-    (``_rule_status_tokens``): absent, empty, and unreadable payloads are
-    UNKNOWN, and only a fully readable payload with no open match is a
-    known-closed hard exclusion.
+    The rule path consumes the same single resolution as the legacy path and
+    only renames it: ``open``/``closed`` are decided, and every other outcome
+    (``empty``, unreadable, dead members, no resolvable vocabulary) is UNKNOWN
+    so the row stays an unassigned review candidate instead of being excluded
+    as a known-closed status.
     """
-    if prop is None:
-        return "unknown"
-    tokens, unreadable = _rule_status_tokens(prop, prop_id)
-    if unreadable or not tokens:
-        return "unknown"
-    if tokens.intersection({_normalized(value) for value in open_values}):
-        return "open"
-    return "closed"
+    return {
+        _STATUS_RESOLUTION_OPEN: "open",
+        _STATUS_RESOLUTION_CLOSED: "closed",
+    }.get(resolution.state, "unknown")
 
 
-#: Status resolution outcomes. ``unknown_dead`` is the state a status payload
-#: takes when EVERY member names an option the live label set no longer
-#: defines: Capacities still sends the deleted option id (with that id as its
-#: display name), so the payload carries neither readable open nor readable
-#: closed evidence.
+#: Status resolution outcomes for one mapped status payload.
 _STATUS_RESOLUTION_EMPTY = "empty"
 _STATUS_RESOLUTION_OPEN = "open"
 _STATUS_RESOLUTION_CLOSED = "closed"
-_STATUS_RESOLUTION_UNKNOWN_DEAD = "unknown_dead"
 _STATUS_RESOLUTION_UNKNOWN = "unknown"
 
 
-def _status_member_tokens(member: Any) -> tuple[set[str], set[str]] | None:
-    """``(identity, display)`` tokens for one status payload member.
+@dataclass(frozen=True)
+class StatusVocabulary:
+    """One type's status vocabulary, resolved against the live label set.
 
-    The identity is the ``id``; a member carrying no id falls back to its
-    display ``name``, so a name-only payload still resolves. The display tokens
-    are both values, because the open vocabulary has always matched an id OR a
-    label display name. ``None`` means the member cannot be read as a label
-    reference at all (a non-string value, a nested structure, a scalar), which
-    is the same strictness ``_rule_status_tokens`` applies on the rule path.
+    ``requested`` is the configured open names (the per-type ``statuses``, else
+    the inherited ``statuses.open``), ``live`` is the option identity set
+    Capacities currently defines, and ``open`` is their intersection — the
+    derived open vocabulary every decision uses. ``admission_enabled`` says
+    whether the type consults status at all (``()`` declarations and the
+    non-status modes do not), and ``resolvable`` asks the projection's real
+    question: an enabled type whose requested names still exist in the live
+    label set.
+
+    The requested names come from the settings document when one is supplied;
+    the mapping's ``open_status_values`` is only the fallback carrier for
+    callers that build the adapter without settings.
+    """
+
+    requested: frozenset[str] = frozenset()
+    open: frozenset[str] = frozenset()
+    live: frozenset[str] = frozenset()
+    admission_enabled: bool = False
+    resolvable: bool = False
+
+
+@dataclass(frozen=True)
+class StatusResolution:
+    """One mapped status payload resolved by the single resolver.
+
+    ``state`` is one of the ``_STATUS_RESOLUTION_*`` outcomes. ``dead`` means
+    every readable member names an option the live label set does not define
+    (Capacities still sends the deleted option id, with that id repeated as
+    its display name). ``no_vocabulary`` means the TYPE has no resolvable open
+    vocabulary at all, so no member can be decided open or closed.
+
+    Both flags are review conditions: the row stays an unassigned review
+    candidate instead of being silently closed.
+    """
+
+    state: str = _STATUS_RESOLUTION_UNKNOWN
+    dead: bool = False
+    no_vocabulary: bool = False
+
+
+#: A status payload that decides nothing: absent, unreadable, or ambiguous.
+_STATUS_UNRESOLVED = StatusResolution(state=_STATUS_RESOLUTION_UNKNOWN)
+
+
+def _status_legacy_tokens(payload: Sequence[Any]) -> set[str] | None:
+    """Lenient id+name tokens for a payload with no live label set.
+
+    Deliberately the pre-resolver reading (``_property_tokens`` semantics):
+    the token set carries both the ``id`` and the ``name`` of each member and
+    stringifies whatever it finds, because a structure that publishes no label
+    set gives nothing to resolve against. ``None`` means the payload is not a
+    member list at all.
+    """
+    tokens: set[str] = set()
+    for member in payload:
+        if isinstance(member, dict):
+            for key in ("id", "name"):
+                value = member.get(key)
+                if value is not None and _text(value):
+                    tokens.add(_normalized(value))
+        elif _text(member):
+            tokens.add(_normalized(member))
+    return tokens
+
+
+def _status_member_tokens(member: Any) -> tuple[set[str], set[str]] | None:
+    """``(identity, name)`` tokens for one status payload member.
+
+    ``identity`` carries both the ``id`` and the display ``name``: a member
+    resolves against the live label set when EITHER form is still defined, so a
+    renamed option id with an unchanged name still matches and a carrier id
+    that still exists is not mistaken for a deleted option.
+
+    ``name`` is the NAME-preferring comparison form (the ``id`` only when the
+    member carries no name), exactly like ``_status_display_tokens``: that is
+    what makes open-vocabulary membership a label-NAME question, so a renamed
+    label drops out of the open set.
+
+    ``None`` means the member cannot be read as a label reference at all (a
+    non-string value, a nested structure, a scalar, or a non-string id/name),
+    which is the same strictness ``_rule_status_tokens`` applies on the rule
+    path.
     """
     if isinstance(member, str):
         token = _normalized(member)
-        if not token:
-            return None
-        return {token}, {token}
+        return ({token}, {token}) if token else None
     if not isinstance(member, dict):
         return None
-    display: set[str] = set()
-    for key in ("id", "name"):
-        value = member.get(key)
+    name = member.get("name")
+    ident = member.get("id")
+    identity: set[str] = set()
+    for value in (name, ident):
         if value is None:
             continue
         if not isinstance(value, str) or not _text(value):
             return None
         token = _normalized(value)
         if token:
-            display.add(token)
-    if not display:
+            identity.add(token)
+    if not identity:
         return None
+    preferred = _normalized(name) or _normalized(ident)
+    return identity, {preferred} if preferred else identity
+    if isinstance(member, str):
+        token = _normalized(member)
+        return {token} if token else None
+    if not isinstance(member, dict):
+        return None
+    name = member.get("name")
     ident = member.get("id")
-    identity = (
-        {_normalized(ident)}
-        if isinstance(ident, str) and _text(ident)
-        else set(display)
-    )
-    return identity, display
+    for value in (name, ident):
+        if value is not None and (not isinstance(value, str) or not _text(value)):
+            return None
+    token = _normalized(name) or _normalized(ident)
+    return {token} if token else None
+
+
+def _typed_status_tokens(prop: Any) -> set[str] | None:
+    """Strict typed tokens for a NON-label status payload, or ``None``.
+
+    A mapped status property can carry a typed scalar instead of a label list.
+    ``None`` means the payload cannot be read as its declared type (or carries
+    no token at all), which stays UNKNOWN rather than being guessed closed.
+    """
+    kind = _text(prop.get("type"))
+    if not kind or kind not in prop:
+        return None
+    tokens, unreadable = _rule_status_tokens(prop, kind)
+    if unreadable or not tokens:
+        return None
+    return tokens
 
 
 def _status_resolution(
     prop: Any,
-    definition: Any,
-    open_values: frozenset[str],
-) -> str:
-    """Resolve a mapped status payload against the LIVE label set.
+    vocabulary: StatusVocabulary,
+) -> StatusResolution:
+    """THE status resolver: one mapped payload against one type's vocabulary.
 
-    ``definition`` is the property definition from the structures contract, so
-    its ``labelSet`` is what Capacities currently defines. Each payload member
-    resolves when its identity is in that set and is DEAD otherwise. The
-    payload then reads:
+    ``vocabulary`` already carries the live label set (``_label_identifiers``)
+    and the requested-open names resolved into it, so this function never
+    reads configuration or the structures contract itself.
 
+    The payload reads:
+
+    * ``no_vocabulary`` — the type is enabled and publishes a live label set,
+      but none of the requested open names still exists in it, so no member
+      can be decided open or closed. Every row is then undecided, never
+      closed;
     * ``empty`` — readable payload with no members (the shipped absent-signal
       rule stays with the caller);
-    * ``open`` — at least one resolved member is in ``open_values`` (the
-      display name may match, exactly as the existing token gate allows);
+    * ``open`` — at least one resolved member is in the open vocabulary;
     * ``closed`` — resolved members only, none open;
-    * ``unknown_dead`` — every member is dead;
-    * ``unknown`` — absent, unreadable, or no live label set is known. Nothing
-      is called dead without a live option identity to compare against.
+    * ``unknown`` — absent, unreadable, or every member dead.
 
     A mixed payload keeps the stronger resolved evidence: open + dead reads
-    open, and resolved non-open + dead reads closed.
+    open, and resolved non-open + dead reads closed. Nothing is called dead
+    without a live option identity to compare against: a structure that
+    publishes no label set keeps the pre-resolver reading, where the payload's
+    own tokens are compared with the requested open names.
     """
     if prop is None or not isinstance(prop, dict):
-        return _STATUS_RESOLUTION_UNKNOWN
+        return _STATUS_UNRESOLVED
     kind = _text(prop.get("type"))
-    if not kind or kind not in prop or kind not in {"label", "entity"}:
-        return _STATUS_RESOLUTION_UNKNOWN
+    if not kind or kind not in prop:
+        return _STATUS_UNRESOLVED
     payload = prop[kind]
+    if not vocabulary.live:
+        # No live label set is known, so nothing can be called dead and no
+        # vocabulary verdict is possible. Keep the pre-resolver reading
+        # verbatim: compare the payload's own tokens with the requested open
+        # names. A non-label typed payload carries no label reference at all, so
+        # its strict typed scalar is the token (the rule path's reading).
+        if kind in {"label", "entity"}:
+            if not isinstance(payload, list):
+                return _STATUS_UNRESOLVED
+            if not payload:
+                return StatusResolution(state=_STATUS_RESOLUTION_EMPTY)
+            tokens = _status_legacy_tokens(payload)
+        else:
+            tokens = _typed_status_tokens(prop)
+        if not tokens:
+            return _STATUS_UNRESOLVED
+        return StatusResolution(
+            state=(
+                _STATUS_RESOLUTION_OPEN
+                if tokens.intersection(vocabulary.requested)
+                else _STATUS_RESOLUTION_CLOSED
+            )
+        )
+    if not vocabulary.resolvable:
+        # Type-level verdict: the live label set is known but no requested open
+        # name still exists in it, so no member of this type can be decided.
+        return StatusResolution(
+            state=_STATUS_RESOLUTION_UNKNOWN, no_vocabulary=True
+        )
+    if kind not in {"label", "entity"}:
+        # A typed scalar on a label-mapped status is still readable evidence;
+        # it names no option, so it is compared with the requested names.
+        tokens = _typed_status_tokens(prop)
+        if not tokens:
+            return _STATUS_UNRESOLVED
+        return StatusResolution(
+            state=(
+                _STATUS_RESOLUTION_OPEN
+                if tokens.intersection(vocabulary.requested)
+                else _STATUS_RESOLUTION_CLOSED
+            )
+        )
     if not isinstance(payload, list):
-        return _STATUS_RESOLUTION_UNKNOWN
+        return _STATUS_UNRESOLVED
     if not payload:
-        return _STATUS_RESOLUTION_EMPTY
-    live = _label_identifiers(definition)
-    if not live:
-        return _STATUS_RESOLUTION_UNKNOWN
-    open_tokens = {_normalized(value) for value in open_values}
+        return StatusResolution(state=_STATUS_RESOLUTION_EMPTY)
     resolved = 0
     dead = 0
     open_members = 0
     for member in payload:
         parsed = _status_member_tokens(member)
         if parsed is None:
-            return _STATUS_RESOLUTION_UNKNOWN
-        identity, display = parsed
-        if identity.intersection(live):
+            return _STATUS_UNRESOLVED
+        identity, name_tokens = parsed
+        if identity.intersection(vocabulary.live):
             resolved += 1
-            if display.intersection(open_tokens):
+            if name_tokens.intersection(vocabulary.open):
                 open_members += 1
         else:
             dead += 1
     if not dead:
-        return (
-            _STATUS_RESOLUTION_OPEN if open_members else _STATUS_RESOLUTION_CLOSED
+        return StatusResolution(
+            state=(
+                _STATUS_RESOLUTION_OPEN
+                if open_members
+                else _STATUS_RESOLUTION_CLOSED
+            )
         )
     if not resolved:
-        return _STATUS_RESOLUTION_UNKNOWN_DEAD
-    return _STATUS_RESOLUTION_OPEN if open_members else _STATUS_RESOLUTION_CLOSED
+        return StatusResolution(state=_STATUS_RESOLUTION_UNKNOWN, dead=True)
+    return StatusResolution(
+        state=(
+            _STATUS_RESOLUTION_OPEN if open_members else _STATUS_RESOLUTION_CLOSED
+        )
+    )
 
 
 def _classify_completion(
@@ -919,6 +1069,11 @@ DROP_REASON_MALFORMED = "malformed"
 DROP_REASON_UNREADABLE = "unreadable"
 DROP_REASON_STRUCTURE_NOT_ELIGIBLE = "structure-not-eligible"
 DROP_REASON_STRUCTURE_UNMAPPED = "structure-unmapped"
+#: Not a drop: the type has no open vocabulary that resolves against the live
+#: label set, so its mapped status decided nothing and every affected row was
+#: KEPT as an unassigned review candidate. It lives in the review tally, never
+#: in the drop tally.
+DROP_REASON_NO_STATUS_VOCABULARY = "no-status-vocabulary"
 
 #: At most this many distinct reason codes are named on one structure's line.
 MAX_DROP_REASONS_PER_LINE = 6
@@ -991,6 +1146,25 @@ def drop_tally_warning(label: str, counts: Mapping[str, int]) -> str:
     return (
         f"Capacities type {label!r}: {total} {noun} dropped — "
         f"{_reason_listing(counts)}"
+    )
+
+
+def review_tally_warning(label: str, counts: Mapping[str, int]) -> str:
+    """One aggregated, bounded, content-free line for one type's review rows.
+
+    Shares the drop tally's machinery (``_ordered_reason_counts`` /
+    ``_reason_listing``) but states the opposite outcome: these objects were
+    KEPT as unassigned review candidates, never dropped. The empty string
+    means nothing was counted. Counts and closed reason codes only — never a
+    title, an id, or a property value.
+    """
+    total = sum(count for _, count in _ordered_reason_counts(counts))
+    if total < 1:
+        return ""
+    noun = "object" if total == 1 else "objects"
+    return (
+        f"Capacities type {label!r}: {total} {noun} kept as unassigned review "
+        f"candidate(s) — {_reason_listing(counts)}"
     )
 
 
@@ -1518,6 +1692,15 @@ class CapacitiesAdapter:
         #: enumeration gate skipped before any listing.
         self._drop_counts: dict[str, dict[str, int]] = {}
         self._structures_not_read: dict[str, str] = {}
+        #: Per-read REVIEW accounting: objects KEPT as unassigned review
+        #: candidates because a mapped status could not be decided. Reset by
+        #: every projection entry point, so a type reports its undecidable
+        #: vocabulary once per read instead of once per row.
+        self._review_counts: dict[str, dict[str, int]] = {}
+        #: Per-read resolved status vocabularies (structure id -> vocabulary),
+        #: reset by every projection entry point. The live label set and the
+        #: requested open names cannot change inside one read.
+        self._vocabularies: dict[str, StatusVocabulary] = {}
         #: Per-read Assigned On diagnostics, keyed by structure id and reset
         #: by every projection entry point: at most one content-free warning
         #: per structure reaches the warnings surface.
@@ -1791,13 +1974,10 @@ class CapacitiesAdapter:
                     "and the Assigned checkbox is ignored. Clear one of the two "
                     "mappings in Settings."
                 )
-            if mapping.open_status_property and not mapping.open_status_values:
-                raise CapacitiesContractError(
-                    f"mapping {sid!r} has no open status values",
-                    detail=_contract_detail(
-                        structure=sid, prop=mapping.open_status_property
-                    ),
-                )
+            # Mapped but with no requested open names is NOT a contract
+            # failure: ``statuses: []`` disables status admission for the type
+            # (the owner's RootTask date-only decision), so the mapped status
+            # simply decides nothing. The projection owns that state.
             if mapping.completion_property:
                 if not mapping.completion_value:
                     raise CapacitiesContractError(
@@ -1821,7 +2001,9 @@ class CapacitiesAdapter:
                             structure=sid, prop=mapping.completion_property
                         ),
                     )
-                if _normalized(mapping.completion_value) not in _label_options(completion):
+                if _normalized(mapping.completion_value) not in _label_identifiers(
+                    completion
+                ):
                     raise CapacitiesContractError(
                         f"completion value {mapping.completion_value!r} is not defined for {sid!r}",
                         detail=_contract_detail(
@@ -2117,31 +2299,19 @@ class CapacitiesAdapter:
         status: str | None = None
         status_is_open: bool | None = None
         status_state: str | None = None
-        # Direct refresh with one field shared by status and completion: an
-        # unreadable or empty shared payload is UNKNOWN completion (U3b-4), so
-        # the legacy open read must neither fail the object as malformed nor
-        # treat it as a closed status and drop it silently.
-        shared_direct_field = (
-            active_rule is None
-            and self.config.rules is not None
-            and bool(mapping.open_status_property)
-            and mapping.completion_property == mapping.open_status_property
-        )
         # The settings Active statuses are the user's own statement of which
-        # source statuses mean open work. The stored per-structure mapping's
-        # open vocabulary is a snapshot of the structure's label set, so it can
-        # lag the labels actually in use (a Project mapping listing Idle/
-        # Active/On Hold while the live label is ``In Progress``). For a native
-        # task/project structure a readable status named by ``active_statuses``
-        # therefore counts as open: the gate stays a safety filter for
-        # completed/dropped evidence rather than a vocabulary membership test.
-        # That relief reads the FULL status token set, not just the preferred
-        # display token: a mixed ``[Done, In Progress]`` payload, or one label
-        # whose id is ``done`` and name is ``In Progress``, still carries
-        # readable completed evidence and must stay closed. The completed
-        # vocabulary is the mapping's declared value plus a conservative
-        # built-in list, so an unmapped completion value cannot make it vacuous.
-        # A non-native structure keeps failing closed.
+        # source statuses mean open work. This is the legacy evaluator seam and
+        # stays exactly as it was: for a native task/project structure a
+        # readable status named by ``active_statuses`` counts as open, so the
+        # gate stays a safety filter for completed/dropped evidence rather than
+        # a vocabulary membership test. That relief reads the FULL status token
+        # set, not just the preferred display token: a mixed
+        # ``[Done, In Progress]`` payload, or one label whose id is ``done`` and
+        # name is ``In Progress``, still carries readable completed evidence and
+        # must stay closed. The completed vocabulary is the mapping's declared
+        # value plus a conservative built-in list, so an unmapped completion
+        # value cannot make it vacuous. A non-native structure keeps failing
+        # closed.
         active_status_values = {
             _normalized(value)
             for value in self.config.assignment_settings.active_statuses
@@ -2150,42 +2320,43 @@ class CapacitiesAdapter:
             mapping.structure_id
             in self.config.assignment_settings.native_task_structures
         )
-        # A status option Capacities no longer defines arrives with the dead id
-        # repeated as its display name, so the payload carries neither readable
-        # open nor readable closed evidence. Resolving every member against the
-        # LIVE label set is what separates that from a genuinely closed status.
-        # Nothing is called dead when no live label set is known, and an empty
-        # payload keeps the shipped absent-signal rules untouched.
+        # ONE resolver decides the mapped status. The type's open vocabulary is
+        # the requested open names resolved against the LIVE label set
+        # (``_vocabulary``), so a deleted option, an unresolvable vocabulary,
+        # and an unreadable payload are all UNKNOWN — never closed — and the row
+        # is kept as an unassigned review candidate.
+        vocabulary = self._vocabulary(mapping) if mapping.open_status_property else None
+        resolution = StatusResolution()
+        vocabulary_unknown = False
         dead_status_member = False
-        #: A status the projection cannot decide at all — a deleted option, or a
-        #: custom structure with an absent/empty payload. UNKNOWN is never
-        #: closed: the row is kept as an unassigned review candidate.
+        #: A status the projection cannot decide at all — a deleted option, an
+        #: unresolvable vocabulary, or a custom structure with an absent/empty
+        #: payload. UNKNOWN is never closed.
         unresolved_status = False
-        if mapping.open_status_property:
+        if mapping.open_status_property and vocabulary is not None:
             status_prop = properties.get(mapping.open_status_property)
-            dead_status_member = (
-                _status_resolution(
-                    status_prop,
-                    self._property_definition(
-                        mapping.structure_id, mapping.open_status_property
-                    ),
-                    mapping.open_status_values,
+            if not vocabulary.admission_enabled:
+                # ``statuses: []``: this type never admits on status, so the
+                # mapped status is not a vocabulary question at all — it is not
+                # resolved, reviewed, or tallied.
+                status_is_open = None
+                if active_rule is not None:
+                    status_state = "unavailable"
+            else:
+                resolution = _status_resolution(status_prop, vocabulary)
+                dead_status_member = resolution.dead
+                vocabulary_unknown = resolution.no_vocabulary
+            if vocabulary_unknown:
+                # Counted once per affected object and reported once per type
+                # per read by ``_review_warnings``.
+                self._note_review(
+                    mapping.structure_id, DROP_REASON_NO_STATUS_VOCABULARY
                 )
-                == _STATUS_RESOLUTION_UNKNOWN_DEAD
-            )
-            if active_rule is not None:
-                # A dead option is UNKNOWN on the stored-rule path too: the
-                # existing plumbing then keeps the row unassigned with the
-                # ``status_unknown`` review reason (D2: never auto-assigned).
-                status_state = (
-                    "unknown"
-                    if dead_status_member
-                    else _classify_open_status(
-                        status_prop,
-                        mapping.open_status_property,
-                        mapping.open_status_values,
-                    )
-                )
+            if not vocabulary.admission_enabled:
+                # Already settled above: a disabled type decides nothing here.
+                pass
+            elif active_rule is not None:
+                status_state = _rule_status_state(resolution)
             elif status_prop is None:
                 # A missing mapped status value is an absent signal, not closed
                 # evidence. On a native structure it stays UNKNOWN so the
@@ -2197,53 +2368,43 @@ class CapacitiesAdapter:
                 status_is_open = None
                 if not native_status_structure:
                     unresolved_status = True
-            elif dead_status_member:
+            elif vocabulary_unknown or dead_status_member:
                 # Undecided status: the projection keeps the row as an
                 # unassigned review candidate instead of dropping it as closed.
                 # ``None`` is not closed evidence, so the evaluator's status
                 # gate does not reject it.
                 status_is_open = None
-            elif shared_direct_field and (
-                _classify_open_status(
-                    status_prop,
-                    mapping.open_status_property,
-                    mapping.open_status_values,
-                )
-                == "unknown"
-            ):
-                # Undecided status: admission stays with the legacy evaluator
-                # (``None`` is not closed) and the completion classifier below
-                # reports the same payload as UNKNOWN.
-                status_is_open = None
             else:
-                # The open/closed safety classification keeps matching the
-                # mixed id+name tokens; the status token the evaluator reads
-                # is keyed on the label display NAME (id only when absent), so
-                # ``Active`` matches by name even when the id differs.
-                status_tokens = _property_tokens(status_prop, mapping.open_status_property)
-                display_tokens = _status_display_tokens(
-                    status_prop, mapping.open_status_property
-                )
-                status = _status_token(display_tokens, self.config.assignment_settings)
-                if not status_tokens:
-                    # Present but empty payload: the same absent signal as a
-                    # missing property, so it stays UNKNOWN rather than closed.
-                    # A native structure or a row the source explicitly marks
-                    # assigned keeps that absent signal as-is. A custom row
-                    # that is not source-assigned is UNKNOWN too: it stays an
-                    # unassigned review candidate (``status_unknown``) instead
-                    # of being dropped as closed evidence it does not carry. A
-                    # readable closed status never reaches here (its tokens are
-                    # non-empty), so the fail-closed gate still drops
-                    # completed/dropped rows.
+                # The resolver decides open/closed by label NAME; the status
+                # token the evaluator reads is the same name-preferring form, so
+                # ``Active`` matches even when the option id differs.
+                if resolution.state in {
+                    _STATUS_RESOLUTION_EMPTY,
+                    _STATUS_RESOLUTION_UNKNOWN,
+                }:
+                    # Present but empty or unreadable payload: the same absent
+                    # signal as a missing property, so it stays UNKNOWN rather
+                    # than closed. A native structure or a row the source
+                    # explicitly marks assigned keeps that absent signal as-is;
+                    # a custom row that is not source-assigned stays an
+                    # unassigned review candidate (``status_unknown``). A
+                    # readable closed status never reaches here, so the
+                    # fail-closed gate still drops completed/dropped rows.
                     status_is_open = None
                     if not native_status_structure and source_assigned is not True:
                         unresolved_status = True
                 else:
-                    status_is_open = bool(
-                        status_tokens.intersection(
-                            {_normalized(value) for value in mapping.open_status_values}
-                        )
+                    display_tokens = _status_display_tokens(
+                        status_prop, mapping.open_status_property
+                    )
+                    status = _status_token(
+                        display_tokens, self.config.assignment_settings
+                    )
+                    status_tokens = _property_tokens(
+                        status_prop, mapping.open_status_property
+                    )
+                    status_is_open = (
+                        resolution.state == _STATUS_RESOLUTION_OPEN
                     ) or (
                         native_status_structure
                         and status is not None
@@ -2255,10 +2416,13 @@ class CapacitiesAdapter:
         elif active_rule is not None:
             status_state = "unavailable"
 
-        # A deleted status option is undecided for the same reason an absent or
-        # empty payload is: neither carries readable closed evidence. One flag
-        # drives the unassigned-candidate treatment on both paths.
-        unresolved_status = unresolved_status or dead_status_member
+        # A deleted status option or an unresolvable type vocabulary is
+        # undecided for the same reason an absent or empty payload is: none
+        # carries readable closed evidence. One flag drives the
+        # unassigned-candidate treatment on both paths.
+        unresolved_status = (
+            unresolved_status or dead_status_member or vocabulary_unknown
+        )
 
         # Completion availability on the stored-rule path. A mapping that
         # shares the open-status field checks the configured completed value
@@ -2284,7 +2448,9 @@ class CapacitiesAdapter:
                     status_prop,
                     mapping.completion_property,
                     mapping.completion_value,
-                    open_values=mapping.open_status_values,
+                    open_values=(
+                        vocabulary.open if vocabulary is not None else frozenset()
+                    ),
                 )
             else:
                 completion_state = _classify_completion(
@@ -2293,7 +2459,7 @@ class CapacitiesAdapter:
                     mapping.completion_value,
                 )
             if (
-                dead_status_member
+                (dead_status_member or vocabulary_unknown)
                 and mapping.completion_property == mapping.open_status_property
             ):
                 # The completion field IS the unresolvable status payload, so
@@ -2779,6 +2945,8 @@ class CapacitiesAdapter:
         self._assigned_on_unparsed = set()
         self._assigned_on_matched = set()
         self._drop_counts = {}
+        self._review_counts = {}
+        self._vocabularies = {}
         self._structures_not_read = {}
         items, warnings, evaluated, malformed, skipped = self._project_objects(
             logical_day, objects
@@ -2788,6 +2956,7 @@ class CapacitiesAdapter:
             *warnings,
             *self._assigned_on_warnings(),
             *self._drop_warnings(),
+            *self._review_warnings(),
         ]
         return CapacitiesReadResult(
             items=items,
@@ -2796,6 +2965,7 @@ class CapacitiesAdapter:
             malformed=len(malformed),
             skipped=tuple(skipped),
             drop_tally=self._drop_tally(),
+            review_tally=self._review_tally(),
             structures_not_read=dict(sorted(self._structures_not_read.items())),
         )
 
@@ -2842,6 +3012,97 @@ class CapacitiesAdapter:
         if mapping.structure_id in self.config.assignment_settings.active_structures:
             return True
         return self._active_rule(mapping.structure_id) is not None
+
+    def _requested_open(
+        self, mapping: StructureMapping
+    ) -> tuple[frozenset[str], bool]:
+        """One type's REQUESTED open names and whether status admission is on.
+
+        The version-2 settings document is the authority when the caller
+        supplied one: the type's own ``statuses``, ``()`` for disabled status
+        admission, else the inherited ``statuses.open``. Without it the
+        mapping's ``open_status_values`` carries the same requested names, and
+        an empty request means status admission is off for the type.
+        """
+        settings = self.config.settings
+        reader = getattr(settings, "open_statuses_for", None)
+        if callable(reader):
+            names = {
+                _normalized(value) for value in (reader(mapping.structure_id) or ())
+            }
+            names.discard("")
+            enabled_reader = getattr(settings, "status_admission_enabled", None)
+            enabled = (
+                bool(enabled_reader(mapping.structure_id))
+                if callable(enabled_reader)
+                else bool(names)
+            )
+            return frozenset(names), enabled
+        names = {_normalized(value) for value in mapping.open_status_values}
+        names.discard("")
+        return frozenset(names), bool(names)
+
+    def _vocabulary(self, mapping: StructureMapping) -> StatusVocabulary:
+        """Resolve one type's open vocabulary against the LIVE label set.
+
+        The derived open set is requested-open ∩ live-label-set, computed here
+        rather than trusted from a stored snapshot: a renamed option id with an
+        unchanged name still matches, and a renamed label drops out. Cached per
+        read because neither input can change inside one.
+        """
+        cached = self._vocabularies.get(mapping.structure_id)
+        if cached is not None:
+            return cached
+        requested, enabled = self._requested_open(mapping)
+        live = (
+            frozenset(
+                _label_identifiers(
+                    self._property_definition(
+                        mapping.structure_id, mapping.open_status_property
+                    )
+                )
+            )
+            if mapping.open_status_property
+            else frozenset()
+        )
+        resolved_open = frozenset(token for token in requested if token in live)
+        vocabulary = StatusVocabulary(
+            requested=requested,
+            open=resolved_open,
+            live=live,
+            admission_enabled=enabled,
+            resolvable=enabled and bool(live) and bool(resolved_open),
+        )
+        self._vocabularies[mapping.structure_id] = vocabulary
+        return vocabulary
+
+    def _note_review(self, structure_id: str, reason: str) -> None:
+        """Count one row KEPT as an unassigned review candidate."""
+        if not structure_id:
+            return
+        bucket = self._review_counts.setdefault(structure_id, {})
+        bucket[reason] = bucket.get(reason, 0) + 1
+
+    def _review_tally(self) -> dict[str, dict[str, int]]:
+        """Deterministic snapshot of this read's per-structure review counts."""
+        return {
+            structure_id: {
+                code: self._review_counts[structure_id][code]
+                for code in sorted(self._review_counts[structure_id])
+            }
+            for structure_id in sorted(self._review_counts)
+        }
+
+    def _review_warnings(self) -> list[str]:
+        """One bounded line per structure whose rows needed review."""
+        warnings = [
+            review_tally_warning(
+                structure_label(self._structure_defs, structure_id),
+                self._review_counts[structure_id],
+            )
+            for structure_id in sorted(self._review_counts)
+        ]
+        return [warning for warning in warnings if warning]
 
     def _note_drop(self, structure_id: str, reason: str) -> None:
         """Count one dropped object under its structure and reason code."""
@@ -2933,6 +3194,8 @@ class CapacitiesAdapter:
         self._assigned_on_unparsed = set()
         self._assigned_on_matched = set()
         self._drop_counts = {}
+        self._review_counts = {}
+        self._vocabularies = {}
         self._structures_not_read = {}
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = list(self._contract_warnings)
@@ -2985,6 +3248,7 @@ class CapacitiesAdapter:
             )
         warnings.extend(self._assigned_on_warnings())
         warnings.extend(self._drop_warnings())
+        warnings.extend(self._review_warnings())
         warnings.extend(self._drain_cache_warnings())
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(
@@ -2996,6 +3260,7 @@ class CapacitiesAdapter:
             malformed=len(malformed),
             skipped=tuple(skipped),
             drop_tally=self._drop_tally(),
+            review_tally=self._review_tally(),
             structures_not_read=dict(sorted(self._structures_not_read.items())),
         )
 
