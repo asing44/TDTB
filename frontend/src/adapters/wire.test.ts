@@ -1729,93 +1729,346 @@ describe("duration-memory wire projection (MVP)", () => {
   });
 });
 
-describe("capacities settings active_structures (additive schema v1)", () => {
+describe("capacities settings schema v2 projection", () => {
   const baseSettings = () => ({
-    version: 1,
+    version: 2,
     revision: 0,
-    native_task_auto: {
-      active_enabled: true,
-      due_enabled: true,
-      deadline_enabled: true,
-      deadline_horizon_days: 2,
-    },
+    statuses: { open: ["active"], completed: ["Completed"] },
+    types: {},
+    native: { deadline_horizon_days: 2 },
     excluded: {},
   });
 
-  it("projects an absent active_structures key to [] (older backend)", () => {
-    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
-    expect(projected.activeStructures).toEqual([]);
+  it("projects the schema-v2 document, mapping snake_case to the model", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: true,
+      settings: {
+        ...baseSettings(),
+        revision: 4,
+        statuses: {
+          open: ["In Progress", "active", "active"],
+          completed: ["Dropped", "Completed"],
+        },
+        types: {
+          Project: { mode: "active", statuses: null },
+          Task: { mode: "native", statuses: [] },
+        },
+        native: { deadline_horizon_days: 3 },
+        excluded: { "capacities:space-1:Task:t1": true },
+      },
+    });
+    expect(projected).toEqual({
+      version: 2,
+      revision: 4,
+      persisted: true,
+      statuses: { open: ["In Progress", "active"], completed: ["Completed", "Dropped"] },
+      types: {
+        Project: { mode: "active", property: null, statuses: null },
+        Task: { mode: "native", property: null, statuses: [] },
+      },
+      native: { deadlineHorizonDays: 3 },
+      excluded: ["capacities:space-1:Task:t1"],
+      availableStructures: [],
+      structureTitles: {},
+      declarationDiagnostics: [],
+      // An absent `migrated_from` means the stored file is already v2.
+      migratedFrom: null,
+    });
   });
 
-  it("parses a well-formed active_structures object and sorts the ids", () => {
+  it("rejects any settings version it cannot interpret", () => {
+    // A stored v1 file is translated in memory and reports `migrated_from: 1`,
+    // so a document that still says version 1 is a contract break, not data.
+    for (const version of [1, 3, "2", null]) {
+      expect(() =>
+        projectCapacitiesSettings({ persisted: false, settings: { ...baseSettings(), version } }),
+      ).toThrow(/version is unsupported/);
+    }
+  });
+
+  it("requires the shared status vocabulary", () => {
+    for (const bad of [undefined, null, [], "active", 1]) {
+      const settings: Record<string, unknown> = baseSettings();
+      if (bad === undefined) delete settings.statuses;
+      else settings.statuses = bad;
+      expect(() => projectCapacitiesSettings({ persisted: false, settings })).toThrow(/statuses/);
+    }
+  });
+
+  it("throws on an unknown status vocabulary key", () => {
+    expect(() =>
+      projectCapacitiesSettings({
+        persisted: false,
+        settings: { ...baseSettings(), statuses: { open: [], completed: [], closed: [] } },
+      }),
+    ).toThrow(/statuses has unknown keys/);
+  });
+
+  it("parses both vocabularies, deduplicated and sorted", () => {
     const projected = projectCapacitiesSettings({
       persisted: false,
-      settings: { ...baseSettings(), active_structures: { b: true, a: true, "custom-project": true } },
+      settings: {
+        ...baseSettings(),
+        statuses: {
+          open: ["In Progress", "active", "active"],
+          completed: ["Dropped", "Completed", "Completed"],
+        },
+      },
     });
-    expect(projected.activeStructures).toEqual(["a", "b", "custom-project"]);
+    expect(projected.statuses).toEqual({
+      open: ["In Progress", "active"],
+      completed: ["Completed", "Dropped"],
+    });
   });
 
-  const malformedObjects: Array<[string, unknown]> = [
-    ["an array", []],
-    ["a string", "custom-project"],
-    ["null", null],
+  const malformedVocabularies: Array<[string, string, unknown]> = [
+    ["statuses.open", "a bare string", "active"],
+    ["statuses.open", "an object", { active: true }],
+    ["statuses.open", "an empty entry", [""]],
+    ["statuses.open", "a non-string entry", ["active", 1]],
+    ["statuses.open", "null", null],
+    ["statuses.completed", "a bare string", "Completed"],
+    ["statuses.completed", "an object", { Completed: true }],
+    ["statuses.completed", "an empty entry", ["Completed", ""]],
+    ["statuses.completed", "a null entry", [null]],
   ];
-  for (const [label, bad] of malformedObjects) {
-    it(`throws when active_structures is ${label}`, () => {
+  for (const [key, label, bad] of malformedVocabularies) {
+    it(`throws when ${key} is ${label}`, () => {
+      const slot = key.slice("statuses.".length);
       expect(() =>
         projectCapacitiesSettings({
           persisted: false,
-          settings: { ...baseSettings(), active_structures: bad },
+          settings: { ...baseSettings(), statuses: { open: [], completed: [], [slot]: bad } },
         }),
-      ).toThrow(/active_structures/);
+      ).toThrow(/statuses\.(open|completed)/);
     });
   }
 
-  const malformedEntries: Array<[string, Record<string, unknown>]> = [
-    ["a non-true flag", { "custom-project": 1 }],
-    ["a false flag", { "custom-project": false }],
-    ["an empty id", { "": true }],
-    ["a whitespace-padded id", { " custom-project ": true }],
-    ["an embedded-whitespace id", { "custom project": true }],
-  ];
-  for (const [label, bad] of malformedEntries) {
-    it(`throws when active_structures contains ${label}`, () => {
+  it("throws when the native block is missing or malformed", () => {
+    for (const native of [
+      undefined,
+      null,
+      [],
+      {},
+      { deadline_horizon_days: -1 },
+      { deadline_horizon_days: 1.5 },
+      { deadline_horizon_days: "2" },
+    ]) {
+      const settings: Record<string, unknown> = baseSettings();
+      if (native === undefined) delete settings.native;
+      else settings.native = native;
+      expect(() => projectCapacitiesSettings({ persisted: false, settings })).toThrow(
+        /native|deadline_horizon_days/,
+      );
+    }
+  });
+
+  it("rejects the removed v1 native toggles as unknown native keys", () => {
+    for (const key of ["active_enabled", "due_enabled", "deadline_enabled"]) {
       expect(() =>
         projectCapacitiesSettings({
           persisted: false,
-          settings: { ...baseSettings(), active_structures: bad },
+          settings: {
+            ...baseSettings(),
+            native: { deadline_horizon_days: 2, [key]: true },
+          },
+        }),
+      ).toThrow(/native has unknown or missing keys/);
+    }
+  });
+
+  it("projects the exclusion set as sorted canonical identities", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: {
+        ...baseSettings(),
+        excluded: {
+          "capacities:space-1:Task:t2": true,
+          "capacities:space-1:Task:t1": true,
+        },
+      },
+    });
+    expect(projected.excluded).toEqual([
+      "capacities:space-1:Task:t1",
+      "capacities:space-1:Task:t2",
+    ]);
+  });
+
+  it("throws on a non-object exclusion set or an invalid identity", () => {
+    for (const bad of [
+      [],
+      "capacities:space-1:Task:t1",
+      null,
+      1,
+      { "not-canonical": true },
+      { "capacities:space-1:Task:t1": false },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), excluded: bad },
+        }),
+      ).toThrow(/excluded/);
+    }
+  });
+
+  it("requires the types map", () => {
+    for (const bad of [undefined, null, [], "Task", 1]) {
+      const settings: Record<string, unknown> = baseSettings();
+      if (bad === undefined) delete settings.types;
+      else settings.types = bad;
+      expect(() => projectCapacitiesSettings({ persisted: false, settings })).toThrow(
+        /types must be an object/,
+      );
+    }
+  });
+
+  it("throws on an invalid structure id key in types", () => {
+    for (const bad of [
+      { "": { mode: "off" } },
+      { " custom-project ": { mode: "off" } },
+      { "custom project": { mode: "off" } },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), types: bad },
         }),
       ).toThrow(/invalid structure id/);
-    });
-  }
-
-  it("emits a sorted, deduplicated active_structures object in the save body", () => {
-    const wire = capacitiesSettingsToWire({
-      expectedRevision: 0,
-      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
-      excluded: [],
-      activeStructures: ["b", "a", "a"],
-      nativeTaskStructures: [],
-      activeStatuses: [],
-      assignedStructures: {},
-      assignedOnStructures: {},
-    });
-    expect(wire.active_structures).toEqual({ a: true, b: true });
+    }
   });
 
-  it("throws on an invalid active-structure id in the save draft", () => {
-    expect(() =>
-      capacitiesSettingsToWire({
-        expectedRevision: 0,
-        nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
-        excluded: [],
-        activeStructures: ["bad id"],
-        nativeTaskStructures: [],
-        activeStatuses: [],
-        assignedStructures: {},
-        assignedOnStructures: {},
-      }),
-    ).toThrow(/invalid structure id/);
+  it("projects an absent migrated_from marker to null", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.migratedFrom).toBeNull();
+  });
+
+  it("projects the one migrated_from value a v2 client can act on", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      migrated_from: 1,
+      settings: baseSettings(),
+    });
+    expect(projected.migratedFrom).toBe(1);
+  });
+
+  it("throws on any migrated_from value a v2 client cannot act on", () => {
+    for (const bad of [2, 0, "1", null, true]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          migrated_from: bad,
+          settings: baseSettings(),
+        }),
+      ).toThrow(/migrated_from/);
+    }
+  });
+});
+
+describe("capacities settings type declarations (schema v2)", () => {
+  const baseSettings = () => ({
+    version: 2,
+    revision: 0,
+    statuses: { open: ["active"], completed: ["Completed"] },
+    types: {},
+    native: { deadline_horizon_days: 2 },
+    excluded: {},
+  });
+
+  const declarationWire = (declaration: unknown) => ({
+    persisted: false,
+    settings: { ...baseSettings(), types: { "custom-project": declaration } },
+  });
+
+  it("keeps the tri-state statuses distinction: absent and null inherit, [] disables", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: {
+        ...baseSettings(),
+        types: {
+          Inherited: { mode: "active" },
+          ExplicitNull: { mode: "active", statuses: null },
+          Disabled: { mode: "native", statuses: [] },
+          Custom: { mode: "native", statuses: ["In Progress", "active", "active"] },
+        },
+      },
+    });
+    // `null` inherits `statuses.open`; `[]` admits on date/checkbox only. The
+    // projection must never collapse one into the other.
+    expect(projected.types.Inherited.statuses).toBeNull();
+    expect(projected.types.ExplicitNull.statuses).toBeNull();
+    expect(projected.types.Disabled.statuses).toEqual([]);
+    expect(projected.types.Custom.statuses).toEqual(["In Progress", "active"]);
+  });
+
+  it("rejects an unknown admission mode", () => {
+    for (const mode of ["status", "Active", "", 1, null, undefined]) {
+      expect(() => projectCapacitiesSettings(declarationWire({ mode }))).toThrow(
+        /mode is not a supported admission mode/,
+      );
+    }
+  });
+
+  it("requires a property id for the two property modes", () => {
+    for (const mode of ["assigned", "assignedOn"]) {
+      for (const property of [undefined, null, ""]) {
+        expect(() => projectCapacitiesSettings(declarationWire({ mode, property }))).toThrow(
+          /property is required/,
+        );
+      }
+    }
+  });
+
+  it("keeps a declared property id exactly as the server reported it", () => {
+    const projected = projectCapacitiesSettings(
+      declarationWire({ mode: "assigned", property: " Assigned-ID_CaseSensitive " }),
+    );
+    expect(projected.types["custom-project"]).toEqual({
+      mode: "assigned",
+      property: " Assigned-ID_CaseSensitive ",
+      statuses: null,
+    });
+  });
+
+  it("forbids a property id outside the two property modes", () => {
+    for (const mode of ["off", "active", "native"]) {
+      expect(() =>
+        projectCapacitiesSettings(declarationWire({ mode, property: "some-prop" })),
+      ).toThrow(/property is forbidden/);
+    }
+  });
+
+  it("throws on an unknown key inside a declaration", () => {
+    expect(() => projectCapacitiesSettings(declarationWire({ mode: "off", auto: true }))).toThrow(
+      /has unknown keys/,
+    );
+  });
+
+  it("throws on a malformed declaration body", () => {
+    for (const bad of [null, [], "off", 1]) {
+      expect(() => projectCapacitiesSettings(declarationWire(bad))).toThrow(
+        /types.custom-project must be an object/,
+      );
+    }
+  });
+
+  it("throws on a malformed declaration statuses slot", () => {
+    for (const statuses of ["active", { active: true }, [""], [null]]) {
+      expect(() => projectCapacitiesSettings(declarationWire({ mode: "native", statuses }))).toThrow(
+        /types.custom-project.statuses/,
+      );
+    }
+  });
+});
+
+describe("capacities settings advisory metadata (read-only projections)", () => {
+  const baseSettings = () => ({
+    version: 2,
+    revision: 0,
+    statuses: { open: ["active"], completed: ["Completed"] },
+    types: {},
+    native: { deadline_horizon_days: 2 },
+    excluded: {},
   });
 
   it("projects an absent available_structures key to [] (older backend)", () => {
@@ -1996,388 +2249,200 @@ describe("capacities settings active_structures (additive schema v1)", () => {
   });
 });
 
-describe("capacities settings admission keys (additive schema v1)", () => {
-  const baseSettings = () => ({
-    version: 1,
-    revision: 0,
-    native_task_auto: {
-      active_enabled: true,
-      due_enabled: true,
-      deadline_enabled: true,
-      deadline_horizon_days: 2,
-    },
-    excluded: {},
-  });
-
-  it("projects absent native_task_structures and active_statuses to the documented defaults", () => {
-    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
-    // A legacy version-1 file (or an older backend) has no keys; the store
-    // would read that as the built-in native structures / the single active
-    // status, so the client must project the same documented default rather
-    // than the dangerous empty set.
-    expect(projected.nativeTaskStructures).toEqual(["RootTask", "Task"]);
-    expect(projected.activeStatuses).toEqual(["active"]);
-  });
-
-  it("parses the plain admission lists, deduplicated and sorted", () => {
-    const projected = projectCapacitiesSettings({
-      persisted: false,
-      settings: {
-        ...baseSettings(),
-        native_task_structures: ["Task", "RootTask", "Task"],
-        active_statuses: ["In Progress", "active", "active"],
-      },
-    });
-    expect(projected.nativeTaskStructures).toEqual(["RootTask", "Task"]);
-    expect(projected.activeStatuses).toEqual(["In Progress", "active"]);
-  });
-
-  const malformedAdmissions: Array<[string, string, unknown]> = [
-    ["native_task_structures", "a bare string", "RootTask"],
-    ["native_task_structures", "an object", { RootTask: true }],
-    ["native_task_structures", "an empty entry", [""]],
-    ["native_task_structures", "a non-string entry", ["RootTask", 1]],
-    ["native_task_structures", "null", null],
-    ["active_statuses", "a bare string", "active"],
-    ["active_statuses", "an object", { active: true }],
-    ["active_statuses", "an empty entry", ["active", ""]],
-    ["active_statuses", "a non-string entry", [null]],
-  ];
-  for (const [key, label, bad] of malformedAdmissions) {
-    it(`throws when ${key} is ${label}`, () => {
-      expect(() =>
-        projectCapacitiesSettings({
-          persisted: false,
-          settings: { ...baseSettings(), [key]: bad },
-        }),
-      ).toThrow(new RegExp(key));
-    });
-  }
-
-  it("always emits both admission keys in the save body, even when empty", () => {
-    const wire = capacitiesSettingsToWire({
-      expectedRevision: 0,
-      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
-      excluded: [],
-      activeStructures: [],
-      nativeTaskStructures: [],
-      activeStatuses: [],
-      assignedStructures: {},
-      assignedOnStructures: {},
-    });
-    // Full replacement: the key must be present, never omitted — omission
-    // would make the server reset it to the documented default.
-    expect("native_task_structures" in wire).toBe(true);
-    expect("active_statuses" in wire).toBe(true);
-    expect(wire.native_task_structures).toEqual([]);
-    expect(wire.active_statuses).toEqual([]);
-  });
-
-  it("emits sorted, deduplicated admission lists in the save body", () => {
-    const wire = capacitiesSettingsToWire({
-      expectedRevision: 0,
-      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
-      excluded: [],
-      activeStructures: [],
-      nativeTaskStructures: ["Task", "RootTask", "Task"],
-      activeStatuses: ["active", "In Progress", "active"],
-      assignedStructures: {},
-      assignedOnStructures: {},
-    });
-    expect(wire.native_task_structures).toEqual(["RootTask", "Task"]);
-    expect(wire.active_statuses).toEqual(["In Progress", "active"]);
-  });
-
-  it("throws on an empty admission value in the save draft", () => {
-    const base = {
-      expectedRevision: 0,
-      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
-      excluded: [],
-      activeStructures: [],
-      assignedStructures: {},
-      assignedOnStructures: {},
-    };
-    expect(() =>
-      capacitiesSettingsToWire({ ...base, nativeTaskStructures: [""], activeStatuses: [] }),
-    ).toThrow(/nativeTaskStructures/);
-    expect(() =>
-      capacitiesSettingsToWire({ ...base, nativeTaskStructures: [], activeStatuses: [""] }),
-    ).toThrow(/activeStatuses/);
-  });
-});
-
-describe("capacities assigned_structures declarations (additive schema v1)", () => {
-  const baseSettings = () => ({
-    version: 1,
-    revision: 0,
-    native_task_auto: {
-      active_enabled: true,
-      due_enabled: true,
-      deadline_enabled: true,
-      deadline_horizon_days: 2,
-    },
-    excluded: {},
-  });
+describe("capacities settings schema v2 save body", () => {
   const baseDraft = () => ({
     expectedRevision: 0,
-    nativeTaskAuto: {
-      activeEnabled: true,
-      dueEnabled: true,
-      deadlineEnabled: true,
-      deadlineHorizonDays: 2,
-    },
+    statuses: { open: ["active"], completed: ["Completed"] },
+    types: {},
+    native: { deadlineHorizonDays: 2 },
     excluded: [],
-    activeStructures: [],
-    nativeTaskStructures: [],
-    activeStatuses: [],
-    assignedStructures: {},
-    assignedOnStructures: {},
   });
 
-  it("projects an absent assigned_structures key to the empty map (older backend)", () => {
-    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
-    expect(projected.assignedStructures).toEqual({});
+  it("always emits every schema-v2 key, even when empty", () => {
+    const wire = capacitiesSettingsToWire({
+      expectedRevision: 0,
+      statuses: { open: [], completed: [] },
+      types: {},
+      native: { deadlineHorizonDays: 0 },
+      excluded: [],
+    });
+    // Full replacement: an omitted key would reset it to the documented
+    // default (an empty vocabulary, no declarations, no exclusions).
+    expect(Object.keys(wire).sort()).toEqual([
+      "excluded",
+      "expected_revision",
+      "native",
+      "statuses",
+      "types",
+    ]);
+    expect(wire.statuses).toEqual({ open: [], completed: [] });
+    expect(wire.types).toEqual({});
+    expect(wire.native).toEqual({ deadline_horizon_days: 0 });
+    expect(wire.excluded).toEqual({});
   });
 
-  it("parses a well-formed map and keeps property ids exactly as declared", () => {
-    const projected = projectCapacitiesSettings({
-      persisted: false,
-      settings: {
-        ...baseSettings(),
-        assigned_structures: {
-          "custom-project": "Assigned-ID_CaseSensitive",
-          b: " padded-is-opaque ",
+  it("emits sorted, deduplicated vocabularies and exclusion identities", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      statuses: {
+        open: ["active", "In Progress", "active"],
+        completed: ["Dropped", "Completed", "Completed"],
+      },
+      excluded: ["capacities:space-1:Task:t2", "capacities:space-1:Task:t1"],
+    });
+    expect(wire.statuses).toEqual({
+      open: ["In Progress", "active"],
+      completed: ["Completed", "Dropped"],
+    });
+    expect(Object.keys(wire.excluded)).toEqual([
+      "capacities:space-1:Task:t1",
+      "capacities:space-1:Task:t2",
+    ]);
+  });
+
+  it("emits declarations in sorted structure order with the tri-state statuses explicit", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      types: {
+        zeta: { mode: "native", property: null, statuses: [] },
+        alpha: { mode: "active", property: null, statuses: null },
+        "custom-project": {
+          mode: "assigned",
+          property: " assigned-prop ",
+          statuses: ["active", "In Progress", "active"],
         },
       },
     });
-    expect(projected.assignedStructures).toEqual({
-      "custom-project": "Assigned-ID_CaseSensitive",
-      b: " padded-is-opaque ",
+    expect(Object.keys(wire.types)).toEqual(["alpha", "custom-project", "zeta"]);
+    expect(wire.types.alpha).toEqual({ mode: "active", property: null, statuses: null });
+    expect(wire.types.zeta).toEqual({ mode: "native", property: null, statuses: [] });
+    expect(wire.types["custom-project"]).toEqual({
+      mode: "assigned",
+      property: " assigned-prop ",
+      statuses: ["In Progress", "active"],
     });
   });
 
-  it("throws when assigned_structures is not an object", () => {
-    for (const bad of [[], "custom-project", null, 1]) {
-      expect(() =>
-        projectCapacitiesSettings({
-          persisted: false,
-          settings: { ...baseSettings(), assigned_structures: bad },
-        }),
-      ).toThrow(/assigned_structures/);
-    }
-  });
-
-  it("throws on an invalid structure id or an empty property id", () => {
-    for (const bad of [
-      { "": "p1" },
-      { " custom-project ": "p1" },
-      { "custom project": "p1" },
-      { "custom-project": "" },
-      { "custom-project": 1 },
-      { "custom-project": null },
-    ]) {
-      expect(() =>
-        projectCapacitiesSettings({
-          persisted: false,
-          settings: { ...baseSettings(), assigned_structures: bad },
-        }),
-      ).toThrow(/assigned_structures/);
-    }
-  });
-
-  it("always emits assigned_structures in the save body, even when empty", () => {
-    const wire = capacitiesSettingsToWire(baseDraft());
-    // Full replacement: an omitted key would wipe every saved declaration.
-    expect("assigned_structures" in wire).toBe(true);
-    expect(wire.assigned_structures).toEqual({});
-  });
-
-  it("emits a sorted declaration map, keeping property ids exactly", () => {
+  it("round-trips null and [] statuses through the save body and the GET projection", () => {
     const wire = capacitiesSettingsToWire({
       ...baseDraft(),
-      assignedStructures: { zeta: "p2", alpha: " p1 " },
+      types: {
+        Disabled: { mode: "native", property: null, statuses: [] },
+        Inherited: { mode: "active", property: null, statuses: null },
+      },
     });
-    expect(Object.keys(wire.assigned_structures)).toEqual(["alpha", "zeta"]);
-    expect(wire.assigned_structures).toEqual({ alpha: " p1 ", zeta: "p2" });
-  });
-
-  it("throws on an invalid declaration in the save draft", () => {
-    expect(() =>
-      capacitiesSettingsToWire({ ...baseDraft(), assignedStructures: { "bad id": "p1" } }),
-    ).toThrow(/assignedStructures/);
-    expect(() =>
-      capacitiesSettingsToWire({ ...baseDraft(), assignedStructures: { "custom-project": "" } }),
-    ).toThrow(/assignedStructures/);
-  });
-
-  it("round-trips a declaration through the save body and the GET projection", () => {
-    const wire = capacitiesSettingsToWire({
-      ...baseDraft(),
-      assignedStructures: { "custom-project": "assigned-prop" },
-    });
-    // The stored settings body (minus the revision the route owns) is what
-    // GET returns under `settings`, with `persisted` alongside it.
+    // The statuses the declaration body carries are exactly what the read
+    // projection must give back: `[]` stays `[]` and `null` stays `null`.
+    expect(wire.types.Disabled.statuses).toEqual([]);
+    expect(wire.types.Inherited.statuses).toBeNull();
     const projected = projectCapacitiesSettings({
       persisted: true,
-      available_structures: ["custom-project"],
       settings: {
-        version: 1,
+        version: 2,
         revision: 1,
-        native_task_auto: wire.native_task_auto,
+        statuses: wire.statuses,
+        types: wire.types,
+        native: wire.native,
         excluded: wire.excluded,
-        active_structures: wire.active_structures,
-        native_task_structures: wire.native_task_structures,
-        active_statuses: wire.active_statuses,
-        assigned_structures: wire.assigned_structures,
       },
     });
-    expect(projected.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
-  });
-});
-
-describe("capacities assigned_on_structures declarations (additive schema v1)", () => {
-  const baseSettings = () => ({
-    version: 1,
-    revision: 0,
-    native_task_auto: {
-      active_enabled: true,
-      due_enabled: true,
-      deadline_enabled: true,
-      deadline_horizon_days: 2,
-    },
-    excluded: {},
-  });
-  const baseDraft = () => ({
-    expectedRevision: 0,
-    nativeTaskAuto: {
-      activeEnabled: true,
-      dueEnabled: true,
-      deadlineEnabled: true,
-      deadlineHorizonDays: 2,
-    },
-    excluded: [],
-    activeStructures: [],
-    nativeTaskStructures: [],
-    activeStatuses: [],
-    assignedStructures: {},
-    assignedOnStructures: {},
+    expect(projected.types.Disabled.statuses).toEqual([]);
+    expect(projected.types.Inherited.statuses).toBeNull();
   });
 
-  it("projects an absent assigned_on_structures key to the empty map (older backend)", () => {
-    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
-    expect(projected.assignedOnStructures).toEqual({});
-  });
-
-  it("parses a well-formed map and keeps property ids exactly as declared", () => {
-    const projected = projectCapacitiesSettings({
-      persisted: false,
-      settings: {
-        ...baseSettings(),
-        assigned_on_structures: {
-          "custom-project": "Assigned-On-ID_CaseSensitive",
-          b: " padded-is-opaque ",
-        },
-      },
-    });
-    expect(projected.assignedOnStructures).toEqual({
-      "custom-project": "Assigned-On-ID_CaseSensitive",
-      b: " padded-is-opaque ",
-    });
-  });
-
-  it("throws when assigned_on_structures is not an object", () => {
-    for (const bad of [[], "custom-project", null, 1]) {
+  it("requires a property id iff the mode needs one in the save draft", () => {
+    for (const mode of ["assigned", "assignedOn"] as const) {
       expect(() =>
-        projectCapacitiesSettings({
-          persisted: false,
-          settings: { ...baseSettings(), assigned_on_structures: bad },
+        capacitiesSettingsToWire({
+          ...baseDraft(),
+          types: { s: { mode, property: null, statuses: null } },
         }),
-      ).toThrow(/assigned_on_structures/);
+      ).toThrow(/property is required/);
+    }
+    for (const mode of ["off", "active", "native"] as const) {
+      expect(() =>
+        capacitiesSettingsToWire({
+          ...baseDraft(),
+          types: { s: { mode, property: "p1", statuses: null } },
+        }),
+      ).toThrow(/property is forbidden/);
     }
   });
 
-  it("throws on an invalid structure id or an empty property id", () => {
-    for (const bad of [
-      { "": "p1" },
-      { " custom-project ": "p1" },
-      { "custom project": "p1" },
-      { "custom-project": "" },
-      { "custom-project": 1 },
-      { "custom-project": null },
-    ]) {
-      expect(() =>
-        projectCapacitiesSettings({
-          persisted: false,
-          settings: { ...baseSettings(), assigned_on_structures: bad },
-        }),
-      ).toThrow(/assigned_on_structures/);
-    }
-  });
-
-  it("always emits assigned_on_structures in the save body, even when empty", () => {
-    const wire = capacitiesSettingsToWire(baseDraft());
-    expect("assigned_on_structures" in wire).toBe(true);
-    expect(wire.assigned_on_structures).toEqual({});
-  });
-
-  it("emits a sorted Assigned On map, keeping property ids exactly", () => {
-    const wire = capacitiesSettingsToWire({
-      ...baseDraft(),
-      assignedOnStructures: { zeta: "p2", alpha: " p1 " },
-    });
-    expect(Object.keys(wire.assigned_on_structures)).toEqual(["alpha", "zeta"]);
-    expect(wire.assigned_on_structures).toEqual({ alpha: " p1 ", zeta: "p2" });
-  });
-
-  it("throws on an invalid Assigned On declaration in the save draft", () => {
-    expect(() =>
-      capacitiesSettingsToWire({ ...baseDraft(), assignedOnStructures: { "bad id": "p1" } }),
-    ).toThrow(/assignedOnStructures/);
+  it("rejects an unknown mode or an invalid structure id in the save draft", () => {
     expect(() =>
       capacitiesSettingsToWire({
         ...baseDraft(),
-        assignedOnStructures: { "custom-project": "" },
+        types: { s: { mode: "status" as never, property: null, statuses: null } },
       }),
-    ).toThrow(/assignedOnStructures/);
+    ).toThrow(/mode is not a supported admission mode/);
+    expect(() =>
+      capacitiesSettingsToWire({
+        ...baseDraft(),
+        types: { "bad id": { mode: "off", property: null, statuses: null } },
+      }),
+    ).toThrow(/invalid structure id/);
   });
 
-  it("round-trips both declaration maps together through the save body and the GET projection", () => {
+  it("throws on an empty admission value anywhere in the draft", () => {
+    expect(() =>
+      capacitiesSettingsToWire({ ...baseDraft(), statuses: { open: [""], completed: [] } }),
+    ).toThrow(/statuses.open/);
+    expect(() =>
+      capacitiesSettingsToWire({ ...baseDraft(), statuses: { open: [], completed: [""] } }),
+    ).toThrow(/statuses.completed/);
+    expect(() =>
+      capacitiesSettingsToWire({
+        ...baseDraft(),
+        types: { s: { mode: "native", property: null, statuses: [""] } },
+      }),
+    ).toThrow(/statuses contains an invalid value/);
+  });
+
+  it("rejects a negative expected revision", () => {
+    expect(() => capacitiesSettingsToWire({ ...baseDraft(), expectedRevision: -1 })).toThrow(
+      /expectedRevision/,
+    );
+  });
+
+  it("round-trips a full declaration through the save body and the GET projection", () => {
     const wire = capacitiesSettingsToWire({
       ...baseDraft(),
-      assignedStructures: { "custom-project": "assigned-prop" },
-      assignedOnStructures: { RootTask: "assigned-on-prop" },
+      statuses: { open: ["active"], completed: ["Completed"] },
+      types: {
+        "custom-project": { mode: "assignedOn", property: "assigned-on-prop", statuses: null },
+        Task: { mode: "native", property: null, statuses: [] },
+      },
+      native: { deadlineHorizonDays: 3 },
+      excluded: ["capacities:space-1:Task:t1"],
     });
-    expect(wire.assigned_structures).toEqual({ "custom-project": "assigned-prop" });
-    expect(wire.assigned_on_structures).toEqual({ RootTask: "assigned-on-prop" });
+    // The stored settings body (minus the revision the route owns) is what GET
+    // returns under `settings`, with `persisted` alongside it.
     const projected = projectCapacitiesSettings({
       persisted: true,
-      available_structures: ["RootTask", "custom-project"],
+      available_structures: ["Task", "custom-project"],
       settings: {
-        version: 1,
+        version: 2,
         revision: 1,
-        native_task_auto: wire.native_task_auto,
+        statuses: wire.statuses,
+        types: wire.types,
+        native: wire.native,
         excluded: wire.excluded,
-        active_structures: wire.active_structures,
-        native_task_structures: wire.native_task_structures,
-        active_statuses: wire.active_statuses,
-        assigned_structures: wire.assigned_structures,
-        assigned_on_structures: wire.assigned_on_structures,
       },
     });
-    expect(projected.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
-    expect(projected.assignedOnStructures).toEqual({ RootTask: "assigned-on-prop" });
-  });
-
-  it("keeps both maps unchanged when only one declaration map is populated", () => {
-    const wire = capacitiesSettingsToWire({
-      ...baseDraft(),
-      assignedStructures: { RootTask: "legacy-prop" },
-      assignedOnStructures: { Other: "other-on-prop" },
+    expect(projected.statuses).toEqual({ open: ["active"], completed: ["Completed"] });
+    expect(projected.types["custom-project"]).toEqual({
+      mode: "assignedOn",
+      property: "assigned-on-prop",
+      statuses: null,
     });
-    // The full-replacement body carries both maps verbatim: populating one
-    // never clears the other, and a per-structure edit only changes its key.
-    expect(wire.assigned_structures).toEqual({ RootTask: "legacy-prop" });
-    expect(wire.assigned_on_structures).toEqual({ Other: "other-on-prop" });
+    expect(projected.types.Task).toEqual({
+      mode: "native",
+      property: null,
+      statuses: [],
+    });
+    expect(projected.native).toEqual({ deadlineHorizonDays: 3 });
+    expect(projected.excluded).toEqual(["capacities:space-1:Task:t1"]);
   });
 });
 
