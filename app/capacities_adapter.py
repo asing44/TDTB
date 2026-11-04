@@ -30,6 +30,8 @@ from typing import Any, Callable, Protocol, Sequence
 import uuid
 
 from capacities_assignment import (
+    MODE_ASSIGNED,
+    MODE_ASSIGNED_ON,
     AssignmentCandidate,
     AssignmentSettings,
     evaluate_assignment,
@@ -996,6 +998,68 @@ def _completed_status_tokens(mapping: StructureMapping) -> frozenset[str]:
     if mapping.completion_value:
         tokens.add(_normalized(mapping.completion_value))
     return frozenset(tokens)
+
+
+#: The modes that admit on their own source marker (an ``Assigned`` boolean or
+#: an ``Assigned On`` date) instead of on the open status vocabulary. For these
+#: modes the open list never decides anything, but a status the owner lists as
+#: completed is still readable closed evidence.
+_ASSIGNED_STATUS_MODES = frozenset({MODE_ASSIGNED, MODE_ASSIGNED_ON})
+
+
+def _completed_status_names(settings: Any) -> frozenset[str]:
+    """Normalized completed status NAMES from the settings document.
+
+    ``statuses.completed`` is the owner's shared closed vocabulary — the same
+    statuses their own Capacities query excludes per type. No document (a
+    caller that builds the evaluator seam directly) carries no vocabulary at
+    all, so nothing can be called completed.
+    """
+    vocabulary = getattr(settings, "statuses", None)
+    names = getattr(vocabulary, "completed", None)
+    if not names:
+        return frozenset()
+    return frozenset(
+        _normalized(name) for name in names if _text(name)
+    )
+
+
+def _status_label_names(prop: Any) -> set[str]:
+    """Normalized label NAMES one mapped status payload carries.
+
+    Name-preferring by construction, exactly like the single resolver's
+    comparison form: a member contributes its display ``name`` and only falls
+    back to its ``id`` when it carries no name, so a coincidental option id can
+    never decide a row. Anything that cannot be read contributes nothing, which
+    keeps an absent, empty, or unreadable status UNKNOWN rather than closed.
+    """
+    if not isinstance(prop, dict):
+        return set()
+    kind = _text(prop.get("type"))
+    if not kind or kind not in prop:
+        return set()
+    payload = prop[kind]
+    if kind not in {"label", "entity"}:
+        # A typed scalar on a label-mapped status is still readable evidence.
+        return set(_typed_status_tokens(prop) or ())
+    if not isinstance(payload, list):
+        return set()
+    names: set[str] = set()
+    for member in payload:
+        if isinstance(member, str):
+            value: Any = member
+        elif isinstance(member, dict):
+            value = member.get("name")
+            if not isinstance(value, str) or not _text(value):
+                value = member.get("id")
+                if not isinstance(value, str):
+                    continue
+        else:
+            continue
+        token = _normalized(value)
+        if token:
+            names.add(token)
+    return names
 
 
 #: Stable reason codes for the review-warning surface (U3b-3). One code is
@@ -2326,6 +2390,12 @@ class CapacitiesAdapter:
         # and an unreadable payload are all UNKNOWN — never closed — and the row
         # is kept as an unassigned review candidate.
         vocabulary = self._vocabulary(mapping) if mapping.open_status_property else None
+        declared_mode = self.config.assignment_settings.mode_of(mapping.structure_id)
+        closed_status_names = (
+            _completed_status_names(self.config.settings)
+            if declared_mode in _ASSIGNED_STATUS_MODES
+            else frozenset()
+        )
         resolution = StatusResolution()
         vocabulary_unknown = False
         dead_status_member = False
@@ -2342,6 +2412,22 @@ class CapacitiesAdapter:
                 status_is_open = None
                 if active_rule is not None:
                     status_state = "unavailable"
+                if closed_status_names and status_prop is not None:
+                    # An ``assigned``/``assignedOn`` type admits on its own
+                    # source marker, so its status never admits or excludes by
+                    # the open vocabulary. It is still CLOSED evidence when the
+                    # status NAME is one the owner lists as completed: their
+                    # own Capacities query excludes those per type, so an
+                    # Assigned boolean must not resurrect a Printed, Purchased,
+                    # or Completed row. Absent, empty, and unreadable stay
+                    # UNKNOWN (never closed), and a name outside the completed
+                    # list stays admitted.
+                    if _status_label_names(status_prop).intersection(
+                        closed_status_names
+                    ):
+                        status_is_open = False
+                        if active_rule is not None:
+                            status_state = "closed"
             else:
                 resolution = _status_resolution(status_prop, vocabulary)
                 dead_status_member = resolution.dead
