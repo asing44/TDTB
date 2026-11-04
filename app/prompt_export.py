@@ -8,7 +8,7 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
   ``stoic_intention``, and browser-defined custom prompts
   (``custom-<id>`` keys). Nothing is per-prompt opted into any more.
 * **Task shape**: a BUILT-IN prompt exports as a task whose TITLE is that
-  prompt's fixed label (:data:`BUILTIN_PROMPT_TITLES` — ``Less AI``,
+  prompt's fixed label (:data:`BUILTIN_PROMPT_TITLES` — ``Reminder today``,
   ``For Meegy``, ``Stoic``) and whose DESCRIPTION is the prompt text. A
   browser-defined custom prompt has no fixed label, so its text stays the
   TITLE and no description is written.
@@ -76,7 +76,7 @@ EXPORT_ACTION = export_receipts.ACTION_TODOIST_TASK
 #: prompt has no fixed label, so its text remains the title with no
 #: description (see :func:`plan_prompt_exports`).
 BUILTIN_PROMPT_TITLES: dict[str, str] = {
-    "intention": "Less AI",
+    "intention": "Reminder today",
     "megan_nicety": "For Meegy",
     "stoic_intention": "Stoic",
 }

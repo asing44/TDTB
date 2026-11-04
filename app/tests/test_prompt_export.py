@@ -195,7 +195,7 @@ class TestPlan:
                     "stoic_intention": STOIC},
         )
         assert [(p.prompt_key, p.title, p.description) for p in plans] == [
-            ("intention", "Less AI", INTENTION),
+            ("intention", "Reminder today", INTENTION),
             ("megan_nicety", "For Meegy", SECRET),
             ("stoic_intention", "Stoic", STOIC),
         ]
@@ -203,7 +203,7 @@ class TestPlan:
         assert [p.content for p in plans] == [INTENTION, SECRET, STOIC]
         # The label map is the pinned product contract.
         assert pe.BUILTIN_PROMPT_TITLES == {
-            "intention": "Less AI",
+            "intention": "Reminder today",
             "megan_nicety": "For Meegy",
             "stoic_intention": "Stoic",
         }
@@ -251,7 +251,7 @@ class TestPlan:
         )
         for entry in preview:
             assert set(entry) == {"prompt_key", "action", "status"}
-        assert "Less AI" not in repr(preview)
+        assert "Reminder today" not in repr(preview)
         assert "For Meegy" not in repr(preview)
 
     def test_impromptu_builtin_prompt_plans_without_any_draft(self):
@@ -421,9 +421,9 @@ class TestRun:
         assert [o.prompt_key for o in outcomes] == ["intention", CUSTOM_KEY]
         assert all(o.status == pe.OUTCOME_DONE for o in outcomes)
         by_content = {c["content"]: c for c in client.created}
-        assert by_content["Less AI"]["project_id"] is None
-        assert by_content["Less AI"]["due_date"] == CIVIL
-        assert by_content["Less AI"]["description"] == INTENTION
+        assert by_content["Reminder today"]["project_id"] is None
+        assert by_content["Reminder today"]["due_date"] == CIVIL
+        assert by_content["Reminder today"]["description"] == INTENTION
         assert by_content[CUSTOM_ANSWER]["project_id"] is None
         assert by_content[CUSTOM_ANSWER]["due_date"] == CIVIL
 
@@ -446,7 +446,7 @@ class TestRun:
             "intention", "megan_nicety", CUSTOM_KEY,
         ]
         assert {c["content"] for c in client.created} == {
-            "Less AI", "For Meegy", CUSTOM_ANSWER,
+            "Reminder today", "For Meegy", CUSTOM_ANSWER,
         }
         assert {c["description"] for c in client.created} == {
             INTENTION, SECRET, None,
@@ -1095,9 +1095,9 @@ class TestPromptExportRoute:
             "intention", CUSTOM_KEY,
         ]
         by_content = {c["content"]: c for c in todoist.created}
-        assert by_content["Less AI"]["project_id"] is None
-        assert by_content["Less AI"]["due_date"] == datetime.now().date().isoformat()
-        assert by_content["Less AI"]["description"] == INTENTION
+        assert by_content["Reminder today"]["project_id"] is None
+        assert by_content["Reminder today"]["due_date"] == datetime.now().date().isoformat()
+        assert by_content["Reminder today"]["description"] == INTENTION
         assert by_content[CUSTOM_ANSWER]["project_id"] is None
         assert by_content[CUSTOM_ANSWER]["description"] is None
         assert SECRET not in r.text

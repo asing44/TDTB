@@ -11968,3 +11968,9 @@ button.strip-cal {
   color: var(--t-muted);
   font-size: 12px;
 }
+
+/* Settings carries long warning text and per-type rows, so it gets a wider
+   drawer than the day-setup drawer it shares a shell with. */
+.setup-drawer.settings-shell {
+  width: min(760px, 100vw);
+}
