@@ -23,7 +23,7 @@ from capacities_adapter import (  # noqa: E402
     CapacitiesRestClient,
     StructureMapping,
 )
-from capacities_assignment import AssignmentSettings  # noqa: E402
+from capacities_assignment import AssignmentSettings, TypeMode  # noqa: E402
 import capacities_settings as cset  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import tag_exclusions as tx  # noqa: E402
@@ -125,6 +125,36 @@ def _mapping():
             duration_property="minutes",
         ),
     )
+
+
+def _types(declarations):
+    """Build evaluator type declarations from a short mode map.
+
+    Each value is a mode string (``"native"``) or a ``(mode, open_names)``
+    pair, where ``open_names`` is ``None`` to inherit the shared vocabulary and
+    ``()`` to disable status admission for that type. A structure the map does
+    not name is ``off`` — schema v2 makes an undeclared structure
+    structure-not-eligible, so every fixture that needs a type must declare it.
+    """
+    types = {}
+    for structure_id, declaration in (declarations or {}).items():
+        if isinstance(declaration, TypeMode):
+            types[structure_id] = declaration
+            continue
+        if isinstance(declaration, str):
+            mode, names = declaration, None
+        else:
+            mode, names = declaration
+        types[structure_id] = TypeMode(
+            mode=mode,
+            open_statuses=None if names is None else frozenset(names),
+        )
+    return types
+
+
+def _settings(declarations=None, **kwargs):
+    """Version-2-shaped evaluator settings from a short mode map."""
+    return AssignmentSettings(types=_types(declarations), **kwargs)
 
 
 class FakeProvider:
@@ -672,6 +702,23 @@ def _custom_provider(objects):
     )
 
 
+def _native_settings(**kwargs):
+    """The version-2 spelling of version 1's default-enabled native policy.
+
+    Version 1 carried an implicit native ``RootTask``; schema v2 makes an
+    undeclared structure ``off``, so a native fixture declares the mode.
+    """
+    return _settings({"RootTask": "native"}, **kwargs)
+
+
+def _native_adapter(provider, mappings=None, **kwargs):
+    """Adapter for a native ``RootTask`` fixture."""
+    kwargs.setdefault("assignment_settings", _native_settings())
+    return _adapter(
+        provider, mappings=mappings or (_native_mapping(),), **kwargs
+    )
+
+
 def test_native_mapping_without_assignment_property_projects_auto_candidates():
     provider = _native_provider(
         [
@@ -682,7 +729,7 @@ def test_native_mapping_without_assignment_property_projects_auto_candidates():
         ]
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider).items_for_day(TODAY)
 
     assert [row["capacities_id"] for row in result.items] == [
         "active",
@@ -704,7 +751,7 @@ def test_native_mapping_rejects_future_out_of_horizon_and_closed_rows():
         ]
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider).items_for_day(TODAY)
 
     assert result.items == []
     # Every previously silent drop is now counted, once per structure, so a
@@ -722,13 +769,19 @@ def test_native_mapping_rejects_future_out_of_horizon_and_closed_rows():
     }
 
 
-def _project_status_settings(**overrides):
-    base = dict(
-        active_statuses=frozenset({"In Progress", "active"}),
-        native_task_structures=frozenset({"RootTask", "custom-project"}),
+def _project_status_settings(declarations=None):
+    """Settings whose shared open vocabulary carries both working labels.
+
+    Version 1's ``active_statuses`` and implicit ``native`` membership are one
+    declaration each in schema v2: the shared ``statuses.open`` names are
+    inherited by every declaration that names none of its own.
+    """
+    return _settings(
+        declarations
+        if declarations is not None
+        else {"RootTask": "native", "custom-project": "native"},
+        open_statuses=frozenset({"In Progress", "active"}),
     )
-    base.update(overrides)
-    return AssignmentSettings(**base)
 
 
 def _status_object(object_id, structure_id, name, *, status_property="status"):
@@ -1098,15 +1151,18 @@ def test_non_native_absent_status_with_due_match_stays_closed():
                 duration_property=None,
             ),
         ),
-        assignment_settings=_project_status_settings(
-            native_task_structures=frozenset({"RootTask"})
-        ),
+        assignment_settings=_project_status_settings({"RootTask": "native"}),
     ).items_for_day(TODAY)
 
     assert result.items == []
 
 
 def test_native_mapping_all_rules_disabled_projects_nothing():
+    # Version 2 removed version 1's three native toggles: ``native`` always
+    # admits on status-open, due, or the deadline horizon, and a structure's
+    # own ``statuses`` decides whether the status condition applies. The
+    # version-2 way to state "this type has no admission path" is ``off``, the
+    # default for an undeclared structure, which is never enumerated at all.
     provider = _native_provider(
         [
             _native_object("active", status="active"),
@@ -1114,22 +1170,22 @@ def test_native_mapping_all_rules_disabled_projects_nothing():
             _native_object("deadline-edge", deadline=TODAY + timedelta(days=2)),
         ]
     )
-    settings = AssignmentSettings(
-        active_enabled=False, due_enabled=False, deadline_enabled=False
-    )
+    settings = _settings({"RootTask": "off"})
 
     result = _adapter(
         provider, mappings=(_native_mapping(),), assignment_settings=settings
     ).items_for_day(TODAY)
 
     assert result.items == []
+    assert result.structures_not_read == {"RootTask": "structure-not-eligible"}
+    assert provider.list_calls == []
 
 
 def test_native_deadline_horizon_is_settings_driven_and_inclusive():
     provider = _native_provider(
         [_native_object("deadline-edge", deadline=TODAY + timedelta(days=2))]
     )
-    settings = AssignmentSettings(deadline_horizon_days=1)
+    settings = _native_settings(deadline_horizon_days=1)
 
     result = _adapter(
         provider, mappings=(_native_mapping(),), assignment_settings=settings
@@ -1158,7 +1214,7 @@ def test_legacy_native_marker_is_positive_but_absent_marker_uses_native_auto():
         assignment_values=frozenset({"true"}),
     )
 
-    result = _adapter(provider, mappings=(mapping,)).items_for_day(TODAY)
+    result = _native_adapter(provider, (mapping,)).items_for_day(TODAY)
 
     modes = {
         row["capacities_id"]: row["capacities_assignment"]["mode"]
@@ -1172,7 +1228,7 @@ def test_native_projection_preserves_stable_identity_and_decision_metadata():
         [_native_object("task-42", status="active", title="Active task")]
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider).items_for_day(TODAY)
 
     row = result.items[0]
     assert row["identity"] == "capacities:space-1:RootTask:task-42"
@@ -1190,7 +1246,7 @@ def test_native_projection_preserves_stable_identity_and_decision_metadata():
 def test_reads_never_patch_or_mutate_the_provider():
     provider = _native_provider([_native_object("task-1", status="active")])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider).items_for_day(TODAY)
 
     assert len(result.items) == 1
     assert provider.patch_calls == []
@@ -1315,7 +1371,7 @@ def test_missing_space_identity_is_accepted_because_enumeration_is_scoped():
         },
     }])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider).items_for_day(TODAY)
 
     assert [item["name"] for item in result.items] == ["Scoped row"]
     assert result.warnings == []
@@ -1337,8 +1393,8 @@ def test_non_native_mapping_without_assignment_property_fails_closed():
 
 
 def test_configured_native_structure_is_enumerated_and_evaluated_by_the_native_rule():
-    """Moving a structure into ``native_task_structures`` is honoured by both
-    the enumeration gate and the evaluator's native Auto rule."""
+    """Declaring a structure ``native`` is honoured by both the enumeration
+    gate and the evaluator's native Auto rule."""
     provider = _custom_provider(
         [
             _object(
@@ -1357,9 +1413,7 @@ def test_configured_native_structure_is_enumerated_and_evaluated_by_the_native_r
         open_status_property="state",
         open_status_values=frozenset({"active"}),
     )
-    settings = AssignmentSettings(
-        native_task_structures=frozenset({"RootTask", "custom-project"})
-    )
+    settings = _settings({"RootTask": "native", "custom-project": "native"})
 
     result = _adapter(
         provider,
@@ -1390,8 +1444,8 @@ def test_contract_validation_follows_the_configured_native_set():
         _adapter(
             native_provider,
             mappings=(_mapping()[0], bad_mapping),
-            assignment_settings=AssignmentSettings(
-                native_task_structures=frozenset({"RootTask", "custom-project"})
+            assignment_settings=_settings(
+                {"RootTask": "native", "custom-project": "native"}
             ),
         ).items_for_day(TODAY)
 
@@ -1421,7 +1475,12 @@ def _active_mapping(**overrides):
 
 
 def _active_settings():
-    return AssignmentSettings(active_structures=frozenset({ACTIVE_STRUCTURE}))
+    """Custom ``Active`` pull plus the native ``RootTask`` declaration.
+
+    Version 1 defaulted ``RootTask`` to native and carried the custom Active
+    set alongside it; schema v2 states both, one mode per structure.
+    """
+    return _settings({"RootTask": "native", ACTIVE_STRUCTURE: "active"})
 
 
 def test_custom_active_enabled_mapping_without_assignment_projects_active_object():
@@ -1445,7 +1504,7 @@ def test_custom_active_enabled_mapping_without_assignment_projects_active_object
     assert [row["capacities_id"] for row in result.items] == ["project-1"]
     assert result.items[0]["capacities_assignment"] == {
         "mode": "auto",
-        "reasons": ["auto-custom-status-active"],
+        "reasons": ["auto-status-active"],
         "source_assigned": None,
         "excluded": False,
     }
@@ -1510,7 +1569,7 @@ def test_custom_active_pull_respects_the_label_name_not_the_label_id():
 
     assert [row["capacities_id"] for row in result.items] == ["named-active"]
     assert result.items[0]["capacities_assignment"]["reasons"] == [
-        "auto-custom-status-active"
+        "auto-status-active"
     ]
 
 
@@ -1536,7 +1595,7 @@ def test_native_active_label_matches_by_name_not_id():
         ]
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert [row["capacities_id"] for row in result.items] == ["task-active"]
     assert result.items[0]["capacities_assignment"]["reasons"] == ["auto-status-active"]
@@ -1621,7 +1680,7 @@ def test_structure_without_an_active_option_is_never_included_by_the_active_pull
             open_status_values=frozenset({"inbox", "planning", "scheduled"}),
         ),
     )
-    settings = AssignmentSettings(active_structures=frozenset({"adventure"}))
+    settings = _settings({"RootTask": "native", "adventure": "active"})
 
     result = _adapter(
         provider, mappings=mappings, assignment_settings=settings
@@ -1643,9 +1702,9 @@ def test_custom_excluded_active_enabled_object_is_not_projected():
             ),
         ]
     )
-    settings = AssignmentSettings(
+    settings = _settings(
+        {"RootTask": "native", ACTIVE_STRUCTURE: "active"},
         excluded_identities=frozenset({CUSTOM_IDENTITY}),
-        active_structures=frozenset({ACTIVE_STRUCTURE}),
     )
 
     result = _adapter(
@@ -1677,7 +1736,7 @@ def test_custom_status_mapping_is_not_enumerated_before_it_is_active_enabled():
         ]
     )
 
-    result = _adapter(
+    result = _native_adapter(
         provider,
         mappings=(_native_mapping(deadline_property=None), _active_mapping()),
     ).items_for_day(TODAY)
@@ -1714,7 +1773,7 @@ def test_content_read_budget_bounds_hydration_and_reports_the_remainder():
         },
     )
 
-    result = _adapter(
+    result = _native_adapter(
         provider,
         mappings=(_native_mapping(),),
         max_content_reads=1,
@@ -1782,7 +1841,7 @@ def test_property_less_listing_rows_are_hydrated_from_object_content():
         objects={"task-1": _native_object("task-1", status="active")},
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert [row["capacities_id"] for row in result.items] == ["task-1"]
     assert result.warnings == []
@@ -1806,7 +1865,7 @@ def test_empty_typed_title_falls_back_to_the_top_level_listing_title():
         objects={"task-1": content},
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert [row["name"] for row in result.items] == ["Habit"]
     assert result.warnings == []
@@ -1827,7 +1886,7 @@ def test_custom_title_property_stays_authoritative_when_empty():
     obj["title"] = "Listing name"
     obj["properties"]["headline"] = _prop("title", "headline", {"value": ""})
 
-    result = _adapter(
+    result = _native_adapter(
         provider, mappings=(_native_mapping(title_property="headline"),)
     ).items_for_day_from_objects(TODAY, [obj])
 
@@ -1841,7 +1900,7 @@ def test_missing_typed_and_top_level_title_still_skips_as_malformed():
     obj = _native_object("task-1", status="active")
     obj["properties"]["title"] = _prop("title", "title", {"value": ""})
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
         TODAY, [obj]
     )
 
@@ -1916,7 +1975,7 @@ def test_rate_limited_read_keeps_what_it_already_read():
     """
     provider = _RateLimitedProvider("RootTask", ["a", "b", "c", "d"], allow=2)
 
-    result = _adapter(
+    result = _native_adapter(
         provider,
         mappings=(_native_mapping(),),
         max_content_reads=10,
@@ -2017,7 +2076,7 @@ def test_cached_content_does_not_consume_the_read_budget():
     """
     provider = _RateLimitedProvider("RootTask", ["a", "b", "c", "d"], allow=99)
     cache = _Cache()
-    adapter = _adapter(
+    adapter = _native_adapter(
         provider,
         mappings=(_native_mapping(),),
         max_content_reads=2,
@@ -2084,7 +2143,7 @@ def test_many_object_cold_run_reports_evaluated_and_deferred_separately():
         objects=_native_contents(object_ids),
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.evaluated == 20
     assert result.deferred == 4
@@ -2113,7 +2172,7 @@ def test_pagination_across_pages_aggregates_coverage():
         objects=_native_contents(["a", "b", "c", "d"]),
     )
 
-    result = _adapter(
+    result = _native_adapter(
         provider, mappings=(_native_mapping(),), max_content_reads=3
     ).items_for_day(TODAY)
 
@@ -2140,7 +2199,7 @@ def test_duplicate_listed_rows_do_not_inflate_coverage():
         objects=_native_contents(["a", "b"]),
     )
 
-    result = _adapter(
+    result = _native_adapter(
         provider, mappings=(_native_mapping(),), max_content_reads=1
     ).items_for_day(TODAY)
 
@@ -2156,7 +2215,7 @@ def test_duplicate_rows_carrying_properties_count_one_evaluated_identity():
         _native_object("b", status="active"),
     ])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.evaluated == 2
     assert result.deferred == 0
@@ -2180,7 +2239,7 @@ def test_malformed_rows_are_counted_separately_from_coverage():
         },
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.evaluated == 1
     assert result.deferred == 0
@@ -2200,7 +2259,7 @@ def test_evaluated_objects_are_distinct_from_the_eligible_item_count():
         _native_object("dropped", status="dropped"),
     ])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert [row["capacities_id"] for row in result.items] == ["active"]
     assert result.evaluated == 3
@@ -2214,7 +2273,7 @@ def test_evaluated_objects_are_distinct_from_the_eligible_item_count():
 def test_batch_projection_reports_evaluated_and_malformed_counts():
     provider = FakeProvider(_native_structures(), {})
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
         TODAY,
         [
             _native_object("active", status="active"),
@@ -2262,7 +2321,7 @@ def test_typed_entity_tags_project_structured_identity_and_title():
         ),
     ])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     row = result.items[0]
     assert row["capacities_tags"] == [
@@ -2282,7 +2341,7 @@ def test_tag_projection_keeps_the_typed_title_and_ignores_flat_titles():
         ),
     ])
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
@@ -2294,7 +2353,7 @@ def test_empty_typed_tags_project_an_empty_list():
         _tagged_native_object("task-1", tags=[], flat_tags=[]),
     ])
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == []
     assert "capacities_tags_error" not in row
@@ -2303,7 +2362,7 @@ def test_empty_typed_tags_project_an_empty_list():
 def test_no_tag_property_at_all_projects_an_empty_list():
     provider = _native_provider([_native_object("task-1", status="active")])
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == []
 
@@ -2313,7 +2372,7 @@ def test_title_only_flat_tags_are_unusable_not_identity():
         _tagged_native_object("task-1", flat_tags=["habituals"]),
     ])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     row = result.items[0]
     assert row["capacities_tags"] is None
@@ -2325,7 +2384,7 @@ def test_malformed_entity_payload_is_unusable_without_dropping_the_row():
         _tagged_native_object("task-1", tags=[{"title": "no id"}]),
     ])
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert len(result.items) == 1
     assert result.items[0]["capacities_tags"] is None
@@ -2341,7 +2400,7 @@ def test_non_entity_tags_property_is_unusable():
         "label", "label", [{"id": "x", "name": "habituals"}]
     )
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] is None
     assert "not an entity" in row["capacities_tags_error"]
@@ -2358,7 +2417,7 @@ def test_duplicate_tag_references_deduplicate_by_stable_id():
         ),
     ])
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
@@ -2388,13 +2447,13 @@ def test_uppercase_provider_tag_id_matches_a_lowercase_exclusion():
     ])
     mappings = (_native_mapping(),)
 
-    projected = _adapter(provider, mappings=mappings).items_for_day(TODAY).items[0]
+    projected = _native_adapter(provider, mappings).items_for_day(TODAY).items[0]
     assert projected["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
     ]
 
-    result = _adapter(
-        provider, mappings=mappings, exclusion_policy=_exclusion_policy(TAG_A)
+    result = _native_adapter(
+        provider, mappings, exclusion_policy=_exclusion_policy(TAG_A)
     ).items_for_day(TODAY)
 
     assert result.items == []
@@ -2411,13 +2470,13 @@ def test_non_uuid_provider_tag_id_is_kept_as_received_and_matches_nothing():
     ])
     mappings = (_native_mapping(),)
 
-    projected = _adapter(provider, mappings=mappings).items_for_day(TODAY).items[0]
+    projected = _native_adapter(provider, mappings).items_for_day(TODAY).items[0]
     assert projected["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": raw_id, "title": "habituals"},
     ]
 
-    result = _adapter(
-        provider, mappings=mappings, exclusion_policy=_exclusion_policy(TAG_A)
+    result = _native_adapter(
+        provider, mappings, exclusion_policy=_exclusion_policy(TAG_A)
     ).items_for_day(TODAY)
 
     assert len(result.items) == 1
@@ -2432,7 +2491,7 @@ def test_title_only_tags_under_an_applicable_exclusion_still_block_planning():
     ])
 
     with pytest.raises(tx.TagExclusionBlocked) as blocked:
-        _adapter(
+        _native_adapter(
             provider,
             mappings=(_native_mapping(),),
             exclusion_policy=_exclusion_policy(TAG_A),
@@ -2630,7 +2689,7 @@ def _override_object(object_id, properties):
 
 
 def _override_adapter(provider, mapping, **kwargs):
-    return _adapter(
+    return _native_adapter(
         provider,
         mappings=(_native_mapping(deadline_property=None), mapping),
         **kwargs,
@@ -2751,7 +2810,7 @@ def test_declared_assignment_property_absent_stays_neutral_not_negative():
     assert [row["capacities_id"] for row in result.items] == ["project-1"]
     assert result.items[0]["capacities_assignment"] == {
         "mode": "auto",
-        "reasons": ["auto-custom-status-active"],
+        "reasons": ["auto-status-active"],
         "source_assigned": None,
         "excluded": False,
     }
@@ -4054,7 +4113,7 @@ def test_blank_tag_title_is_filled_from_the_root_tag_catalog():
         catalog=_catalog((TAG_C, "home")),
     )
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_C, "title": "home"},
@@ -4069,7 +4128,7 @@ def test_a_payload_tag_title_wins_over_the_catalog():
         catalog=_catalog((TAG_C, "from catalog")),
     )
 
-    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    row = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert row["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_C, "title": "from payload"},
@@ -4089,7 +4148,7 @@ def test_one_catalog_listing_covers_many_rows_and_many_tags():
         catalog=_catalog((TAG_A, "home"), (TAG_B, "errands"), (TAG_C, "work")),
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     titles = {
         row["capacities_id"]: [tag["title"] for tag in row["capacities_tags"]]
@@ -4104,7 +4163,7 @@ def test_the_catalog_is_read_once_even_across_repeated_projections():
         [_tagged_native_object("task-1", tags=[{"id": TAG_A}])],
         catalog=_catalog((TAG_A, "home")),
     )
-    adapter = _adapter(provider, mappings=(_native_mapping(),))
+    adapter = _native_adapter(provider, mappings=(_native_mapping(),))
 
     first = adapter.items_for_day(TODAY)
     second = adapter.items_for_day(TODAY)
@@ -4128,8 +4187,8 @@ def test_an_unreadable_catalog_keeps_blank_titles_and_warns_once_without_content
         {("RootTask", None): {"objects": [object_row], "next_cursor": None}},
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
-    expected = _adapter(baseline, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    expected = _native_adapter(baseline, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     def admission(read):
         return [
@@ -4153,7 +4212,7 @@ def test_a_rate_limited_catalog_fills_nothing_and_warns_once():
         catalog_error=CapacitiesRateLimited("slow down"),
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.items[0]["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_A, "title": ""},
@@ -4171,7 +4230,7 @@ def test_a_partial_catalog_fills_what_it_has_and_warns_once():
                  "next_cursor": None},
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     by_id = {row["capacities_id"]: row["capacities_tags"] for row in result.items}
     assert by_id["task-1"] == [
@@ -4190,7 +4249,7 @@ def test_catalog_filled_titles_do_not_change_tag_exclusion_matching():
         catalog=_catalog((TAG_A, "home")),
     )
 
-    result = _adapter(
+    result = _native_adapter(
         provider,
         mappings=(_native_mapping(),),
         exclusion_policy=_exclusion_policy(TAG_A),
@@ -4205,7 +4264,7 @@ def test_an_object_without_tags_never_reads_the_catalog():
         [_native_object("task-1", status="active")], catalog=_catalog((TAG_A, "home"))
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.items[0]["capacities_tags"] == []
     assert provider.catalog_calls == []
@@ -4218,7 +4277,7 @@ def test_a_row_whose_titles_are_all_carried_never_reads_the_catalog():
         catalog=_catalog((TAG_A, "renamed")),
     )
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
     assert result.items[0]["capacities_tags"][0]["title"] == "home"
     assert provider.catalog_calls == []
@@ -4228,7 +4287,7 @@ def test_a_replay_seam_is_never_asked_for_the_catalog():
     """Offline intake replays the published generation: no provider call."""
     provider = _ReplayProvider(_native_structures(), {})
 
-    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+    result = _native_adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
         TODAY, [_tagged_native_object("task-1", tags=[{"id": TAG_A}])]
     )
 
@@ -4255,8 +4314,8 @@ def test_tag_titles_never_feed_the_source_fingerprint():
     renamed = _catalog_provider(objects, catalog=_catalog((TAG_A, "home")))
     original = _catalog_provider(objects, catalog=_catalog((TAG_A, "renamed later")))
 
-    first = _adapter(renamed, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
-    second = _adapter(original, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    first = _native_adapter(renamed, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    second = _native_adapter(original, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
 
     assert first["capacities_tags"][0]["title"] == "home"
     assert second["capacities_tags"][0]["title"] == "renamed later"
@@ -4298,7 +4357,7 @@ def _range_result(objects, *, deadline_property=None, assigned_property=None):
         deadline_property=deadline_property,
         assigned_property=assigned_property,
     )
-    return _adapter(_native_provider(objects), mappings=(mapping,)).items_for_day(TODAY)
+    return _native_adapter(_native_provider(objects), mappings=(mapping,)).items_for_day(TODAY)
 
 
 def test_active_range_is_not_overdue_and_carries_its_end_as_deadline():
@@ -4385,7 +4444,7 @@ def _assigned_future_range(start: date, end: date):
         "due": _range_value(start, end),
     }
     mapping = _native_mapping(deadline_property=None, assigned_property="assigned")
-    return _adapter(
+    return _native_adapter(
         _native_provider([_object("future-window", "RootTask", properties)]),
         mappings=(mapping,),
     ).items_for_day(TODAY)
@@ -4489,7 +4548,7 @@ def test_mapped_deadline_property_wins_over_the_range_end():
         "deadline": _range_value(TODAY + timedelta(days=2), None),
     }
 
-    result = _adapter(
+    result = _native_adapter(
         _native_provider([_object("mapped", "RootTask", properties)]),
         mappings=(_native_mapping(),),
     ).items_for_day(TODAY)
