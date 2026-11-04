@@ -37,24 +37,21 @@ const HIDDEN_TWO: TodoistExclusionEntry = {
 
 function capSettings(overrides: Partial<CapacitiesSettings> = {}): CapacitiesSettings {
   return {
-    version: 1,
+    version: 2,
     revision: 0,
     persisted: true,
-    nativeTaskAuto: {
-      activeEnabled: true,
-      dueEnabled: false,
-      deadlineEnabled: false,
-      deadlineHorizonDays: 2,
+    statuses: { open: ["Started"], completed: ["Completed", "Dropped"] },
+    // One rule per type: RootTask is admitted by an assigned checkbox, which is
+    // the only mapped type in the default fixture.
+    types: {
+      RootTask: { mode: "assigned", property: "assigned", statuses: null },
     },
+    native: { deadlineHorizonDays: 2 },
     excluded: [],
-    activeStructures: ["RootTask"],
-    nativeTaskStructures: ["RootTask"],
-    activeStatuses: ["Started"],
-    assignedStructures: { RootTask: "assigned" },
-    assignedOnStructures: {},
     availableStructures: ["RootTask", "Other", "Idle"],
     structureTitles: { RootTask: "Task", Other: "Project", Idle: "Note" },
     declarationDiagnostics: [],
+    migratedFrom: null,
     ...overrides,
   };
 }
@@ -311,7 +308,15 @@ describe("hub · plan preview", () => {
 
 describe("hub · item types", () => {
   it("lists each mapped type with a dot and one plain status line", async () => {
-    const { rendered } = openPlan({ rows: PREVIEW_ROWS, cap: capSettings({ assignedStructures: { RootTask: "assigned", Idle: "assigned" } }) });
+    const { rendered } = openPlan({
+      rows: PREVIEW_ROWS,
+      cap: capSettings({
+        types: {
+          RootTask: { mode: "assigned", property: "assigned", statuses: null },
+          Idle: { mode: "off", property: null, statuses: null },
+        },
+      }),
+    });
     await waitFor(() => rendered.getByText(/1 shown in today's plan/));
     fireEvent.click(rendered.getByRole("button", { name: /fine-tune by item type/i }));
     const list = await waitFor(() => rendered.getByRole("region", { name: "Item types" }));
@@ -321,8 +326,10 @@ describe("hub · item types", () => {
     expect(lineOf("Task").querySelector(".plan-types__dot")!.className).not.toMatch(/--warn|--off/);
     expect(lineOf("Project").textContent).toContain("Not set up yet");
     expect(lineOf("Project").querySelector(".plan-types__dot--warn")).toBeTruthy();
-    expect(lineOf("Note").textContent).toContain("Set up, but turned off");
-    expect(lineOf("Note").querySelector(".plan-types__dot--off")).toBeTruthy();
+    // Schema v2 has one rule per type, so "declared but turned off" is the same
+    // state as "never set up": a type whose rule is Off admits nothing.
+    expect(lineOf("Note").textContent).toContain("Not set up yet");
+    expect(lineOf("Note").querySelector(".plan-types__dot--warn")).toBeTruthy();
   });
 
   it("notes mapped types missing from the latest refresh", async () => {

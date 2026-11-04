@@ -94,7 +94,7 @@ describe("SettingsHub", () => {
       "Is my data up to date?": ["Capacities refresh", "Items that need a look"],
       "What shows up in my plan?": ["Excluded tags", "Fine-tune by item type"],
       "Change my day setup": ["Frame"],
-      "Repair connections": ["Automatic task rules"],
+      "Repair connections": ["How each item type gets in"],
     };
     for (const label of LABELS) {
       const t = toggle(rendered, label);
@@ -179,9 +179,10 @@ describe("SettingsHub", () => {
     expect(rendered.getByRole("heading", { name: "Repair connections" })).toBeTruthy();
     fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
+    // Schema v2 retired the separate "Automatic task rules" and "What counts as
+    // active" sections: one rule per type states both, so only the surviving
+    // technical-detail sections are asserted here.
     for (const heading of [
-      "Automatic task rules",
-      "What counts as active",
       "How each item type gets in",
       "Known Capacities items",
       "Capacities setup (technical details)",
@@ -226,12 +227,12 @@ describe("SettingsHub", () => {
     const tools = rendered.getByRole("button", { name: /repair tools/i });
     expect(tools.getAttribute("aria-expanded")).toBe("false");
     expect(rendered.queryByRole("button", { name: /show technical details/i })).toBeNull();
-    expect(count(rendered, "Automatic task rules")).toBe(0);
+    expect(count(rendered, "How each item type gets in")).toBe(0);
 
     fireEvent.click(tools);
-    expect(count(rendered, "Automatic task rules")).toBe(0);
+    expect(count(rendered, "How each item type gets in")).toBe(0);
     fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
-    await waitFor(() => expect(count(rendered, "Automatic task rules")).toBe(1));
+    await waitFor(() => expect(count(rendered, "How each item type gets in")).toBe(1));
   });
 
   it("maps pre-hub panel ids to their entries", () => {
@@ -289,24 +290,20 @@ describe("SettingsHub", () => {
   it("keeps a Technical-details draft when switching entries and back", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
-      version: 1,
+      version: 2,
       revision: 0,
       persisted: true,
-      nativeTaskAuto: {
-        activeEnabled: true,
-        dueEnabled: true,
-        deadlineEnabled: true,
-        deadlineHorizonDays: 2,
+      statuses: { open: ["active"], completed: ["Completed", "Dropped"] },
+      types: {
+        RootTask: { mode: "native", property: null, statuses: null },
+        Task: { mode: "native", property: null, statuses: null },
       },
+      native: { deadlineHorizonDays: 2 },
       excluded: [],
-      activeStructures: [],
-      nativeTaskStructures: ["RootTask", "Task"],
-      activeStatuses: ["active"],
-      assignedStructures: {},
-      assignedOnStructures: {},
       availableStructures: [],
       structureTitles: {},
       declarationDiagnostics: [],
+      migratedFrom: null,
     } satisfies CapacitiesSettings);
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);
