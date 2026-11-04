@@ -1,8 +1,41 @@
-"""Route tests for the local Capacities settings API.
+"""Route tests for the local Capacities settings API (schema version 2).
 
 GET /settings/capacities is tokenless local storage only; POST
 /settings/capacities/save is token-guarded and full-replacement. No test here
 builds an adapter, calls a provider, or touches a live source.
+
+The persisted document is ONE schema-v2 policy: a status vocabulary, one
+declaration per structure (``types[sid] = {mode, property?, statuses?}``), the
+native deadline horizon, and the exclusion set. A structure therefore carries
+exactly one admission mode and the old contradictions are unrepresentable.
+
+Version-1 concepts that no longer exist, and what happened to the tests that
+asserted them:
+
+- the three global native toggles (``native_task_auto.active_enabled`` /
+  ``due_enabled`` / ``deadline_enabled``): the ``native`` mode admits on every
+  native condition, so the toggles were deleted, not rewritten; only
+  ``native.deadline_horizon_days`` survives (`TestPostValidation`,
+  `TestPostPersistence`).
+- the ``active_structures`` flag map: rewritten as ``types[sid].mode ==
+  "active"`` (`TestActiveModeStructures`).
+- the ``assigned_structures`` / ``assigned_on_structures`` property maps:
+  rewritten as ``types[sid] = {"mode": "assigned" | "assignedOn",
+  "property": ...}`` (`TestAssignedTypeDeclarations`,
+  `TestAssignedOnTypeDeclarations`).
+- ``native_task_structures`` and ``active_statuses``: rewritten as per-type
+  ``statuses`` plus the top-level ``statuses`` block (`TestStatusVocabulary`,
+  `TestTypeStatusLists`).
+- the ``capacities_settings_declaration_conflict`` refusal of a structure
+  declared in BOTH property maps: deleted because schema v2 cannot represent
+  it; the closest v2 equivalent (one declaration per structure, a later save
+  REPLACING the mode, and the legacy dual-map payload now rejected as
+  unknown keys) is asserted in `TestOneModePerStructure`. Deleted tests and
+  their reasons: ``test_post_refuses_both_mappings_with_422_and_preserves_bytes``
+  and ``test_post_refuses_on_a_first_save_without_creating_a_file`` (the
+  error code and its 422 conflict body no longer exist),
+  ``test_one_mapping_per_structure_still_saves`` (subsumed by the
+  one-mode-per-structure round trip).
 """
 from __future__ import annotations
 
@@ -30,6 +63,8 @@ PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
 PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
 PROJECT_ASSIGNED_PROPERTY = "f779f78a-3b1e-4a2c-9f5d-6a0f0e1d2c3b"
 ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-7c2d-4e18-8a51-9b0c1d2e3f40"
+PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+LIVE_ASSIGNED_PROPERTY = "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a"
 
 
 @pytest.fixture
@@ -60,14 +95,14 @@ def _auth(client: TestClient) -> dict:
 
 
 def _body(expected_revision: int = 0, **overrides) -> dict:
+    """A minimal valid schema-v2 save body.
+
+    ``statuses`` and ``types`` are optional and default to the documented
+    vocabulary / no declarations; ``native`` and ``excluded`` must be stated.
+    """
     body = {
         "expected_revision": expected_revision,
-        "native_task_auto": {
-            "active_enabled": True,
-            "due_enabled": True,
-            "deadline_enabled": True,
-            "deadline_horizon_days": 2,
-        },
+        "native": {"deadline_horizon_days": 2},
         "excluded": {},
     }
     body.update(overrides)
@@ -76,6 +111,16 @@ def _body(expected_revision: int = 0, **overrides) -> dict:
 
 def _settings_bytes() -> bytes:
     return cs.settings_path().read_bytes()
+
+
+def _stored_document() -> dict:
+    return json.loads(_settings_bytes().decode("utf-8"))
+
+
+def _assert_no_store_touched() -> None:
+    """A rejected request is a 422 before ANY file access: no store, no lock."""
+    assert not cs.settings_path().exists()
+    assert not cs.lock_path().exists()
 
 
 def _write_source_record(structure_ids: list[str]) -> Path:
@@ -94,6 +139,43 @@ def _write_source_record(structure_ids: list[str]) -> Path:
     return path
 
 
+def _v1_bytes(revision: int = 3) -> bytes:
+    """A strict, valid schema-version-1 document (the pre-v2 shape)."""
+    return (
+        json.dumps(
+            {
+                "version": 1,
+                "revision": revision,
+                "native_task_auto": {
+                    "active_enabled": True,
+                    "due_enabled": False,
+                    "deadline_enabled": False,
+                    "deadline_horizon_days": 5,
+                },
+                "excluded": {NATIVE: True},
+                "active_structures": {PROJECT_STRUCTURE: True},
+                "assigned_structures": {
+                    PRESS_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                "assigned_on_structures": {},
+                "native_task_structures": [],
+                "active_statuses": ["In Progress"],
+            },
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _backup_siblings() -> list[Path]:
+    directory = cs.settings_path().parent
+    if not directory.exists():
+        return []
+    return sorted(
+        directory.glob(f"{cs.STATE_FILENAME}{cs.BACKUP_INFIX}*")
+    )
+
+
 class TestGet:
     def test_get_is_tokenless_and_reports_the_default(self, client):
         response = client.get("/settings/capacities")
@@ -102,21 +184,18 @@ class TestGet:
         body = response.json()
         assert body["persisted"] is False
         assert body["settings"] == {
-            "version": 1,
+            "version": 2,
             "revision": 0,
-            "native_task_auto": {
-                "active_enabled": True,
-                "due_enabled": True,
-                "deadline_enabled": True,
-                "deadline_horizon_days": 2,
+            "statuses": {
+                "open": ["active"],
+                "completed": ["Completed", "Dropped"],
             },
+            "types": {},
+            "native": {"deadline_horizon_days": 2},
             "excluded": {},
-            "active_structures": {},
-            "assigned_structures": {},
-            "assigned_on_structures": {},
-            "native_task_structures": ["RootTask"],
-            "active_statuses": ["active"],
         }
+        # A migration report only describes a file that EXISTS.
+        assert "migrated_from" not in body
         assert not cs.settings_path().exists()
 
     def test_get_reports_persisted_settings_after_save(self, client):
@@ -131,6 +210,7 @@ class TestGet:
         assert body["persisted"] is True
         assert body["settings"]["revision"] == 1
         assert body["settings"]["excluded"] == {NATIVE: True}
+        assert "migrated_from" not in body
 
     def test_get_malformed_storage_fails_closed_without_erasing(self, client):
         path = cs.settings_path()
@@ -175,7 +255,7 @@ class TestGet:
         assert response.status_code == 200
         body = response.json()
         assert body["available_structures"] == []
-        assert body["settings"]["version"] == 1
+        assert body["settings"]["version"] == 2
         assert path.read_bytes() == b"{not json!!"
 
 
@@ -198,12 +278,7 @@ class TestPostPersistence:
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(
-                native_task_auto={
-                    "active_enabled": False,
-                    "due_enabled": True,
-                    "deadline_enabled": False,
-                    "deadline_horizon_days": 4,
-                },
+                native={"deadline_horizon_days": 4},
                 excluded={NATIVE: True, CUSTOM: True},
             ),
         )
@@ -211,16 +286,19 @@ class TestPostPersistence:
         assert response.status_code == 200
         body = response.json()
         assert body["persisted"] is True
-        assert body["settings"]["version"] == 1
+        assert body["settings"]["version"] == 2
         assert body["settings"]["revision"] == 1
-        assert body["settings"]["native_task_auto"]["active_enabled"] is False
-        assert body["settings"]["native_task_auto"]["deadline_horizon_days"] == 4
+        assert body["settings"]["native"] == {"deadline_horizon_days": 4}
         assert body["settings"]["excluded"] == {NATIVE: True, CUSTOM: True}
-        # The omitted additive admission inputs are written as the documented
-        # defaults by the full-replacement save.
-        assert body["settings"]["native_task_structures"] == ["RootTask"]
-        assert body["settings"]["active_statuses"] == ["active"]
+        # The omitted editable inputs are written as the documented defaults
+        # by the full-replacement save.
+        assert body["settings"]["statuses"] == {
+            "open": ["active"],
+            "completed": ["Completed", "Dropped"],
+        }
+        assert body["settings"]["types"] == {}
         assert cs.settings_path().is_file()
+        assert _stored_document()["version"] == 2
 
     def test_post_is_a_full_replacement(self, client):
         client.post(
@@ -255,6 +333,8 @@ class TestPostPersistence:
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "capacities_settings_conflict"
         assert _settings_bytes() == before
+        # No convenience side effects on a rejected save.
+        assert _backup_siblings() == []
 
     def test_post_malformed_existing_storage_conflicts_without_erasing(self, client):
         path = cs.settings_path()
@@ -271,6 +351,7 @@ class TestPostPersistence:
         assert response.json()["detail"]["code"] == "capacities_settings_storage_error"
         assert _settings_bytes() == b"garbage"
 
+
 class TestPostValidation:
     @pytest.mark.parametrize(
         "payload",
@@ -280,32 +361,20 @@ class TestPostValidation:
             _body(expected_revision=True),                                # bool revision
             _body(expected_revision=-1),                                  # negative revision
             _body(expected_revision=1.5),                                 # float revision
-            _body(native_task_auto={"active_enabled": True}),             # missing native keys
-            _body(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2, "extra": 1,
-            }),                                                           # extra native key
-            _body(native_task_auto={
-                "active_enabled": 1, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2,
-            }),                                                           # int bool
-            _body(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": True,
-            }),                                                           # bool horizon
-            _body(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": -1,
-            }),                                                           # negative horizon
-            _body(native_task_auto={
-                "active_enabled": True, "due_enabled": True,
-                "deadline_enabled": True, "deadline_horizon_days": 2.5,
-            }),                                                           # float horizon
+            {k: v for k, v in _body().items() if k != "native"},          # missing native
+            _body(native={"deadline_horizon_days": "2"}),                # string horizon
+            _body(native={"deadline_horizon_days": 2, "extra": 1}),        # extra native key
+            _body(native={"deadline_horizon_days": True}),                # bool horizon
+            _body(native={"deadline_horizon_days": -1}),                  # negative horizon
+            _body(native={"deadline_horizon_days": 2.5}),                 # float horizon
+            _body(native="native"),                                       # non-object native
             _body(excluded={"task-1": True}),                             # bare id
             _body(excluded={"Write brief": True}),                        # title
             _body(excluded={f"  {NATIVE}  ": True}),                      # whitespace alias
             _body(excluded={NATIVE: False}),                              # flag false
             _body(excluded={NATIVE: 1}),                                  # flag int
+            _body(statuses="open"),                                       # non-object statuses
+            _body(statuses={"open": ["active"], "other": []}),            # unknown status key
         ],
     )
     def test_malformed_requests_are_rejected_422(self, client, payload):
@@ -316,7 +385,7 @@ class TestPostValidation:
         )
 
         assert response.status_code == 422
-        assert not cs.settings_path().exists()
+        _assert_no_store_touched()
 
     def test_duplicate_request_keys_are_not_silently_accepted_as_two_identities(
         self, client
@@ -327,8 +396,7 @@ class TestPostValidation:
         # guarantee (see test_capacities_settings).
         raw = (
             '{"expected_revision": 0, '
-            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
-            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
+            '"native": {"deadline_horizon_days": 2}, '
             f'"excluded": {{"{NATIVE}": true, "{NATIVE}": true}}}}'
         )
         response = client.post(
@@ -377,39 +445,49 @@ class TestNoProviderCalls:
         )
 
         assert response.status_code == 200
-        data = json.loads(_settings_bytes().decode("utf-8"))
+        data = _stored_document()
         assert data["excluded"] == {NATIVE: True}
 
 
-PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+class TestActiveModeStructures:
+    """``types[sid].mode == "active"`` replaces the v1 ``active_structures`` map.
 
+    The declaration must survive the route in both directions, and omission
+    stays a full replacement to no declarations at all."""
 
-class TestActiveStructures:
-    def test_post_persists_and_get_reports_active_structures(self, client):
+    def test_post_persists_and_get_reports_active_declarations(self, client):
+        declarations = {
+            "custom-project": {"mode": "active"},
+            PROJECT_STRUCTURE: {"mode": "active"},
+        }
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(active_structures={"custom-project": True, PROJECT_STRUCTURE: True}),
+            json=_body(types=declarations),
         )
 
         assert response.status_code == 200
-        assert response.json()["settings"]["active_structures"] == {
-            "custom-project": True,
-            PROJECT_STRUCTURE: True,
+        assert response.json()["settings"]["types"] == {
+            "custom-project": {
+                "mode": "active",
+                "property": None,
+                "statuses": None,
+            },
+            PROJECT_STRUCTURE: {
+                "mode": "active",
+                "property": None,
+                "statuses": None,
+            },
         }
         body = client.get("/settings/capacities").json()
-        assert body["settings"]["active_structures"] == {
-            "custom-project": True,
-            PROJECT_STRUCTURE: True,
-        }
+        assert body["settings"]["types"] == response.json()["settings"]["types"]
+        assert _stored_document()["types"] == response.json()["settings"]["types"]
 
-    def test_omitting_active_structures_is_a_full_replacement_to_empty(
-        self, client
-    ):
+    def test_omitting_types_is_a_full_replacement_to_empty(self, client):
         client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(active_structures={"custom-project": True}),
+            json=_body(types={"custom-project": {"mode": "active"}}),
         )
         second = client.post(
             "/settings/capacities/save",
@@ -418,115 +496,471 @@ class TestActiveStructures:
         )
 
         assert second.status_code == 200
-        assert second.json()["settings"]["active_structures"] == {}
+        assert second.json()["settings"]["types"] == {}
 
     @pytest.mark.parametrize(
         "bad",
         [
-            {"custom-project": False},
-            {"custom-project": 1},
-            {"custom-project": None},
-            {"": True},
-            {" custom-project ": True},
-            {"custom project": True},
-            [],
-            "custom-project",
+            [],                                                     # list
+            "custom-project",                                       # string
+            None,                                                   # null
+            {"custom-project": True},                               # flag instead of mode
+            {"custom-project": {"mode": "active", "extra": True}},  # extra declaration key
+            {"custom-project": {"mode": "Active"}},                 # unknown mode casing
+            {"custom-project": {}},                                 # missing mode
+            {"": {"mode": "active"}},                               # empty structure id
+            {" custom-project ": {"mode": "active"}},               # whitespace alias
+            {"custom project": {"mode": "active"}},                 # interior whitespace
         ],
     )
-    def test_post_rejects_malformed_active_structures_422(self, client, bad):
+    def test_post_rejects_malformed_type_declarations_422(self, client, bad):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(active_structures=bad),
+            json=_body(types=bad),
         )
 
         assert response.status_code == 422
-        assert not cs.settings_path().exists()
+        assert any(
+            "types" in entry["loc"] for entry in response.json()["detail"]
+        )
+        _assert_no_store_touched()
 
 
-class TestAdmissionInputs:
-    """POST/GET round-trip for the two additive admission inputs.
+class TestModePropertyContradictions:
+    """``property`` is required for the two property-reading modes and
+    forbidden for every other mode; both are a 422 before any file access."""
 
-    The save stays a full replacement: sending both lists replaces both, and
-    omitting one falls back to its documented default (the built-in native
-    task structures / the single ``active`` status) rather than to an empty
-    set, exactly as ``capacities_settings.save_settings`` documents. An
-    explicit empty list is a legitimate replacement (nothing native / no
-    status satisfies the condition)."""
+    @pytest.mark.parametrize(
+        "declaration",
+        [
+            {"mode": "bogus"},                                            # bad mode
+            {"mode": "off", "property": PROJECT_ASSIGNED_PROPERTY},       # property on off
+            {"mode": "active", "property": PROJECT_ASSIGNED_PROPERTY},    # property on active
+            {"mode": "native", "property": PROJECT_ASSIGNED_PROPERTY},    # property on native
+            {"mode": "assigned"},                                         # missing property
+            {"mode": "assignedOn"},                                       # missing property
+            {"mode": "assigned", "property": None},                       # null property
+            {"mode": "assigned", "property": ""},                         # empty property
+            {"mode": "assigned", "property": True},                       # non-string property
+            {
+                "mode": "active",
+                "statuses": ["active", "active"],
+            },                                                            # duplicate names
+            {"mode": "active", "statuses": [""]},                         # blank name
+            {"mode": "active", "statuses": "active"},                     # bare string list
+        ],
+    )
+    def test_declaration_contradictions_are_rejected_422(self, client, declaration):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(types={PROJECT_STRUCTURE: declaration}),
+        )
 
-    def test_post_persists_and_get_round_trips_both_inputs(self, client):
+        assert response.status_code == 422
+        assert any(
+            "types" in entry["loc"] for entry in response.json()["detail"]
+        )
+        _assert_no_store_touched()
+
+    def test_each_rejected_payload_leaves_a_saved_file_untouched(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "assigned",
+                        "property": PROJECT_ASSIGNED_PROPERTY,
+                    }
+                }
+            ),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes()
+
+        for declaration in (
+            {"mode": "bogus"},
+            {"mode": "off", "property": PROJECT_ASSIGNED_PROPERTY},
+            {"mode": "assigned"},
+            {"mode": "active", "statuses": ["active", "active"]},
+        ):
+            response = client.post(
+                "/settings/capacities/save",
+                headers=_auth(client),
+                json=_body(
+                    expected_revision=1,
+                    types={PRESS_STRUCTURE: declaration},
+                ),
+            )
+            assert response.status_code == 422
+            assert _settings_bytes() == before
+
+
+class TestOneModePerStructure:
+    """Schema v2 replaced the dual-declaration refusal with structure.
+
+    One declaration per structure means an ``assigned`` + ``assignedOn``
+    contradiction is unrepresentable: the second save REPLACES the mode rather
+    than merging, and a legacy payload that still carries both v1 maps is
+    rejected as unknown keys instead of by a dedicated conflict code."""
+
+    def test_a_later_save_replaces_the_mode_of_the_same_structure(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "assigned",
+                        "property": PROJECT_ASSIGNED_PROPERTY,
+                    }
+                }
+            ),
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=1,
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "assignedOn",
+                        "property": PROJECT_ASSIGNED_ON_PROPERTY,
+                    }
+                },
+            ),
+        )
+
+        assert second.status_code == 200
+        types = second.json()["settings"]["types"]
+        assert types == {
+            PROJECT_STRUCTURE: {
+                "mode": "assignedOn",
+                "property": PROJECT_ASSIGNED_ON_PROPERTY,
+                "statuses": None,
+            }
+        }
+        # Exactly one declaration on disk: no residual boolean gate.
+        assert _stored_document()["types"] == types
+        assert PROJECT_ASSIGNED_PROPERTY not in _settings_bytes().decode("utf-8")
+
+    def test_the_legacy_dual_map_payload_is_rejected_as_unknown_keys(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(
-                native_task_structures=["Task", "custom-project", "RootTask"],
-                active_statuses=["active", "In Progress"],
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                },
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                },
+            ),
+        )
+
+        assert response.status_code == 422
+        # The retired refusal code is gone; the schema itself now forbids the
+        # shape, so the body is a plain validation error.
+        assert "detail" in response.json()
+        assert "capacities_settings_declaration_conflict" not in response.text
+        _assert_no_store_touched()
+
+
+class TestStatusVocabulary:
+    """Round-trip for the top-level ``statuses`` block.
+
+    ``statuses.open`` is what every declaration inherits; ``statuses.completed``
+    is the closed vocabulary. Omission is a full replacement to the documented
+    default vocabulary rather than to an empty set, and an explicit empty list
+    is a legitimate replacement."""
+
+    def test_post_persists_and_get_round_trips_both_lists(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                statuses={
+                    "open": ["active", "In Progress"],
+                    "completed": ["Done"],
+                }
             ),
         )
 
         assert response.status_code == 200
-        expected_structures = ["RootTask", "Task", "custom-project"]
-        expected_statuses = ["In Progress", "active"]
-        settings = response.json()["settings"]
-        assert settings["native_task_structures"] == expected_structures
-        assert settings["active_statuses"] == expected_statuses
+        expected = {"open": ["In Progress", "active"], "completed": ["Done"]}
+        assert response.json()["settings"]["statuses"] == expected
 
         body = client.get("/settings/capacities").json()
         assert body["persisted"] is True
-        assert body["settings"]["native_task_structures"] == expected_structures
-        assert body["settings"]["active_statuses"] == expected_statuses
+        assert body["settings"]["statuses"] == expected
 
-        # The persisted version-1 bytes carry the same additive keys.
-        stored = json.loads(_settings_bytes().decode("utf-8"))
-        assert stored["native_task_structures"] == expected_structures
-        assert stored["active_statuses"] == expected_statuses
+        # The persisted version-2 bytes carry the same block.
+        assert _stored_document()["statuses"] == expected
 
     def test_empty_lists_are_a_legitimate_full_replacement(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(native_task_structures=[], active_statuses=[]),
+            json=_body(statuses={"open": [], "completed": []}),
         )
 
         assert response.status_code == 200
-        settings = response.json()["settings"]
-        assert settings["native_task_structures"] == []
-        assert settings["active_statuses"] == []
+        assert response.json()["settings"]["statuses"] == {
+            "open": [],
+            "completed": [],
+        }
         read_back = client.get("/settings/capacities").json()["settings"]
-        assert read_back["native_task_structures"] == []
-        assert read_back["active_statuses"] == []
+        assert read_back["statuses"] == {"open": [], "completed": []}
 
-    def test_omitting_each_input_writes_its_documented_default(self, client):
+    def test_omitting_statuses_writes_the_documented_default(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(native_task_structures=["custom-project"]),
+            json=_body(statuses={"open": ["In Progress"], "completed": ["Done"]}),
         )
-
         assert first.status_code == 200
-        # ``active_statuses`` was omitted -> the documented default, not []
-        # (the full-replacement contract, same as an omitted
-        # ``active_structures``).
-        assert first.json()["settings"]["active_statuses"] == ["active"]
 
         second = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(expected_revision=1, active_statuses=["In Progress"]),
+            json=_body(expected_revision=1),
         )
 
         assert second.status_code == 200
-        # ``native_task_structures`` was omitted -> the documented default.
-        assert second.json()["settings"]["native_task_structures"] == ["RootTask"]
-        assert second.json()["settings"]["active_statuses"] == ["In Progress"]
+        assert second.json()["settings"]["statuses"] == {
+            "open": ["active"],
+            "completed": ["Completed", "Dropped"],
+        }
 
-    def test_stale_revision_with_admission_inputs_still_conflicts(self, client):
+    def test_stale_revision_with_a_new_vocabulary_still_conflicts(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(statuses={"open": ["In Progress"], "completed": ["Done"]}),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes()
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=0,
+                statuses={"open": ["active"], "completed": ["Done"]},
+            ),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "capacities_settings_conflict"
+        assert _settings_bytes() == before
+
+    @pytest.mark.parametrize(
+        "field,bad",
+        [
+            ("open", "active"),                                   # bare string
+            ("open", {"active": True}),                           # object
+            ("open", None),                                       # null
+            ("open", [None]),                                     # null entry
+            ("open", [1]),                                        # number entry
+            ("open", [True]),                                     # bool entry
+            ("open", [""]),                                       # empty entry
+            ("open", ["active", "active"]),                       # duplicate
+            ("completed", "Completed"),                           # bare string
+            ("completed", None),                                  # null
+            ("completed", [""]),                                  # empty entry
+            ("completed", ["Done", "Done"]),                      # duplicate
+        ],
+    )
+    def test_post_rejects_malformed_vocabulary_422(self, client, field, bad):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(statuses={field: bad}),
+        )
+
+        assert response.status_code == 422
+        assert any(
+            "statuses" in entry["loc"] and field in entry["loc"]
+            for entry in response.json()["detail"]
+        )
+        _assert_no_store_touched()
+
+    def test_malformed_vocabulary_preserves_existing_bytes(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(statuses={"open": ["In Progress"], "completed": ["Done"]}),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes()
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=1,
+                statuses={"open": ["In Progress", "In Progress"]},
+            ),
+        )
+
+        assert response.status_code == 422
+        assert _settings_bytes() == before
+
+
+class TestTypeStatusLists:
+    """``types[sid].statuses`` is tri-state and must survive the route.
+
+    ``null`` (absent) inherits the shared open vocabulary; ``[]`` disables
+    status admission for that structure (the date-only decision); a non-empty
+    list is that structure's own open names."""
+
+    def test_disabled_and_inherited_statuses_round_trip_distinctly(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                statuses={"open": ["active"], "completed": ["Completed"]},
+                types={
+                    PROJECT_STRUCTURE: {"mode": "native", "statuses": []},
+                    PRESS_STRUCTURE: {"mode": "native"},
+                },
+            ),
+        )
+
+        assert response.status_code == 200
+        types = response.json()["settings"]["types"]
+        assert types[PROJECT_STRUCTURE]["statuses"] == []
+        assert types[PRESS_STRUCTURE]["statuses"] is None
+
+        read_back = client.get("/settings/capacities").json()["settings"]["types"]
+        assert read_back[PROJECT_STRUCTURE]["statuses"] == []
+        assert read_back[PRESS_STRUCTURE]["statuses"] is None
+
+        stored = _stored_document()["types"]
+        assert stored[PROJECT_STRUCTURE]["statuses"] == []
+        assert stored[PRESS_STRUCTURE]["statuses"] is None
+
+    def test_a_structures_own_names_round_trip_sorted(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "active",
+                        "statuses": ["In Progress", "active"],
+                    }
+                }
+            ),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["types"][PROJECT_STRUCTURE][
+            "statuses"
+        ] == ["In Progress", "active"]
+        # ``statuses.open`` was omitted, so the shared vocabulary keeps its
+        # documented default and the per-structure names do not leak into it.
+        assert response.json()["settings"]["statuses"]["open"] == ["active"]
+
+
+class TestAssignedTypeDeclarations:
+    """Round-trip for an ``assigned`` type declaration, replacing the v1
+    additive ``assigned_structures`` property map."""
+
+    def test_get_returns_the_declaration_and_post_round_trips_it(self, client):
+        declarations = {
+            PROJECT_STRUCTURE: {
+                "mode": "assigned",
+                "property": PROJECT_ASSIGNED_PROPERTY,
+            },
+            PRESS_STRUCTURE: {
+                "mode": "assigned",
+                "property": ADVENTURE_ASSIGNED_PROPERTY,
+            },
+        }
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(types=declarations),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["types"] == {
+            PROJECT_STRUCTURE: {
+                "mode": "assigned",
+                "property": PROJECT_ASSIGNED_PROPERTY,
+                "statuses": None,
+            },
+            PRESS_STRUCTURE: {
+                "mode": "assigned",
+                "property": ADVENTURE_ASSIGNED_PROPERTY,
+                "statuses": None,
+            },
+        }
+
+        body = client.get("/settings/capacities").json()
+        assert body["settings"]["types"] == response.json()["settings"]["types"]
+        assert _stored_document()["types"] == response.json()["settings"]["types"]
+
+    def test_the_v1_property_map_key_is_no_longer_accepted(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+        _assert_no_store_touched()
+
+
+class TestAssignedOnTypeDeclarations:
+    """Round-trip for an ``assignedOn`` type declaration (date-only gate)."""
+
+    def test_get_returns_the_declaration_and_post_round_trips_it(self, client):
+        declarations = {
+            PROJECT_STRUCTURE: {
+                "mode": "assignedOn",
+                "property": PROJECT_ASSIGNED_ON_PROPERTY,
+            }
+        }
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(types=declarations),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["types"] == {
+            PROJECT_STRUCTURE: {
+                "mode": "assignedOn",
+                "property": PROJECT_ASSIGNED_ON_PROPERTY,
+                "statuses": None,
+            }
+        }
+
+        body = client.get("/settings/capacities").json()
+        assert body["settings"]["types"] == response.json()["settings"]["types"]
+        assert _stored_document()["types"] == response.json()["settings"]["types"]
+
+    def test_stale_revision_conflicts_and_preserves_bytes(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(
-                native_task_structures=["custom-project"],
-                active_statuses=["In Progress"],
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "assignedOn",
+                        "property": PROJECT_ASSIGNED_ON_PROPERTY,
+                    }
+                }
             ),
         )
         assert first.status_code == 200
@@ -537,192 +971,16 @@ class TestAdmissionInputs:
             headers=_auth(client),
             json=_body(
                 expected_revision=0,
-                native_task_structures=["other-project"],
-                active_statuses=["active"],
+                types={
+                    PRESS_STRUCTURE: {
+                        "mode": "assignedOn",
+                        "property": ADVENTURE_ASSIGNED_PROPERTY,
+                    }
+                },
             ),
         )
 
         assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "capacities_settings_conflict"
-        assert _settings_bytes() == before
-
-    def test_malformed_admission_input_preserves_existing_bytes(self, client):
-        first = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(native_task_structures=["custom-project"]),
-        )
-        assert first.status_code == 200
-        before = _settings_bytes()
-
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                expected_revision=1,
-                active_statuses=["In Progress", "In Progress"],
-            ),
-        )
-
-        assert response.status_code == 422
-        assert any(
-            "active_statuses" in entry["loc"]
-            for entry in response.json()["detail"]
-        )
-        assert _settings_bytes() == before
-
-    @pytest.mark.parametrize(
-        "field,bad",
-        [
-            ("native_task_structures", "RootTask"),               # bare string
-            ("native_task_structures", {"RootTask": True}),       # object
-            ("native_task_structures", None),                     # null
-            ("native_task_structures", [None]),                   # null entry
-            ("native_task_structures", [1]),                      # number entry
-            ("native_task_structures", [True]),                   # bool entry
-            ("native_task_structures", [""]),                     # empty entry
-            ("native_task_structures", ["RootTask", "RootTask"]),  # duplicate
-            ("active_statuses", "active"),                        # bare string
-            ("active_statuses", {"active": True}),                # object
-            ("active_statuses", None),                            # null
-            ("active_statuses", [None]),                          # null entry
-            ("active_statuses", [1]),                             # number entry
-            ("active_statuses", [True]),                          # bool entry
-            ("active_statuses", [""]),                            # empty entry
-            ("active_statuses", ["active", "active"]),            # duplicate
-        ],
-    )
-    def test_post_rejects_malformed_admission_inputs_422(
-        self, client, field, bad
-    ):
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(**{field: bad}),
-        )
-
-        assert response.status_code == 422
-        assert any(field in entry["loc"] for entry in response.json()["detail"])
-        assert not cs.settings_path().exists()
-
-
-class TestAssignedStructuresRoute:
-    """POST/GET round-trip for the additive ``assigned_structures`` key.
-
-    The declaration must survive the route in BOTH directions — a store change
-    the route cannot carry is not shipped — and omission stays a full
-    replacement to the empty default (no override anywhere, so the mapping's
-    own ``assignment_property`` applies)."""
-
-    def test_get_returns_the_key_and_post_round_trips_it(self, client):
-        declarations = {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
-            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
-        }
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(assigned_structures=declarations),
-        )
-
-        assert response.status_code == 200
-        assert response.json()["settings"]["assigned_structures"] == declarations
-
-        body = client.get("/settings/capacities").json()
-        assert body["settings"]["assigned_structures"] == declarations
-
-        # The persisted version-1 bytes carry the same additive key.
-        stored = json.loads(_settings_bytes().decode("utf-8"))
-        assert stored["assigned_structures"] == declarations
-
-    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client):
-        first = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                }
-            ),
-        )
-        assert first.status_code == 200
-
-        second = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(expected_revision=1),
-        )
-
-        assert second.status_code == 200
-        assert second.json()["settings"]["assigned_structures"] == {}
-        assert (
-            client.get("/settings/capacities").json()["settings"][
-                "assigned_structures"
-            ]
-            == {}
-        )
-
-    def test_empty_object_is_a_legitimate_replacement(self, client):
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(assigned_structures={}),
-        )
-
-        assert response.status_code == 200
-        assert response.json()["settings"]["assigned_structures"] == {}
-
-    @pytest.mark.parametrize(
-        "bad",
-        [
-            [],                                                     # list
-            "custom-project",                                       # string
-            None,                                                   # null
-            {PROJECT_STRUCTURE: False},                             # flag
-            {PROJECT_STRUCTURE: 1},                                 # int value
-            {PROJECT_STRUCTURE: None},                              # null value
-            {PROJECT_STRUCTURE: ""},                                # empty property id
-            {"": PROJECT_ASSIGNED_PROPERTY},                        # empty structure id
-            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},        # whitespace alias
-        ],
-    )
-    def test_post_rejects_malformed_declarations_422(self, client, bad):
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(assigned_structures=bad),
-        )
-
-        assert response.status_code == 422
-        assert any(
-            "assigned_structures" in entry["loc"]
-            for entry in response.json()["detail"]
-        )
-        assert not cs.settings_path().exists()
-
-    def test_malformed_declaration_preserves_existing_bytes(self, client):
-        first = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                }
-            ),
-        )
-        assert first.status_code == 200
-        before = _settings_bytes()
-
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                expected_revision=1,
-                assigned_structures={PROJECT_STRUCTURE: ""},
-            ),
-        )
-
-        assert response.status_code == 422
         assert _settings_bytes() == before
 
 
@@ -844,7 +1102,7 @@ class TestStructureTitles:
             PROJECT_STRUCTURE: "Project"
         }
 
-    def test_the_read_stays_additive_and_assigned_structures_round_trips(
+    def test_the_read_stays_additive_and_a_declaration_round_trips(
         self, client, titles_cache
     ):
         _write_source_record([PROJECT_STRUCTURE, PRESS_STRUCTURE])
@@ -853,11 +1111,16 @@ class TestStructureTitles:
             cb.CAPACITIES_BASE_URL,
             {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
         ) is True
-        declarations = {PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY}
+        declaration = {
+            PROJECT_STRUCTURE: {
+                "mode": "assigned",
+                "property": PROJECT_ASSIGNED_PROPERTY,
+            }
+        }
         saved = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(assigned_structures=declarations),
+            json=_body(types=declaration),
         )
         assert saved.status_code == 200
 
@@ -873,27 +1136,26 @@ class TestStructureTitles:
         assert set(body["settings"]) == {
             "version",
             "revision",
-            "native_task_auto",
+            "statuses",
+            "types",
+            "native",
             "excluded",
-            "active_structures",
-            "assigned_structures",
-            "assigned_on_structures",
-            "native_task_structures",
-            "active_statuses",
         }
         assert body["persisted"] is True
-        assert body["settings"]["assigned_structures"] == declarations
-        # Untouched settings keys keep their documented values.
-        assert body["settings"]["native_task_auto"] == {
-            "active_enabled": True,
-            "due_enabled": True,
-            "deadline_enabled": True,
-            "deadline_horizon_days": 2,
+        assert body["settings"]["types"] == {
+            PROJECT_STRUCTURE: {
+                "mode": "assigned",
+                "property": PROJECT_ASSIGNED_PROPERTY,
+                "statuses": None,
+            }
         }
+        # Untouched settings blocks keep their documented values.
+        assert body["settings"]["native"] == {"deadline_horizon_days": 2}
         assert body["settings"]["excluded"] == {}
-        assert body["settings"]["active_structures"] == {}
-        assert body["settings"]["native_task_structures"] == ["RootTask"]
-        assert body["settings"]["active_statuses"] == ["active"]
+        assert body["settings"]["statuses"] == {
+            "open": ["active"],
+            "completed": ["Completed", "Dropped"],
+        }
         assert body["structure_titles"] == {
             PROJECT_STRUCTURE: "Project",
             PRESS_STRUCTURE: "Press",
@@ -985,228 +1247,229 @@ class TestPostStructureMetadata:
         assert body["structure_titles"] == after["structure_titles"]
 
 
-PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+class TestDeclarationDiagnostics:
+    """``declaration_diagnostics`` projects dead property declarations.
 
+    A declaration naming a property the last published contract does not
+    define can never read; the drawer needs to say so before a plan read. The
+    projection is bounded: one entry per dead declaration, carrying the
+    structure id, its cached title, and one sentence naming the property id —
+    never a property value or any other source content."""
 
-class TestAssignedOnStructuresRoute:
-    """POST/GET round-trip for the additive ``assigned_on_structures`` key.
-
-    The read-only marker must survive the route in both directions, omission
-    stays a full replacement to the empty default, and a malformed payload is
-    a 422 before any file access."""
-
-    def test_get_returns_the_key_and_post_round_trips_it(self, client):
-        declarations = {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
-            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
-        }
+    def _save_assigned_declaration(self, client) -> None:
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(assigned_on_structures=declarations),
+            json=_body(
+                types={
+                    PROJECT_STRUCTURE: {
+                        "mode": "assigned",
+                        "property": PROJECT_ASSIGNED_PROPERTY,
+                    }
+                }
+            ),
         )
-
         assert response.status_code == 200
-        assert response.json()["settings"]["assigned_on_structures"] == declarations
+
+    def test_a_dead_declaration_yields_one_bounded_diagnostic(
+        self, client, monkeypatch, titles_cache
+    ):
+        _write_source_record([PROJECT_STRUCTURE])
+        assert cst.remember_titles(
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        self._save_assigned_declaration(client)
+
+        # No published contract at all: absence of evidence is not evidence of
+        # drift, so nothing is reported.
+        assert client.get("/settings/capacities").json()[
+            "declaration_diagnostics"
+        ] == []
+
+        monkeypatch.setattr(
+            main_mod,
+            "_capacities_published_contract_schema",
+            lambda: {PROJECT_STRUCTURE: {LIVE_ASSIGNED_PROPERTY: "boolean"}},
+        )
 
         body = client.get("/settings/capacities").json()
-        assert body["settings"]["assigned_on_structures"] == declarations
 
-        stored = json.loads(_settings_bytes().decode("utf-8"))
-        assert stored["assigned_on_structures"] == declarations
+        diagnostics = body["declaration_diagnostics"]
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert set(diagnostic) == {
+            "structure_id",
+            "structure_label",
+            "reason",
+        }
+        assert diagnostic["structure_id"] == PROJECT_STRUCTURE
+        assert diagnostic["structure_label"] == "Project"
+        # The property ID is the only provider detail carried; no property
+        # value, contract kind, or other structure's data leaks.
+        assert PROJECT_ASSIGNED_PROPERTY in diagnostic["reason"]
+        assert LIVE_ASSIGNED_PROPERTY not in diagnostic["reason"]
+        assert "boolean" not in diagnostic["reason"]
+        assert PRESS_STRUCTURE not in json.dumps(diagnostic)
 
-    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client):
-        first = client.post(
+    def test_a_live_declaration_yields_no_diagnostic(
+        self, client, monkeypatch, titles_cache
+    ):
+        _write_source_record([PROJECT_STRUCTURE])
+        assert cst.remember_titles(
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        self._save_assigned_declaration(client)
+
+        monkeypatch.setattr(
+            main_mod,
+            "_capacities_published_contract_schema",
+            lambda: {PROJECT_STRUCTURE: {PROJECT_ASSIGNED_PROPERTY: "checkbox"}},
+        )
+
+        assert client.get("/settings/capacities").json()[
+            "declaration_diagnostics"
+        ] == []
+
+    def test_only_the_two_property_modes_are_inspected(
+        self, client, monkeypatch, titles_cache
+    ):
+        _write_source_record([PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        assert cst.remember_titles(
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        saved = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                types={
+                    PROJECT_STRUCTURE: {"mode": "active"},
+                    PRESS_STRUCTURE: {"mode": "native", "statuses": []},
                 }
             ),
         )
-        assert first.status_code == 200
+        assert saved.status_code == 200
 
-        second = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(expected_revision=1),
+        def forbidden():
+            raise AssertionError(
+                "no contract is needed when nothing declares a property"
+            )
+
+        monkeypatch.setattr(
+            main_mod, "_capacities_published_contract_schema", forbidden
         )
 
-        assert second.status_code == 200
-        assert second.json()["settings"]["assigned_on_structures"] == {}
-        assert (
-            client.get("/settings/capacities").json()["settings"][
-                "assigned_on_structures"
-            ]
-            == {}
-        )
+        assert client.get("/settings/capacities").json()[
+            "declaration_diagnostics"
+        ] == []
 
-    def test_empty_object_is_a_legitimate_replacement(self, client):
+
+class TestVersionOneMigration:
+    """A version-1 file is translated on read and rewritten on first save.
+
+    ``GET`` reports the migration additively (``migrated_from: 1``) and writes
+    nothing. The first ``POST`` rewrites the document as version 2 and, before
+    replacing it, drops a ``.bak-v1-<timestamp>`` sibling holding the previous
+    bytes byte-for-byte so the pre-migration shape is recoverable."""
+
+    def _write_v1(self, revision: int = 3) -> bytes:
+        path = cs.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = _v1_bytes(revision)
+        path.write_bytes(raw)
+        return raw
+
+    def test_get_translates_v1_in_memory_and_reports_the_migration(self, client):
+        raw = self._write_v1()
+
+        response = client.get("/settings/capacities")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["persisted"] is True
+        assert body["migrated_from"] == 1
+        assert body["settings"]["version"] == 2
+        # The revision is carried verbatim so the client can still save.
+        assert body["settings"]["revision"] == 3
+        assert body["settings"]["statuses"] == {
+            "open": ["In Progress"],
+            "completed": ["Completed", "Dropped"],
+        }
+        assert body["settings"]["native"] == {"deadline_horizon_days": 5}
+        assert body["settings"]["excluded"] == {NATIVE: True}
+        assert body["settings"]["types"] == {
+            PROJECT_STRUCTURE: {
+                "mode": "active",
+                "property": None,
+                "statuses": None,
+            },
+            PRESS_STRUCTURE: {
+                "mode": "assigned",
+                "property": PROJECT_ASSIGNED_PROPERTY,
+                "statuses": None,
+            },
+        }
+        # Reading never rewrites and never takes a backup.
+        assert _settings_bytes() == raw
+        assert _backup_siblings() == []
+
+    def test_first_save_rewrites_as_v2_and_keeps_a_v1_backup(self, client):
+        raw = self._write_v1()
+
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(assigned_on_structures={}),
+            json=_body(expected_revision=3, excluded={}),
         )
 
         assert response.status_code == 200
-        assert response.json()["settings"]["assigned_on_structures"] == {}
+        assert response.json()["settings"]["version"] == 2
+        assert response.json()["settings"]["revision"] == 4
+        # The rewrite is version 2 on disk, and the migration is no longer
+        # reported because the file itself is current.
+        stored = _stored_document()
+        assert stored["version"] == 2
+        assert stored["revision"] == 4
+        assert "migrated_from" not in client.get("/settings/capacities").json()
 
-    @pytest.mark.parametrize(
-        "bad",
-        [
-            [],                                                     # list
-            "custom-project",                                       # string
-            None,                                                   # null
-            {PROJECT_STRUCTURE: False},                             # flag
-            {PROJECT_STRUCTURE: 1},                                 # int value
-            {PROJECT_STRUCTURE: None},                              # null value
-            {PROJECT_STRUCTURE: ""},                                # empty property id
-            {"": PROJECT_ASSIGNED_ON_PROPERTY},                     # empty structure id
-            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},     # whitespace alias
-        ],
-    )
-    def test_post_rejects_malformed_declarations_422(self, client, bad):
+        backups = _backup_siblings()
+        assert len(backups) == 1
+        assert backups[0].name.startswith(
+            f"{cs.STATE_FILENAME}{cs.BACKUP_INFIX}"
+        )
+        assert backups[0].read_bytes() == raw
+
+    def test_the_backup_is_the_pre_save_bytes_after_an_edited_get(self, client):
+        raw = self._write_v1(revision=0)
+        body = client.get("/settings/capacities").json()
+        assert body["migrated_from"] == 1
+
+        # Save from the migrated view, changing only the exclusion set.
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(assigned_on_structures=bad),
+            json=_body(expected_revision=0, excluded={CUSTOM: True}),
         )
 
-        assert response.status_code == 422
-        assert any(
-            "assigned_on_structures" in entry["loc"]
-            for entry in response.json()["detail"]
-        )
-        assert not cs.settings_path().exists()
+        assert response.status_code == 200
+        assert response.json()["settings"]["revision"] == 1
+        assert response.json()["settings"]["excluded"] == {CUSTOM: True}
+        backups = _backup_siblings()
+        assert len(backups) == 1
+        assert backups[0].read_bytes() == raw
+        assert _stored_document()["excluded"] == {CUSTOM: True}
 
-    def test_stale_revision_conflicts_and_preserves_bytes(self, client):
-        first = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                }
-            ),
-        )
-        assert first.status_code == 200
-        before = _settings_bytes()
+    def test_a_stale_v1_save_conflicts_and_keeps_the_bytes_and_no_backup(
+        self, client
+    ):
+        raw = self._write_v1(revision=3)
 
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
-            json=_body(
-                expected_revision=0,
-                assigned_on_structures={
-                    PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY
-                },
-            ),
+            json=_body(expected_revision=0),
         )
 
         assert response.status_code == 409
-        assert _settings_bytes() == before
-
-
-class TestContradictoryDeclarationsRoute:
-    """POST /settings/capacities/save refuses a structure declared in BOTH the
-    ``assigned_structures`` boolean map and the ``assigned_on_structures`` date
-    map.
-
-    The date mapping alone decides ``source_assigned``, so the boolean could
-    never read and a future date would silently drop the object from the plan.
-    The route maps the store's refusal to a 422 naming the structure and both
-    property ids, and the stored bytes stay byte-for-byte identical."""
-
-    def test_post_refuses_both_mappings_with_422_and_preserves_bytes(self, client):
-        first = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                }
-            ),
-        )
-        assert first.status_code == 200
-        before = _settings_bytes()
-
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                expected_revision=1,
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                },
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            ),
-        )
-
-        assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert detail["code"] == "capacities_settings_declaration_conflict"
-        # Precise and actionable: the structure, both properties, and what to do.
-        assert detail["message"] == (
-            f"Capacities structure {PROJECT_STRUCTURE!r} declares both an "
-            f"Assigned checkbox (property {PROJECT_ASSIGNED_PROPERTY!r}) and an "
-            f"Assigned On date (property {PROJECT_ASSIGNED_ON_PROPERTY!r}); "
-            "clear one of the two mappings in Settings."
-        )
-        assert detail["conflicts"] == [
-            {
-                "structure_id": PROJECT_STRUCTURE,
-                "assigned_property": PROJECT_ASSIGNED_PROPERTY,
-                "assigned_on_property": PROJECT_ASSIGNED_ON_PROPERTY,
-            }
-        ]
-        # Atomic: no partial write, original bytes intact, revision unmoved.
-        assert _settings_bytes() == before
-        stored = json.loads(before.decode("utf-8"))
-        assert stored["revision"] == 1
-        assert stored["assigned_on_structures"] == {}
-
-    def test_post_refuses_on_a_first_save_without_creating_a_file(self, client):
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                },
-                assigned_on_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            ),
-        )
-
-        assert response.status_code == 422
-        assert response.json()["detail"]["conflicts"][0]["structure_id"] == (
-            PROJECT_STRUCTURE
-        )
-        assert not cs.settings_path().exists()
-
-    def test_one_mapping_per_structure_still_saves(self, client):
-        response = client.post(
-            "/settings/capacities/save",
-            headers=_auth(client),
-            json=_body(
-                assigned_structures={
-                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-                },
-                assigned_on_structures={
-                    PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-                },
-            ),
-        )
-
-        assert response.status_code == 200
-        settings = response.json()["settings"]
-        assert settings["assigned_structures"] == {
-            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
-        }
-        assert settings["assigned_on_structures"] == {
-            PRESS_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
-        }
+        assert response.json()["detail"]["code"] == "capacities_settings_conflict"
+        assert _settings_bytes() == raw
+        assert _backup_siblings() == []
