@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import capacities_adapter as ca  # noqa: E402
 import capacities_intake as ci  # noqa: E402
 import capacities_rules as cr  # noqa: E402
-from capacities_assignment import AssignmentSettings  # noqa: E402
+from capacities_assignment import AssignmentSettings, TypeMode  # noqa: E402
 from tests.test_capacities_adapter import (  # noqa: E402
     SPACE,
     TODAY,
@@ -49,6 +49,7 @@ from tests.test_capacities_adapter import (  # noqa: E402
     _definition,
     _object,
     _prop,
+    _settings,
 )
 
 EVENT = "custom-event"
@@ -140,13 +141,14 @@ def _native_mapping(**overrides):
     return ca.StructureMapping(**base)
 
 
-def _native_settings(**overrides):
-    base = dict(
-        active_statuses=frozenset({"Active"}),
-        native_task_structures=frozenset({NATIVE}),
-    )
-    base.update(overrides)
-    return AssignmentSettings(**base)
+def _native_settings():
+    """Native ``RootTask`` declaration over the ``Active`` open vocabulary.
+
+    Version 1 carried an implicit native membership plus a separate
+    ``active_statuses`` set; schema v2 expresses both as one mode per structure
+    and one shared open vocabulary, so a native fixture declares the mode.
+    """
+    return _settings({NATIVE: "native"}, open_statuses=frozenset({"Active"}))
 
 
 def _provider(objects, *, structure_id=EVENT, structures=None):
@@ -272,12 +274,21 @@ def test_dead_status_without_assigned_on_or_active_status_is_still_surfaced():
     )
     enable_mapping = _event_mapping(assigned_on_property=None, date_property=None)
     for mapping, settings in (
-        (marker_mapping, None),
-        (enable_mapping, AssignmentSettings(active_structures=frozenset({EVENT}))),
+        # A declared assignment check whose boolean reads absent: enumerated but
+        # never admitted. Schema v2 spells the old marker as a mode, and an
+        # undeclared structure is ``off`` (not even listed), so every shape a
+        # custom type can have states its own declaration.
+        (
+            marker_mapping,
+            _settings(
+                {NATIVE: "native", EVENT: TypeMode("assigned", property_id="tdtb")}
+            ),
+        ),
+        (enable_mapping, _settings({NATIVE: "native", EVENT: "active"})),
     ):
-        kwargs = {} if settings is None else {"assignment_settings": settings}
-
-        result = _read([_event_object()], (mapping,), **kwargs)
+        result = _read(
+            [_event_object()], (mapping,), assignment_settings=settings
+        )
 
         assert [row["capacities_id"] for row in result.items] == ["event-1"]
         row = result.items[0]
