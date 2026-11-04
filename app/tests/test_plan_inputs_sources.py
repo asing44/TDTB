@@ -1255,12 +1255,24 @@ DIRECT_SPARE_ASSIGNED_ON_PROPERTY = "assigned-on"
 
 
 def _save_assigned_on_settings(*, structures, excluded=(), active=()):
+    """Persist the read-only Assigned On declarations as a schema-v2 document.
+
+    ``structures`` maps a structure id to its Assigned On date property and is
+    declared ``assignedOn`` (its only assignment path). ``active`` names
+    structures the test also needs status-admitted; schema v2 allows exactly
+    one mode per structure, so a structure named in both keeps ``assignedOn``
+    and its status names ride the declaration's inherited vocabulary.
+    """
+    types: dict[str, dict] = {
+        structure_id: {"mode": "assignedOn", "property": property_id}
+        for structure_id, property_id in structures.items()
+    }
+    for structure_id in active:
+        types.setdefault(structure_id, {"mode": "active"})
     cs.save_settings(
         expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
+        types=types,
         excluded=list(excluded),
-        active_structures=list(active),
-        assigned_on_structures=dict(structures),
     )
 
 

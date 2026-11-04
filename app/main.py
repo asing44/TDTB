@@ -47,6 +47,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -1624,22 +1625,28 @@ def _capacities_declaration_diagnostics(
 ) -> list[dict[str, str]]:
     """One bounded entry per declared property the published contract lacks.
 
-    The adapter's read-path warnings for a dead declaration
-    (``assigned_structures`` / ``assigned_on_structures`` naming an unknown
-    property) only reach ``source_warnings`` AFTER a plan read, so the Settings
-    drawer cannot tell the owner that a mapping does nothing. This projects the
-    same drift from the already-published generation contract plus the stored
-    settings — no provider call, no store write, no source content: a structure
-    id, its cached display title (empty when unobserved), and one sentence.
+    The adapter's read-path warnings for a dead declaration (an ``assigned`` or
+    ``assignedOn`` type declaration naming an unknown property) only reach
+    ``source_warnings`` AFTER a plan read, so the Settings drawer cannot tell
+    the owner that a declaration does nothing. This projects the same drift
+    from the already-published generation contract plus the stored settings —
+    no provider call, no store write, no source content: a structure id, its
+    cached display title (empty when unobserved), and one sentence.
 
-    A contract that is missing or unusable yields ``[]``: absence of evidence
-    is not evidence of drift, and the drawer then simply shows nothing."""
+    The declarations are read from the schema-v2 ``types`` document: only the
+    two property-reading modes name a property at all, so exactly those are
+    checked. A contract that is missing or unusable yields ``[]``: absence of
+    evidence is not evidence of drift, and the drawer then simply shows
+    nothing."""
     declarations: list[tuple[str, str, str]] = [
-        (structure_id, property_id, "Assigned")
-        for structure_id, property_id in settings.assigned_structures.items()
-    ] + [
-        (structure_id, property_id, "Assigned On")
-        for structure_id, property_id in settings.assigned_on_structures.items()
+        (
+            structure_id,
+            declaration.property_id,
+            "Assigned" if declaration.mode == "assigned" else "Assigned On",
+        )
+        for structure_id, declaration in settings.types.items()
+        if declaration.mode in capacities_settings.PROPERTY_MODES
+        and declaration.property_id is not None
     ]
     if not declarations:
         return []
@@ -2010,20 +2017,58 @@ class DaySetupRequest(BaseModel):
         return value
 
 
-class CapacitiesNativeTaskAutoRequest(BaseModel):
-    """Editable native ``RootTask``/``Task`` Auto policy for the save body.
+class CapacitiesStatusVocabularyRequest(BaseModel):
+    """The editable ``statuses`` block of the schema-v2 save body.
 
-    ``StrictBool`` rejects 0/1 and strings; the horizon is a ``StrictInt`` so
-    bools and floats are rejected at the JSON boundary, with the nonnegative
-    rule checked here and re-checked by ``capacities_settings`` before any file
-    access."""
+    ``open`` is the vocabulary every type declaration inherits when it
+    declares no names of its own; ``completed`` is the closed vocabulary.
+    Omission means full replacement to the documented default vocabulary,
+    consistent with the full-replacement contract. Both lists go through the
+    same helper the store uses, so a blank or duplicate name is a 422 before
+    any file access."""
 
     model_config = ConfigDict(extra="forbid")
 
-    active_enabled: StrictBool
-    due_enabled: StrictBool
-    deadline_enabled: StrictBool
-    deadline_horizon_days: StrictInt
+    open: list[StrictStr] = Field(
+        default_factory=lambda: sorted(capacities_settings.DEFAULT_OPEN_STATUSES)
+    )
+    completed: list[StrictStr] = Field(
+        default_factory=lambda: sorted(
+            capacities_settings.DEFAULT_COMPLETED_STATUSES
+        )
+    )
+
+    @field_validator("open", "completed")
+    @classmethod
+    def _names_valid(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        # Mirror the store's strictness exactly (unique non-empty strings) so
+        # a malformed payload fails here — before any file access — instead of
+        # raising deep inside ``save_settings``.
+        try:
+            return list(
+                capacities_settings.canonical_unique_admission_values(
+                    value, info.field_name
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+class CapacitiesNativePolicyRequest(BaseModel):
+    """The editable ``native`` block: the inclusive deadline horizon.
+
+    The horizon is a ``StrictInt`` so bools, floats, and strings are rejected
+    at the JSON boundary, with the nonnegative rule checked here and re-checked
+    by ``capacities_settings`` before any file access. Version 1's three native
+    toggles are gone: the ``native`` mode admits on every native condition and
+    the per-structure ``statuses`` list decides whether the status condition
+    applies."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deadline_horizon_days: StrictInt = (
+        capacities_settings.DEFAULT_DEADLINE_HORIZON_DAYS
+    )
 
     @field_validator("deadline_horizon_days")
     @classmethod
@@ -2033,54 +2078,69 @@ class CapacitiesNativeTaskAutoRequest(BaseModel):
         return value
 
 
+class CapacitiesTypeDeclarationRequest(BaseModel):
+    """One structure's declaration in the save body: exactly ONE mode.
+
+    ``mode`` is required and closed. ``property`` is a RAW provider property id
+    REQUIRED when the mode is ``assigned``/``assignedOn`` and FORBIDDEN for
+    every other mode. ``statuses`` is deliberately tri-state: absent or
+    ``null`` both mean "inherit the shared ``statuses.open`` vocabulary"
+    (which is why the default is ``None``), ``[]`` disables status admission
+    for this structure, and a non-empty list is that structure's own open
+    names. Validation runs through the same store constructor a save uses, so
+    a bad mode, a contradictory or missing property, and a blank or duplicate
+    name are all a 422 before any file access."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: StrictStr
+    property: StrictStr | None = None
+    statuses: list[StrictStr] | None = None
+
+    @model_validator(mode="after")
+    def _declaration_valid(self) -> "CapacitiesTypeDeclarationRequest":
+        try:
+            capacities_settings.TypeDeclaration(
+                mode=self.mode,
+                property_id=self.property,
+                statuses=(
+                    None if self.statuses is None else tuple(self.statuses)
+                ),
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
 class CapacitiesSettingsSaveRequest(BaseModel):
-    """Full-replacement body for POST /settings/capacities/save.
+    """Full-replacement body for POST /settings/capacities/save (schema v2).
 
     ``expected_revision`` drives the server-side stale-write check; ``version``
     and the new ``revision`` are server-owned and deliberately absent. The
-    ``excluded`` object mirrors the persisted shape — canonical stable
-    Capacities identities mapped to ``true`` — and each key is validated by the
-    same parser the evaluator uses. The two additive admission inputs are
-    lists of unique non-empty strings on the wire; each is validated by the
-    same helper the store uses on load."""
+    editable policy is ONE document — the status vocabulary, one declaration
+    per structure, the native horizon, and the exclusion set — so a structure
+    can no longer carry two contradictory declarations. ``native`` and
+    ``excluded`` must be stated because omitting them would silently erase an
+    operator's horizon or exclusion set; ``statuses`` and ``types`` fall back
+    to their documented defaults (the default vocabulary / no declarations,
+    i.e. every structure ``off``), like every other full-replacement input.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: StrictInt
-    native_task_auto: CapacitiesNativeTaskAutoRequest
-    excluded: dict[str, StrictBool]
-    #: Optional Active-enabled custom structure ids. Omission means full
-    #: replacement to the empty set, consistent with the full-replacement
-    #: contract. Keys are validated as non-empty, whitespace-free ids.
-    active_structures: dict[str, StrictBool] = Field(default_factory=dict)
-    #: Configured native task structures. A plain list on the wire (unlike
-    #: ``active_structures``); omission means full replacement to the
-    #: documented store default (the built-in native task structures) and an
-    #: explicit empty list is a legitimate replacement.
-    native_task_structures: list[StrictStr] = Field(
-        default_factory=lambda: sorted(capacities_settings.NATIVE_TASK_STRUCTURES)
+    native: CapacitiesNativePolicyRequest
+    excluded: dict[StrictStr, StrictBool]
+    #: Optional status vocabulary (``open`` inherited by every declaration
+    #: that states no names, plus the closed ``completed`` set).
+    statuses: CapacitiesStatusVocabularyRequest = Field(
+        default_factory=CapacitiesStatusVocabularyRequest
     )
-    #: Status values satisfying the native status condition, stored exactly as
-    #: given. Omission means full replacement to the documented store default
-    #: (the single ``active`` status); an explicit empty list is legitimate.
-    active_statuses: list[StrictStr] = Field(
-        default_factory=lambda: sorted(capacities_settings.DEFAULT_ACTIVE_STATUSES)
+    #: Optional ``{structure_id: declaration}``. Omission is a full
+    #: replacement to no declarations, so every structure is ``off``.
+    types: dict[StrictStr, CapacitiesTypeDeclarationRequest] = Field(
+        default_factory=dict
     )
-    #: Settings-declared source assignment: ``{structure_id: property_id}``.
-    #: The property id is a raw, opaque Capacities property id whose boolean
-    #: ``true`` means "assigned at TDTB level". Omission means full
-    #: replacement to the empty map — no override anywhere, so each structure
-    #: keeps the source mapping's own assignment declaration.
-    assigned_structures: dict[str, StrictStr] = Field(default_factory=dict)
-    #: Settings-declared ``Assigned On`` marker: ``{structure_id:
-    #: property_id}`` naming a raw Capacities DATE/DATETIME property. When a
-    #: structure is declared here, only that property decides
-    #: ``source_assigned`` (the boolean declaration is ignored for it), and
-    #: the value's civil date in the app's local timezone must fall on or
-    #: before the read's logical day; a future date is not assigned yet.
-    #: Omission is a full replacement to the empty map.
-    #: The marker is READ-ONLY: TDTB never writes the Capacities property.
-    assigned_on_structures: dict[str, StrictStr] = Field(default_factory=dict)
 
     @field_validator("expected_revision")
     @classmethod
@@ -2103,65 +2163,21 @@ class CapacitiesSettingsSaveRequest(BaseModel):
                 raise ValueError("exclusion flags must be true")
         return value
 
-    @field_validator("active_structures")
+    @field_validator("types")
     @classmethod
-    def _active_structures_valid(cls, value: dict[str, bool]) -> dict[str, bool]:
-        for structure_id, flag in value.items():
+    def _types_valid(
+        cls, value: dict[str, CapacitiesTypeDeclarationRequest]
+    ) -> dict[str, CapacitiesTypeDeclarationRequest]:
+        # Keys must be canonical non-empty, whitespace-free structure ids; the
+        # declarations themselves were already validated per structure.
+        for structure_id in value:
             try:
-                capacities_settings.canonical_active_structure_id(structure_id)
+                capacities_settings.canonical_structure_id(structure_id)
             except ValueError as exc:
                 raise ValueError(
-                    f"invalid Capacities active structure id: {structure_id!r}"
+                    f"invalid Capacities structure id: {structure_id!r}"
                 ) from exc
-            if flag is not True:
-                raise ValueError("active structure flags must be true")
         return value
-
-    @field_validator("assigned_structures")
-    @classmethod
-    def _assigned_structures_valid(
-        cls, value: dict[str, str]
-    ) -> dict[str, str]:
-        # Apply the same strict parser the store uses before any file access,
-        # so a malformed declaration is a 422 here instead of a 500 raised
-        # deep inside ``save_settings``.
-        try:
-            return capacities_settings.canonical_assignment_declarations(value)
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-
-    @field_validator("assigned_on_structures")
-    @classmethod
-    def _assigned_on_structures_valid(
-        cls, value: dict[str, str]
-    ) -> dict[str, str]:
-        # Same 422-before-any-file-access contract as ``assigned_structures``.
-        # Property-type validation is deliberately absent here: the save route
-        # has no discovery data, so a non-date property is reported at read
-        # time as one bounded, content-free warning instead.
-        try:
-            return capacities_settings.canonical_assignment_declarations(
-                value, key="assigned_on_structures"
-            )
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-
-    @field_validator("native_task_structures", "active_statuses")
-    @classmethod
-    def _admission_values_valid(
-        cls, value: list[str], info: ValidationInfo
-    ) -> list[str]:
-        # Mirror the store's strictness exactly (unique non-empty strings) so a
-        # malformed payload fails here — before any file access — instead of
-        # raising deep inside ``save_settings``.
-        try:
-            return list(
-                capacities_settings.canonical_unique_admission_values(
-                    value, info.field_name
-                )
-            )
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
 
 
 class TagExclusionEntryRequest(BaseModel):
@@ -4038,12 +4054,16 @@ def create_app() -> FastAPI:
         bounded error and leaves the bytes untouched.
 
         ``declaration_diagnostics`` projects declaration drift from the
-        already-published generation contract: a stored ``assigned_structures``
-        or ``assigned_on_structures`` entry naming a property that contract
-        does not define can never read, and until now only a plan read reported
-        it. The field is bounded (structure id, cached title, one sentence) and
-        carries no property values or source content; a missing or unusable
-        contract answers an empty list rather than a guess."""
+        already-published generation contract: an ``assigned``/``assignedOn``
+        type declaration naming a property that contract does not define can
+        never read, and until now only a plan read reported it. The field is
+        bounded (structure id, cached title, one sentence) and carries no
+        property values or source content; a missing or unusable contract
+        answers an empty list rather than a guess.
+
+        ``migrated_from`` is additive and only present when the stored file is
+        still schema version 1: it was translated in memory, so a client can
+        say the next save rewrites it (with a ``.bak-v1-`` sibling backup)."""
         try:
             result = capacities_settings.read_settings()
         except (capacities_settings.SettingsStoreError, OSError) as exc:
@@ -4061,7 +4081,7 @@ def create_app() -> FastAPI:
             ) from exc
         available_structures = _available_capacities_structures()
         structure_titles = _capacities_structure_titles(available_structures)
-        return {
+        body = {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
             "available_structures": available_structures,
@@ -4070,58 +4090,42 @@ def create_app() -> FastAPI:
                 result.settings, structure_titles
             ),
         }
+        if result.source_version == capacities_settings.SCHEMA_VERSION_V1:
+            body["migrated_from"] = capacities_settings.SCHEMA_VERSION_V1
+        return body
 
     @app.post("/settings/capacities/save", dependencies=[Depends(require_token)])
     def post_capacities_settings_save(body: CapacitiesSettingsSaveRequest) -> dict:
         """Explicit, full-replacement save of the Capacities assignment policy.
 
-        The complete editable policy is supplied; ``version`` and the new
-        ``revision`` are server-owned. The current revision is compared under
-        the store lock: a stale ``expected_revision`` is a 409, malformed
-        existing storage is a 409, and a lock/read/write failure is a 500 —
-        every failure path preserves the original bytes. A structure declared
-        in both ``assigned_structures`` and ``assigned_on_structures`` is a 422
-        naming the structure and both property ids: the date would silently
-        win, so the save is refused before any write. The success response
-        also carries the same advisory structure metadata as the GET route
-        (computed once, from the same machine-local sources) so a client that
-        adopts the response as its whole settings state keeps its cached
-        structure names."""
-        policy = capacities_settings.NativeTaskAutoPolicy(
-            active_enabled=body.native_task_auto.active_enabled,
-            due_enabled=body.native_task_auto.due_enabled,
-            deadline_enabled=body.native_task_auto.deadline_enabled,
-            deadline_horizon_days=body.native_task_auto.deadline_horizon_days,
-        )
+        The complete editable policy is supplied as one schema-v2 document;
+        ``version`` and the new ``revision`` are server-owned. The current
+        revision is compared under the store lock: a stale
+        ``expected_revision`` is a 409, malformed existing storage is a 409,
+        and a lock/read/write failure is a 500 — every failure path preserves
+        the original bytes. A structure can only carry ONE mode, so the old
+        contradictory dual declaration is unrepresentable; a bad mode, a
+        property for a non-property mode, or a missing property for an
+        ``assigned``/``assignedOn`` mode is a 422 before any file access. The
+        success response also carries the same advisory structure metadata as
+        the GET route (computed once, from the same machine-local sources) so
+        a client that adopts the response as its whole settings state keeps
+        its cached structure names."""
         try:
             saved = capacities_settings.save_settings(
                 expected_revision=body.expected_revision,
-                native_task_auto=policy,
-                excluded=body.excluded.keys(),
-                active_structures=body.active_structures.keys(),
-                native_task_structures=body.native_task_structures,
-                active_statuses=body.active_statuses,
-                assigned_structures=body.assigned_structures,
-                assigned_on_structures=body.assigned_on_structures,
-            )
-        except capacities_settings.SettingsDeclarationConflictError as exc:
-            # A structure cannot declare an Assigned checkbox AND an Assigned On
-            # date: the date silently wins, so the checkbox could never admit
-            # anything and a future date would drop the object from the plan.
-            # Refused before any write, so the body can name the structure and
-            # both properties and the stored bytes are untouched.
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "capacities_settings_declaration_conflict",
-                    "message": " ".join(
-                        conflict.message() for conflict in exc.conflicts
-                    ),
-                    "conflicts": [
-                        conflict.as_dict() for conflict in exc.conflicts
-                    ],
+                statuses=capacities_settings.to_status_vocabulary(
+                    body.statuses.model_dump()
+                ),
+                types={
+                    structure_id: declaration.model_dump()
+                    for structure_id, declaration in body.types.items()
                 },
-            ) from exc
+                native=capacities_settings.to_native_policy(
+                    body.native.model_dump()
+                ),
+                excluded=body.excluded.keys(),
+            )
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(
                 status_code=409,
