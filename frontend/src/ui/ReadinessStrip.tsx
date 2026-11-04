@@ -3,11 +3,15 @@
    owns setup/captures, source refresh, billed ledger, theme, and refresh
    summary. Editing happens in the setup drawer (locked decision 10).
 
-   The Sources chip keeps its refresh-on-click behavior. A separate small
-   details affordance (a caret beside the chip) opens a compact popover with
-   the freshness facts the chip line cannot carry: live Todoist/Calendar
-   counts, the cached Capacities generation and coverage, per-structure check
-   times, any skipped objects, and the plain next action. */
+   The chip names the sources it actually reads: "Todoist & Calendar", the
+   snapshot-only read behind controller.refreshSources(). It never starts a
+   Capacities job, so it must not carry the header's "Refresh sources" name
+   (that press runs the full refresh, Capacities job first). Its refresh-on-
+   click behavior is unchanged. A separate small details affordance (a caret
+   beside the chip) opens a compact popover with the freshness facts the chip
+   line cannot carry: live Todoist/Calendar counts, the cached Capacities
+   generation and coverage, per-structure check times, any skipped objects, and
+   the plain next action. */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
@@ -299,13 +303,13 @@ export function ReadinessStrip() {
           aria-busy={refresh.phase === "loading"}
           aria-label={
             refreshedDate
-              ? `Refresh sources (last refreshed ${refreshedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${clockFromDate(refreshedDate)} — ${formatRelative(now, refreshedDate)})`
-              : "Refresh sources"
+              ? `Refresh Todoist & Calendar only (last refreshed ${refreshedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${clockFromDate(refreshedDate)} — ${formatRelative(now, refreshedDate)})`
+              : "Refresh Todoist & Calendar only"
           }
         >
           {refresh.phase === "loading"
-            ? "Sources ⟳ refreshing…"
-            : `Sources ${health === "ok" ? "✓" : health} ↻`}
+            ? "Todoist & Calendar ⟳…"
+            : `Todoist & Calendar ${health === "ok" ? "✓" : health} ↻`}
         </button>
         <button
           ref={detailsRef}

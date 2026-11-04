@@ -37,7 +37,7 @@ describe("source degradation", () => {
   it("readiness strip flags degraded sources and alerts carry the exact warning", () => {
     const { ui } = makeHarness("conflict");
     const strip = ui(<ReadinessStrip />);
-    expect(strip.getByText(/Sources degraded/)).toBeTruthy();
+    expect(strip.getByText(/Todoist & Calendar degraded/)).toBeTruthy();
     strip.unmount();
     const alertsView = makeHarness("conflict").ui(<FooterBanners />);
     // T12i: the roll-up floats as pills; details open on demand.
@@ -104,7 +104,7 @@ describe("Capacities partial coverage", () => {
       h.store.dispatch({ type: "SOURCE_REFRESH_START" });
     });
     expect(getByText(/51 deferred across contributing structures/)).toBeTruthy();
-    expect(getByText(/Sources ⟳ refreshing…/)).toBeTruthy();
+    expect(getByText(/Todoist & Calendar ⟳…/)).toBeTruthy();
   });
 
   it("keeps the last read's warning when a refresh fails", () => {
