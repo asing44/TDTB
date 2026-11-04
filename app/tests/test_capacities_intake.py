@@ -24,7 +24,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import app_config  # noqa: E402
-import capacities_builder as cb  # noqa: E402
+import capacities_builder as cb
+import capacities_settings  # noqa: E402
 import capacities_intake as ci  # noqa: E402
 import capacities_refresh_state as crs  # noqa: E402
 import capacities_rules  # noqa: E402
@@ -585,6 +586,15 @@ def test_projection_uses_the_app_effective_date_not_date_today(
     """A due-tomorrow object is future at 01:30 (logical day 10-09) and is
     served only once the rollover moves the logical day to 10-10."""
     _save_record()
+    # Date-only native admission: the version-2 document is the eligibility
+    # authority, and ``statuses=()`` disables status admission so only the due
+    # date can place the row.
+    capacities_settings.save_settings(
+        expected_revision=0,
+        types={
+            ROOT: capacities_settings.TypeDeclaration(mode="native", statuses=())
+        },
+    )
     _publish(
         [_object("root-due", ROOT, assigned=False, due="2026-10-10")],
         structures=_contract(),

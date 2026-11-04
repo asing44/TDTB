@@ -27,6 +27,7 @@ import capacities_refresh as cr  # noqa: E402
 import capacities_refresh_state as crs  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_tag_titles as ttt  # noqa: E402
+from capacities_assignment import AssignmentSettings  # noqa: E402
 from capacities_adapter import (  # noqa: E402
     CapacitiesAdapter,
     CapacitiesConfig,
@@ -231,10 +232,33 @@ class _CatalogProvider:
         raise AssertionError("no write expected")
 
 
+def _settings():
+    """The version-2 policy the tag cache's tasks live under.
+
+    ``RootTask`` is declared ``native`` because the version-2 document is the
+    enumeration authority: an undeclared structure is ``off`` and its objects
+    would never be listed, so no tag reference could reach a row.
+    """
+    return capacities_settings.CapacitiesSettings(
+        revision=1,
+        types={
+            "RootTask": capacities_settings.TypeDeclaration(
+                mode="native", statuses=("active",)
+            )
+        },
+    )
+
+
 def _adapter(provider, sink=None):
+    settings = _settings()
     return CapacitiesAdapter(
         provider,
-        CapacitiesConfig(space_id=SPACE, mappings=(_mapping(),)),
+        CapacitiesConfig(
+            space_id=SPACE,
+            mappings=(_mapping(),),
+            settings=settings,
+            assignment_settings=AssignmentSettings.from_v2(settings),
+        ),
         tag_titles_sink=sink,
     )
 
@@ -376,7 +400,7 @@ def _replay_read(objects):
     return cb.DirectIntakeRead(
         space_id=SPACE,
         mappings=(_mapping(),),
-        settings=capacities_settings.read_settings().settings,
+        settings=_settings(),
         snapshot=snapshot,
         structures=_structures(),
         objects=tuple(objects),

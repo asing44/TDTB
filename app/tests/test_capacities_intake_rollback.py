@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import capacities_builder as cap_builder  # noqa: E402
+import capacities_settings  # noqa: E402
 import capacities_selections as sel  # noqa: E402
 import main as main_mod  # noqa: E402
 from tests.test_plan_inputs_sources import (  # noqa: E402
@@ -95,6 +96,17 @@ def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state():
     ``direct`` must show the same generation and a surviving selection."""
     _set_sources(mode="artifact", capacities_intake="direct")
     _save_direct_source()
+    # The version-2 document is the eligibility authority: an undeclared type
+    # is ``off``. The root type is declared ``native`` and admits on the
+    # ``active`` status name, which is what the fixture objects carry.
+    capacities_settings.save_settings(
+        expected_revision=0,
+        types={
+            DIRECT_ROOT: capacities_settings.TypeDeclaration(
+                mode="native", statuses=("active",)
+            )
+        },
+    )
     _publish_direct([
         _direct_object("obj-a", DIRECT_ROOT),
         _direct_object("obj-pool", DIRECT_ROOT, assigned=False),
