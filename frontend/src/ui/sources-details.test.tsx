@@ -145,7 +145,7 @@ describe("sources details popover", () => {
     const h = stage();
     const spy = vi.spyOn(h.controller, "refreshSources").mockResolvedValue(undefined as never);
     const r = h.ui(<ReadinessStrip />);
-    fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
+    fireEvent.click(r.getByRole("button", { name: "Refresh Todoist & Calendar only" }));
     expect(spy).toHaveBeenCalledTimes(1);
     fireEvent.click(r.getByRole("button", { name: "Source details" }));
     expect(spy).toHaveBeenCalledTimes(1);
@@ -398,11 +398,22 @@ describe("sources details popover", () => {
     expect(status()).toContain("15 min ago");
   });
 
+  it("names the chip's own read, not the header's full 'Refresh sources'", () => {
+    const h = stage();
+    const r = h.ui(<ReadinessStrip />);
+    const refreshNames = Array.from(r.container.querySelectorAll("button"))
+      .map((b) => b.getAttribute("aria-label") ?? "")
+      .filter((name) => name.startsWith("Refresh"));
+    expect(refreshNames).toHaveLength(1);
+    expect(refreshNames[0]).toContain("Todoist & Calendar");
+    expect(refreshNames[0]).not.toBe("Refresh sources");
+  });
+
   it("puts the date and relative age in the chip's aria-label", () => {
     const h = stage();
     const r = h.ui(<ReadinessStrip />);
     refreshOk(h, "2026-10-13T14:45:00");
-    const chip = r.getByRole("button", { name: /Refresh sources/ });
+    const chip = r.getByRole("button", { name: /Refresh Todoist & Calendar only/ });
     expect(chip.getAttribute("aria-label")).toMatch(/Oct 13/);
     expect(chip.getAttribute("aria-label")).toMatch(/15 min ago/);
   });

@@ -485,7 +485,8 @@ describe("U7 stepper header", () => {
       expect(pill.textContent).toContain("Sources healthy · 18m");
       const label = pill.getAttribute("aria-label") ?? "";
       expect(label).toContain("Sources last refreshed 18m");
-      expect(label).toContain("Capacity > Details > Sources");
+      expect(label).toContain("Use Refresh options ▾");
+      expect(label).not.toContain("Capacity > Details");
       expect(label).not.toContain("were skipped");
       expect(pill.getAttribute("title")).toBe(label);
     } finally {
@@ -505,7 +506,7 @@ describe("U7 stepper header", () => {
     const label = pill.getAttribute("aria-label") ?? "";
     expect(label).toContain("1 Capacities objects were skipped (not plannable).");
     expect(label).toContain("They are not in the plan.");
-    expect(label).toContain("Capacity > Details > Sources.");
+    expect(label).toContain("Use Refresh options ▾ to re-read Capacities.");
     expect(pill.getAttribute("title")).toBe(label);
     expect(pill.className).toContain("health-pill--healthy");
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();

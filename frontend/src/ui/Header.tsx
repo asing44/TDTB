@@ -263,11 +263,11 @@ export function Header() {
   );
   const skippedNote =
     !refreshing && health === "ok" && skippedCount > 0
-      ? `${skippedCount} Capacities objects were skipped (not plannable). They are not in the plan. See Capacity > Details > Sources.`
+      ? `${skippedCount} Capacities objects were skipped (not plannable). They are not in the plan. Use Refresh options ▾ to re-read Capacities.`
       : null;
-  // Discoverability: the freshness evidence lives inside the collapsed
-  // capacity-card Details disclosure, so the header pill carries the age and
-  // a plain-language hint to where the details are.
+  // Discoverability: the header owns the refresh surfaces, so the pill carries
+  // the age and points at the header's own ▾ "Refresh options" menu instead of
+  // the collapsed Capacities Details disclosure.
   const now = new Date();
   const refreshedAt = s.refresh.lastRefreshed ? new Date(s.refresh.lastRefreshed) : null;
   const refreshed =
@@ -277,8 +277,8 @@ export function Header() {
   const pillText = !refreshing && age ? `${pillLead} · ${age}` : pillLead;
   const pillAgeHint =
     age && refreshed
-      ? `Sources last refreshed ${age} (${dateTimeLabel(refreshed)}). Open Capacity > Details > Sources for more.`
-      : "Open Capacity > Details > Sources for more.";
+      ? `Sources last refreshed ${age} (${dateTimeLabel(refreshed)}). Use Refresh options ▾ for Todoist & Calendar alone or a Capacities re-read.`
+      : "Use Refresh options ▾ to refresh Todoist & Calendar or Capacities.";
   const pillHint = skippedNote ? `${skippedNote} ${pillAgeHint}` : pillAgeHint;
 
   const preset = s.inputs.daySemantics.selectedPreset?.name;
