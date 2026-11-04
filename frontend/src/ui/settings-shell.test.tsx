@@ -43,24 +43,20 @@ function capacitiesFixture(
   overrides: Partial<CapacitiesSettings> = {},
 ): CapacitiesSettings {
   return {
-    version: 1,
+    version: 2,
     revision: 0,
     persisted: true,
-    nativeTaskAuto: {
-      activeEnabled: true,
-      dueEnabled: true,
-      deadlineEnabled: true,
-      deadlineHorizonDays: 2,
+    statuses: { open: ["active"], completed: ["Completed", "Dropped"] },
+    types: {
+      RootTask: { mode: "native", property: null, statuses: null },
+      Task: { mode: "native", property: null, statuses: null },
     },
+    native: { deadlineHorizonDays: 2 },
     excluded: [],
-    activeStructures: [],
-    nativeTaskStructures: ["RootTask", "Task"],
-    activeStatuses: ["active"],
-    assignedStructures: {},
-    assignedOnStructures: {},
     availableStructures: [],
     structureTitles: {},
     declarationDiagnostics: [],
+    migratedFrom: null,
     ...overrides,
   };
 }
@@ -122,8 +118,12 @@ describe("SettingsShell", () => {
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);
     openTechnical(rendered);
+    // Schema v2 puts the one rule section in place of the retired
+    // "Automatic task rules" section; the heading is the panel-ready signal.
     await waitFor(() =>
-      expect(rendered.getByText("Automatic task rules")).toBeTruthy(),
+      expect(
+        rendered.getByRole("heading", { name: "How each item type gets in" }),
+      ).toBeTruthy(),
     );
 
     const horizon = () =>
@@ -158,19 +158,18 @@ describe("SettingsShell", () => {
       .mockResolvedValue(
         capacitiesFixture({
           revision: 3,
-          nativeTaskAuto: {
-            activeEnabled: false,
-            dueEnabled: false,
-            deadlineEnabled: true,
-            deadlineHorizonDays: 7,
-          },
+          native: { deadlineHorizonDays: 7 },
         }),
       );
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);
     openTechnical(rendered);
+    // Schema v2 puts the one rule section in place of the retired
+    // "Automatic task rules" section; the heading is the panel-ready signal.
     await waitFor(() =>
-      expect(rendered.getByText("Automatic task rules")).toBeTruthy(),
+      expect(
+        rendered.getByRole("heading", { name: "How each item type gets in" }),
+      ).toBeTruthy(),
     );
 
     fireEvent.input(rendered.getByLabelText("Deadline coming up"), {
