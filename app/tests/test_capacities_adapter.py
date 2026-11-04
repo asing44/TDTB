@@ -3611,6 +3611,115 @@ def test_assigned_on_alone_decides_over_the_boolean_declaration():
     }
 
 
+def _dual_declaration_warnings(warnings):
+    return [warning for warning in warnings if "declares both" in warning]
+
+
+def test_dual_assignment_mappings_emit_one_bounded_warning():
+    # Settings can declare BOTH an Assigned checkbox and an Assigned On date
+    # for one structure. The date still wins (runtime precedence unchanged),
+    # so the boolean is never read: an object with Assigned=true and a FUTURE
+    # date used to vanish from the plan with no diagnostic at all. Exactly one
+    # content-free warning per structure names that pairing, and two rows in
+    # the same structure must not double it.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "assigned-true-future",
+            {
+                "state": _active_state(),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY + timedelta(days=63)).isoformat()
+                ),
+            },
+        ),
+        _assigned_on_object(
+            "assigned-true-today",
+            {
+                "state": _active_state(),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(assigned_property=SETTINGS_ASSIGNED_PROPERTY)
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    # Date-wins precedence is untouched: only the today/past date is admitted.
+    assert _source_assigned_by_id(result) == {
+        "assigned-true-future": False,
+        "assigned-true-today": True,
+    }
+    dual = _dual_declaration_warnings(result.warnings)
+    assert len(dual) == 1
+    assert OVERRIDE_STRUCTURE in dual[0]
+    assert "Assigned" in dual[0]
+    assert "ignored" in dual[0]
+    assert "takes precedence" in dual[0]
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        _assigned_on_mapping(assigned_on_property=None),
+        _assigned_on_mapping(assigned_property=None),
+    ],
+    ids=["boolean-only", "date-only"],
+)
+def test_single_assignment_mapping_emits_no_dual_warning(mapping):
+    # One declaration kind is the normal case: the warning must stay silent,
+    # or it would fire on every healthy read and bury real diagnostics.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _dual_declaration_warnings(result.warnings) == []
+
+
+def test_dual_assignment_warning_reaches_both_read_results():
+    # ``CapacitiesReadResult.warnings`` is the seam /plan-inputs turns into
+    # ``source_warnings`` (and the Settings "Needs attention" region renders),
+    # so the diagnostic has to be on every projection entry point, not only on
+    # the one that lists objects.
+    provider = _assigned_on_provider([])
+    mapping = _assigned_on_mapping(assigned_property=SETTINGS_ASSIGNED_PROPERTY)
+    adapter = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    )
+    row = _assigned_on_object(
+        "project-1",
+        {
+            "state": _active_state(),
+            SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+            ASSIGNED_ON_PROPERTY: _date_value(
+                (TODAY + timedelta(days=1)).isoformat()
+            ),
+        },
+    )
+
+    listed = adapter.items_for_day(TODAY)
+    projected = adapter.items_for_day_from_objects(TODAY, [row])
+
+    for result in (listed, projected):
+        dual = _dual_declaration_warnings(result.warnings)
+        assert len(dual) == 1
+        assert OVERRIDE_STRUCTURE in dual[0]
+
+
 def test_assigned_on_mapping_alone_enumerates_its_structure():
     # A valid Assigned On mapping is an enumeration path of its own: with no
     # legacy marker, Active enable, or stored rule the structure must still be

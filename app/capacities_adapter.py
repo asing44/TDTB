@@ -1626,6 +1626,22 @@ class CapacitiesAdapter:
                     f"{mapping.assigned_on_record_property!r}; using "
                     f"{mapping.assigned_on_property!r}"
                 )
+            # Both declaration kinds for ONE structure is a silent-loss seam:
+            # ``_project_object`` branches on the date declaration first, so
+            # the boolean is never read and its ``true`` cannot admit
+            # anything. The runtime keeps date-wins precedence (unchanged);
+            # this is the only diagnostic for that pairing, and it is emitted
+            # once per structure because the loop visits each mapped id
+            # exactly once. It names the structure id only — no source content
+            # is available or wanted here.
+            if mapping.assigned_property and mapping.assigned_on_property:
+                declaration_warnings.append(
+                    "Capacities structure "
+                    f"{sid!r} declares both an Assigned checkbox and an "
+                    "Assigned On date; the Assigned On date takes precedence "
+                    "and the Assigned checkbox is ignored. Clear one of the two "
+                    "mappings in Settings."
+                )
             if mapping.open_status_property and not mapping.open_status_values:
                 raise CapacitiesContractError(
                     f"mapping {sid!r} has no open status values",
