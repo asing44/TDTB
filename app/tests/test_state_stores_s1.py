@@ -409,10 +409,7 @@ def test_capacities_settings_write_lands_in_state_and_keeps_the_vault_copy(
 ) -> None:
     before = _snapshot(vault)
 
-    saved = cs.save_settings(
-        expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
-    )
+    saved = cs.save_settings(expected_revision=0)
 
     assert saved.revision == 1
     assert cs.settings_path().is_file()
@@ -468,7 +465,7 @@ def test_tdtb_home_moves_every_store(
         expected_revision=0,
         exclusions=[es.TagExclusion(source="capacities", space_id=SPACE, tag_id=TAG_A)],
     )
-    cs.save_settings(expected_revision=0, native_task_auto=cs.NativeTaskAutoPolicy())
+    cs.save_settings(expected_revision=0)
     cb.save_source(
         expected_revision=0,
         space_id=SPACE,

@@ -19,6 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import capacities_adapter as ca  # noqa: E402
+import capacities_assignment as cas  # noqa: E402
 import capacities_builder as cb  # noqa: E402
 import capacities_refresh as rr  # noqa: E402
 import capacities_settings as cs  # noqa: E402
@@ -796,9 +797,23 @@ def test_a_refused_refresh_keeps_the_previous_generations_contract(tmp_path):
 # Persisted-settings compatibility — legacy files and Assigned On declarations
 # ---------------------------------------------------------------------------
 
-def _legacy_settings_doc(**overrides) -> dict:
-    """A version-1 save written BEFORE ``assigned_on_structures`` existed."""
+def _v2_settings_doc(types: dict | None = None, **overrides) -> dict:
+    """A version-2 settings document with optional per-type declarations."""
     doc = {
+        "version": 2,
+        "revision": 3,
+        "statuses": {"open": ["active"], "completed": ["Completed", "Dropped"]},
+        "types": dict(types or {}),
+        "native": {"deadline_horizon_days": 2},
+        "excluded": {},
+    }
+    doc.update(overrides)
+    return doc
+
+
+def _legacy_v1_settings_doc() -> dict:
+    """A version-1 save written BEFORE ``assigned_on_structures`` existed."""
+    return {
         "version": 1,
         "revision": 3,
         "native_task_auto": {
@@ -810,8 +825,6 @@ def _legacy_settings_doc(**overrides) -> dict:
         "excluded": {},
         "active_structures": {},
     }
-    doc.update(overrides)
-    return doc
 
 
 def _write_settings(doc: dict) -> None:
@@ -825,14 +838,13 @@ def _settings_refresh(tmp_path, provider, *, exclusion_policy=None):
     settings = cs.read_settings().settings
     mappings = cb._resolve_assigned_structures(
         tuple(_mapping(t) for t in TYPES),
-        settings.assigned_structures,
-        settings.assigned_on_structures,
+        settings,
     )
     coordinator, store, _, _ = _coordinator(
         tmp_path,
         provider,
         mappings=mappings,
-        assignment_settings=settings.to_assignment_settings(),
+        assignment_settings=cas.AssignmentSettings.from_v2(settings),
         exclusion_policy=exclusion_policy,
     )
     coordinator.start()
@@ -847,23 +859,26 @@ def _structures_with_assigned_on(*type_ids: str) -> list[dict]:
 
 
 def test_legacy_settings_without_assigned_on_structures_completes(tmp_path):
-    """A pre-Assigned-On settings file is valid on read and cannot fail a run."""
-    _write_settings(_legacy_settings_doc())
+    """A pre-Assigned-On version-1 settings file is valid on read and cannot
+    fail a run: it translates to a document with no type declarations."""
+    _write_settings(_legacy_v1_settings_doc())
     provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
 
     status = _settings_refresh(tmp_path, provider)
 
     assert status["phase"] == "complete", status
     assert status["outcome"] == "published"
-    assert cs.read_settings().settings.assigned_on_structures == {}
-    assert cs.read_settings().settings.assigned_structures == {}
+    # Version 1's native task structures translate to ``native`` declarations;
+    # an undeclared structure stays off.
+    assert cs.read_settings().settings.mode_of(PRIMARY) == "native"
+    assert cs.read_settings().settings.mode_of("T2") == "off"
 
 
 def test_assigned_on_mapped_to_date_property_completes(tmp_path):
     """A saved Assigned On declaration resolves and never gates the run."""
     _write_settings(
-        _legacy_settings_doc(
-            assigned_on_structures={PRIMARY: "assigned_on"},
+        _v2_settings_doc(
+            {PRIMARY: {"mode": "assignedOn", "property": "assigned_on"}},
         )
     )
     provider = _paged_provider(
@@ -887,8 +902,8 @@ def test_assigned_on_declaration_non_date_or_unknown_still_completes(
     """A mistyped Assigned On declaration is ignored with one bounded warning
     and cannot fail the refresh (fail-open contract)."""
     _write_settings(
-        _legacy_settings_doc(
-            assigned_on_structures={PRIMARY: property_id},
+        _v2_settings_doc(
+            {PRIMARY: {"mode": "assignedOn", "property": property_id}},
         )
     )
     provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
@@ -926,8 +941,11 @@ def test_vanished_legacy_assignment_property_completes_when_assigned_on_mapped(
     legacy marker and its values are dropped fail-open with one bounded
     warning per structure, and the refresh still completes."""
     _write_settings(
-        _legacy_settings_doc(
-            assigned_on_structures={PRIMARY: "assigned_on", "T2": "assigned_on"},
+        _v2_settings_doc(
+            {
+                PRIMARY: {"mode": "assignedOn", "property": "assigned_on"},
+                "T2": {"mode": "assignedOn", "property": "assigned_on"},
+            },
         )
     )
     provider = _paged_provider(
@@ -962,7 +980,9 @@ def test_vanished_legacy_assignment_property_completes_without_assigned_on(
     """Without Assigned On the vanished marker is still dropped fail-open with
     the same bounded warning, and the mapping's status seam keeps the
     structure contributing: the refresh completes."""
-    _write_settings(_legacy_settings_doc())
+    _write_settings(
+        _v2_settings_doc({PRIMARY: {"mode": "native", "statuses": []}})
+    )
     provider = _paged_provider(
         objects={PRIMARY: ["a"], "T2": ["c"]},
         structures=_structures_without_legacy_assignment(*TYPES),
@@ -1101,8 +1121,8 @@ def test_assigned_on_only_mapping_without_status_or_assignment_property_complete
     property: the declaration alone satisfies the contract, and it is also the
     enumeration path, so the structure is listed for the date read."""
     _write_settings(
-        _legacy_settings_doc(
-            assigned_on_structures={"custom-project": "assigned_on"},
+        _v2_settings_doc(
+            {"custom-project": {"mode": "assignedOn", "property": "assigned_on"}},
         )
     )
     settings = cs.read_settings().settings
@@ -1111,8 +1131,7 @@ def test_assigned_on_only_mapping_without_status_or_assignment_property_complete
             _mapping(PRIMARY),
             ca.StructureMapping(structure_id="custom-project", title_property="title"),
         ),
-        settings.assigned_structures,
-        settings.assigned_on_structures,
+        settings,
     )
     structures = _structures(PRIMARY)
     structures.append(
@@ -1133,7 +1152,7 @@ def test_assigned_on_only_mapping_without_status_or_assignment_property_complete
         tmp_path,
         provider,
         mappings=mappings,
-        assignment_settings=settings.to_assignment_settings(),
+        assignment_settings=cas.AssignmentSettings.from_v2(settings),
     )
     coordinator.start()
     status = coordinator.wait(timeout=5)

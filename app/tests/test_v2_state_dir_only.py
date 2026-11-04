@@ -85,7 +85,7 @@ def test_module_level_writers_only_touch_the_state_dir(ro_vault: Path) -> None:
     runstate.append_recent_selection(TODAY, [{"id": "a", "path": "p", "blocks": 1}])
     df.record_deferral({"name": "Fresh", "todoist_id": "99"}, TODAY)
     es.save_settings(expected_revision=0, exclusions=[])
-    cs.save_settings(expected_revision=0, native_task_auto=cs.NativeTaskAutoPolicy())
+    cs.save_settings(expected_revision=0)
 
     state = app_config.state_dir()
     assert (state / "micro-adventure-log.md").is_file()

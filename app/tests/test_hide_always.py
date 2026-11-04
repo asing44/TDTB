@@ -64,7 +64,6 @@ def _seed_todoist(entry_id: str = "task-b", name: str = "Beta") -> None:
 def _seed_capacities(identity: str = CAP_OTHER) -> None:
     cs.save_settings(
         expected_revision=0,
-        native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded={identity},
     )
 
@@ -187,7 +186,7 @@ class TestCapacitiesHide:
 
     def test_hidden_capacities_row_leaves_plan_inputs_filtering(self, plan: None):
         ra.apply_action(TODAY, "hide_always", "Cap Alpha")
-        settings = cs.read_settings().settings.to_assignment_settings()
+        settings = ca.AssignmentSettings.from_v2(cs.read_settings().settings)
         decision = ca.evaluate_assignment(
             ca.AssignmentCandidate(identity=CAP_A, status_is_open=True),
             logical_day=TODAY, settings=settings)
