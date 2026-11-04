@@ -498,6 +498,20 @@ class TestActiveModeStructures:
         assert second.status_code == 200
         assert second.json()["settings"]["types"] == {}
 
+    def test_an_explicit_empty_types_object_is_a_legitimate_replacement(
+        self, client
+    ):
+        # Explicit ``{}`` and omission mean the same thing (no declarations),
+        # exactly like every other full-replacement input.
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(types={}),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["types"] == {}
+
     @pytest.mark.parametrize(
         "bad",
         [
