@@ -512,6 +512,7 @@ def _primary_source_record(revision=3):
 
 
 def test_build_then_exclusion_save_fails_the_first_start_stale(tmp_path, monkeypatch):
+    _declare_primary_native(monkeypatch)
     monkeypatch.setattr(cb, "read_source", lambda: _primary_source_record())
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
     provider = _paged_provider(objects={PRIMARY: ["a"]})
@@ -622,6 +623,30 @@ def _primary_record_for(space_id, revision, *, open_values=("active",)):
     )
 
 
+def _declare_primary_native(monkeypatch):
+    """Declare the primary type in the version-2 policy without a settings save.
+
+    The version-2 document is the eligibility authority: an undeclared type is
+    ``off`` and no coordinator can be built from it. A real save would bump the
+    settings revision these tests pin in their combined-revision arithmetic, so
+    the read is patched to a revision-0 document instead.
+    """
+    declared = cb.capacities_settings.SettingsRead(
+        settings=cb.capacities_settings.CapacitiesSettings(
+            revision=0,
+            types={
+                PRIMARY: cb.capacities_settings.TypeDeclaration(
+                    mode="native", statuses=("active",)
+                )
+            },
+        ),
+        persisted=False,
+    )
+    monkeypatch.setattr(cb.capacities_settings, "read_settings", lambda: declared)
+    # The builder imports the reader by name, so patch that binding too.
+    monkeypatch.setattr(cb, "read_settings", lambda: declared)
+
+
 def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch):
     """A source save between the two build reads must fail stale, not publish.
 
@@ -634,6 +659,7 @@ def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch
     the OLD mappings, so the publication guard sees the live revision
     unchanged and publishes scope the configuration no longer describes.
     """
+    _declare_primary_native(monkeypatch)
     reads = {"count": 0}
 
     def flipping_read_source():
@@ -679,6 +705,7 @@ def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
     stay equal while the live source is a different space. The publication
     guard must compare the live source space, not only the revision sum.
     """
+    _declare_primary_native(monkeypatch)
     vault = tmp_path / "vault"
     vault.mkdir()
     structures = _primary_record_for(SPACE, 0).structures
@@ -809,6 +836,7 @@ def test_publication_guard_fails_stale_when_the_space_read_is_unreadable(
     a non-str is never equal to the built space, so the guard must fail
     closed instead of treating the unreadable space as unchanged.
     """
+    _declare_primary_native(monkeypatch)
     vault = tmp_path / "vault"
     vault.mkdir()
     structures = _primary_record_for(SPACE, 0).structures
