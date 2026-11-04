@@ -745,6 +745,7 @@ class RefreshCoordinator:
         revision_supplier: Callable[[], int | None],
         scope_key: str = DEFAULT_SCOPE_KEY,
         assignment_settings: Any = None,
+        settings: Any = None,
         rules: Any = None,
         exclusion_policy: Any = None,
         max_pages: int = 20,
@@ -818,6 +819,7 @@ class RefreshCoordinator:
                     if assignment_settings is not None
                     else capacities_adapter.AssignmentSettings()
                 ),
+                settings=settings,
                 rules=rules,
                 exclusion_policy=exclusion_policy,
                 content_cache=None,

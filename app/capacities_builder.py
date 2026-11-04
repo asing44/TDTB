@@ -61,6 +61,7 @@ import capacities_rules
 import capacities_settings
 import exclusion_settings
 import tag_exclusions
+from capacities_assignment import AssignmentSettings
 from capacities_adapter import (
     CapacitiesAdapter,
     CapacitiesConfig,
@@ -1127,36 +1128,67 @@ class CapacitiesBuilderConfig:
     refresh_state_path: Path | None = None
 
 
+def _mode_declarations(settings: Any) -> tuple[dict[str, str], dict[str, str]]:
+    """Split the version-2 ``types`` document into the two resolvable maps.
+
+    Every non-``off`` mode is enumerated here, so the declaration pass below
+    sees the whole policy rather than one hard-coded mode: ``assigned`` yields
+    the structure's boolean property declaration and ``assignedOn`` the
+    read-only date one. ``active`` and ``native`` carry no property — they
+    reach the adapter's enumeration gate through the evaluator seam
+    (:meth:`capacities_assignment.AssignmentSettings.from_v2` projects them
+    onto ``active_structures`` / ``native_task_structures``) — so they
+    resolve nothing here. A declaration without a property id is skipped
+    rather than guessed at.
+    """
+    declarations: dict[str, str] = {}
+    on_declarations: dict[str, str] = {}
+    for structure_id, declaration in dict(getattr(settings, "types", None) or {}).items():
+        if not isinstance(structure_id, str) or not structure_id:
+            continue
+        mode = getattr(declaration, "mode", None)
+        property_id = getattr(declaration, "property_id", None)
+        if not isinstance(property_id, str) or not property_id:
+            continue
+        if mode == "assigned":
+            declarations[structure_id] = property_id
+        elif mode == "assignedOn":
+            on_declarations[structure_id] = property_id
+    return declarations, on_declarations
+
+
 def _resolve_assigned_structures(
     mappings: Iterable[StructureMapping],
-    declarations: dict[str, str],
-    on_declarations: dict[str, str] | None = None,
+    settings: Any,
 ) -> tuple[StructureMapping, ...]:
-    """Resolve the settings declaration onto the source mappings.
+    """Resolve the version-2 settings declarations onto the source mappings.
 
     This is the only place the two persisted surfaces — the app-owned
     source record and the settings store — meet, so the precedence lives
-    here: a structure declared in ``assigned_structures`` reads the declared
+    here: a structure whose declaration mode is ``assigned`` reads the declared
     raw property id with ``true`` implied, every other structure keeps
     the mapping's own ``assignment_property`` / ``assignment_values``
     untouched, and a declaration for a structure the source record does not
-    map is ignored. A structure declared in ``assigned_on_structures``
-    (the read-only ``Assigned On`` date marker) gets ``assigned_on_property``
-    resolved alongside; the adapter then gives it precedence over the
-    boolean for that structure.
+    map is ignored. A structure whose mode is ``assignedOn`` (the read-only
+    ``Assigned On`` date marker) gets ``assigned_on_property`` resolved
+    alongside; the adapter then gives it precedence over the boolean for that
+    structure.
+
+    One declaration per structure is the whole point of the version-2
+    document: ``types[sid].mode`` is the single authority, so a structure can
+    never be resolved from two settings declarations at once.
 
     Resolution sets ONLY ``assigned_property`` / ``assigned_on_property``.
-    ``assignment_property`` stays exactly as stored, so the boolean
-    declaration cannot reach the adapter's enumeration gate
-    (``_structure_can_contribute``) — the operator chose an assignment check
-    only, and a misconfiguration must never drop work from the plan. A valid
-    ``assigned_on_property`` declaration IS itself an enumeration contributor:
-    with no legacy marker, Active enable, or stored rule the structure would
-    otherwise never be listed, so its date property could never be read and no
-    object could ever reach the assigned surface. An invalid declaration is
-    dropped before the gate, so it enumerates nothing.
+    ``assignment_property`` stays exactly as stored, so a declaration cannot
+    rewrite the operator's record mapping. A valid ``assigned_on_property``
+    declaration IS itself an enumeration contributor: with no legacy marker,
+    Active enable, or stored rule the structure would otherwise never be
+    listed, so its date property could never be read and no object could ever
+    reach the assigned surface. An ``active`` or ``native`` declaration
+    contributes through the evaluator seam instead, and an invalid declaration
+    is dropped by the adapter before the gate, so it enumerates nothing.
     """
-    on_declarations = on_declarations or {}
+    declarations, on_declarations = _mode_declarations(settings)
     if not declarations and not on_declarations:
         return tuple(mappings)
     return tuple(
@@ -1247,7 +1279,7 @@ def build_capacities_adapter(
         return None
 
     settings = read_settings().settings
-    assignment_settings = settings.to_assignment_settings()
+    assignment_settings = AssignmentSettings.from_v2(settings)
     token = load_capacities_token(cfg.token_path)
     effective_transport = transport if transport is not None else cfg.transport
     content_cache = _resolve_content_cache(cfg, record.space_id)
@@ -1269,11 +1301,11 @@ def build_capacities_adapter(
             space_id=record.space_id,
             mappings=_resolve_assigned_structures(
                 record.to_mappings(),
-                settings.assigned_structures,
-                settings.assigned_on_structures,
+                settings,
             ),
             max_pages=cfg.max_pages,
             assignment_settings=assignment_settings,
+            settings=settings,
             content_cache=content_cache,
         ),
     )
@@ -1368,8 +1400,7 @@ def read_direct_intake() -> DirectIntakeRead | None:
     store = build_refresh_state(record.space_id)
     mappings = _resolve_assigned_structures(
         record.to_mappings(),
-        settings.assigned_structures,
-        settings.assigned_on_structures,
+        settings,
     )
     snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
     structures = None
@@ -1595,14 +1626,14 @@ def build_refresh_coordinator(
         space_id=record.space_id,
         mappings=_resolve_assigned_structures(
             record.to_mappings(),
-            settings.assigned_structures,
-            settings.assigned_on_structures,
+            settings,
         ),
         revision_supplier=lambda: refresh_config_revision(),
         space_id_supplier=lambda: refresh_source_space_id(),
         configuration_revision=configuration_revision,
         config_guard=lambda: _config_save_guard(),
-        assignment_settings=settings.to_assignment_settings(),
+        assignment_settings=AssignmentSettings.from_v2(settings),
+        settings=settings,
         rules=rules,
         exclusion_policy=exclusion_policy,
         max_pages=cfg.max_pages,

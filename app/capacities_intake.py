@@ -39,6 +39,7 @@ import capacities_rules  # noqa: E402
 import capacities_tag_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
+from capacities_assignment import AssignmentSettings  # noqa: E402
 from capacities_adapter import (  # noqa: E402
     CapacitiesAdapter,
     CapacitiesConfig,
@@ -189,7 +190,8 @@ def load_direct_rows(
             CapacitiesConfig(
                 space_id=read.space_id,
                 mappings=read.mappings,
-                assignment_settings=read.settings.to_assignment_settings(),
+                assignment_settings=AssignmentSettings.from_v2(read.settings),
+                settings=read.settings,
                 rules=rules,
                 exclusion_policy=policy,
             ),

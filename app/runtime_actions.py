@@ -752,13 +752,10 @@ def _add_capacities_exclusion(step: dict) -> None:
         try:
             saved = capacities_settings.save_settings(
                 expected_revision=current.revision,
-                native_task_auto=current.native_task_auto,
+                statuses=current.statuses,
+                types=current.types,
+                native=current.native,
                 excluded=current.excluded | {identity},
-                active_structures=current.active_structures,
-                native_task_structures=current.native_task_structures,
-                active_statuses=current.active_statuses,
-                assigned_structures=dict(current.assigned_structures),
-                assigned_on_structures=dict(current.assigned_on_structures),
             )
         except capacities_settings.SettingsConflictError as exc:
             _conflict_retried_once(attempt, exc, "Capacities settings")
@@ -778,13 +775,10 @@ def _remove_capacities_exclusion(step: dict) -> None:
         try:
             capacities_settings.save_settings(
                 expected_revision=current.revision,
-                native_task_auto=current.native_task_auto,
+                statuses=current.statuses,
+                types=current.types,
+                native=current.native,
                 excluded=current.excluded - {identity},
-                active_structures=current.active_structures,
-                native_task_structures=current.native_task_structures,
-                active_statuses=current.active_statuses,
-                assigned_structures=dict(current.assigned_structures),
-                assigned_on_structures=dict(current.assigned_on_structures),
             )
         except capacities_settings.SettingsConflictError as exc:
             _conflict_retried_once(attempt, exc, "Capacities settings")
