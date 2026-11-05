@@ -205,7 +205,9 @@ def test_a_removed_mapped_status_option_records_a_warn_change(tmp_path):
     assert record["diff"]["options_removed"] == [[PRIMARY, "status", "blocked"]]
     assert record["from_hash"] == schema.fingerprint(baseline)
     assert record["to_hash"] == schema.fingerprint(current)
-    assert record["generation"] == 2
+    # The notice is stamped with the generation it was detected against, which
+    # for this warm run is the one complete install it made.
+    assert record["generation"] == store.load_snapshot("all").generation
     assert record["acknowledged"] is False
     assert record["acknowledged_at"] is None
     assert record["detected_at"].startswith("2023-11-14T")
@@ -629,6 +631,7 @@ def test_the_notice_adds_no_warning_or_job_field(tmp_path):
         objects={PRIMARY: ["a"], "T2": ["c"]}, structures=_structures_with_blocked()
     )
     baseline_status, store = _run(tmp_path, first)
+    baseline_generation = store.load_snapshot("all").generation
     baseline_keys = set(baseline_status["job"])
 
     changed = _paged_provider(
@@ -642,8 +645,12 @@ def test_the_notice_adds_no_warning_or_job_field(tmp_path):
     assert status["warnings"] == baseline_status["warnings"]
     assert status["warnings"] == []
     assert store.drain_warnings() == []
-    # The published generation and its projection are the ordinary ones.
+    # The published generation and its projection are the ordinary ones: this
+    # run had nothing fresh to read, so it adds exactly one complete generation
+    # on top of the baseline's, with no interim publication in between.
     snapshot = store.load_snapshot("all")
-    assert snapshot is not None and snapshot.generation == 2
+    assert snapshot is not None
+    assert snapshot.generation == baseline_generation + 1
+    assert snapshot.partial is False and snapshot.unchecked_types == ()
     assert {m.object_id for m in snapshot.members} == {"a", "c"}
     assert store.load_structure_contract("all").structures == _structures(*TYPES)
