@@ -4564,6 +4564,8 @@ def create_app() -> FastAPI:
                     "installed_at": None,
                     "member_count": 0,
                     "type_check_times": {},
+                    "partial": False,
+                    "unchecked_types": [],
                 },
             }
         status = coordinator.status()

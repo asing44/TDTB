@@ -2067,6 +2067,14 @@ def _progress_count(value: Any) -> int:
 
 
 def _snapshot_summary(snapshot: refresh_state.CompleteSnapshot | None) -> dict[str, Any]:
+    """The installed generation in the shape the status route answers.
+
+    ``partial`` and ``unchecked_types`` describe the generation on disk, which
+    may be an interim one published while its run was still reading: the named
+    types are those the read had not finished, so they keep their last
+    published state (R7/R9). A complete generation carries ``False`` and an
+    empty list, and so does a missing one.
+    """
     if snapshot is None:
         return {
             "present": False,
@@ -2075,6 +2083,8 @@ def _snapshot_summary(snapshot: refresh_state.CompleteSnapshot | None) -> dict[s
             "installed_at": None,
             "member_count": 0,
             "type_check_times": {},
+            "partial": False,
+            "unchecked_types": [],
         }
     return {
         "present": True,
@@ -2083,6 +2093,8 @@ def _snapshot_summary(snapshot: refresh_state.CompleteSnapshot | None) -> dict[s
         "installed_at": snapshot.installed_at,
         "member_count": len(snapshot.members),
         "type_check_times": dict(snapshot.type_check_times),
+        "partial": snapshot.partial,
+        "unchecked_types": list(snapshot.unchecked_types),
     }
 
 

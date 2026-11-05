@@ -987,6 +987,19 @@ export interface CapacitiesRefreshWaiting {
   resumeAt: number | null;
 }
 
+/** The job's interim-publication record, written while a run is still reading.
+    ``partial`` is true exactly when the generation installed last was an
+    interim one, and ``uncheckedTypes`` then names the type keys the read had
+    not finished: those keep their last published state (R7/R9). */
+export interface CapacitiesRefreshPublication {
+  partial: boolean;
+  interimCount: number;
+  generation: number;
+  installedAt: number | null;
+  uncheckedTypes: string[];
+  completedTypes: string[];
+}
+
 /** Bounded progress counters for the running job. ``toRead`` is the count of
     listed objects this run still means to read (uncached, past the TTL, or
     every object under rescan); it is null when the server did not report it
@@ -999,6 +1012,13 @@ export interface CapacitiesRefreshProgress {
   waiting: CapacitiesRefreshWaiting | null;
   /** Per-type read counters, in server order. */
   types: Record<string, number>;
+  /** The job's interim-publication record, or null when the server reported
+      none. Additive: older job documents and hand-built fixtures omit it, and
+      it is never invented. */
+  publication?: CapacitiesRefreshPublication | null;
+  /** The type keys this run has not finished reading, in server order.
+      Additive: absent means "not reported", which reads as no names. */
+  uncheckedTypes?: string[];
 }
 
 /** One per-type coverage entry from the installed snapshot. */
@@ -1008,7 +1028,11 @@ export interface CapacitiesRefreshCoverage {
   freshlyRead: number;
 }
 
-/** The last complete generation's summary; ``present: false`` means none. */
+/** The last complete generation's summary; ``present: false`` means none.
+    ``partial`` marks a generation published while its run was still reading:
+    ``uncheckedTypes`` then names the types kept at their last published state.
+    Both are additive, so an older payload or hand-built fixture that omits
+    them reads as a complete generation with no unchecked types. */
 export interface CapacitiesRefreshSnapshot {
   present: boolean;
   generation: number;
@@ -1016,6 +1040,8 @@ export interface CapacitiesRefreshSnapshot {
   installedAt: number | null;
   memberCount: number;
   typeCheckTimes: Record<string, number>;
+  partial?: boolean;
+  uncheckedTypes?: string[];
 }
 
 /** The two severities a stored schema-change notice may carry. ``warn`` means

@@ -11,11 +11,13 @@ import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { CapacitiesRefreshPanel } from "./CapacitiesRefreshPanel";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
 import { makeHarness } from "./test-harness";
+import { projectCapacitiesRefreshStatus } from "../adapters/wire";
 import {
   refreshProgressText,
 } from "./useCapacitiesRefreshJob";
 import type {
   CapacitiesRefreshProgress,
+  CapacitiesRefreshSnapshot,
   CapacitiesRefreshStatus,
   CapacitiesRefreshWaiting,
 } from "../model/types";
@@ -59,6 +61,7 @@ function statusWith(patch: {
   phase?: string;
   outcome?: string | null;
   progress?: Partial<CapacitiesRefreshProgress>;
+  snapshot?: Partial<CapacitiesRefreshSnapshot>;
   finishedAt?: number | null;
   warnings?: string[];
 }): CapacitiesRefreshStatus {
@@ -73,6 +76,7 @@ function statusWith(patch: {
     outcome,
     progress,
     warnings,
+    snapshot: { ...base.snapshot, ...(patch.snapshot ?? {}) },
     job: {
       ...base.job!,
       phase,
@@ -279,5 +283,86 @@ describe("CapacitiesRefreshPanel", () => {
     const count = load.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 1400));
     expect(load.mock.calls.length).toBe(count);
+  });
+});
+
+describe("CapacitiesRefreshPanel still-checking notice", () => {
+  const partialNotice = (container: HTMLElement) =>
+    container.querySelector("[data-refresh-partial]");
+
+  it("names the unchecked types while the read is still in progress (AE4)", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(
+      statusWith({
+        phase: "reading",
+        progress: { listed: 12, read: 4, toRead: 12 },
+        snapshot: {
+          present: true,
+          generation: 7,
+          installedAt: 1_000,
+          memberCount: 4,
+          typeCheckTimes: { Task: 1_000 },
+          partial: true,
+          uncheckedTypes: ["Project", "Task"],
+        },
+      }),
+    );
+    const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
+
+    await waitFor(() => expect(partialNotice(rendered.container)).toBeTruthy());
+    const text = partialNotice(rendered.container)!.textContent ?? "";
+    expect(text).toContain("Still checking");
+    // Both names are the server's, in the server's order; neither is invented.
+    expect(text).toContain("Project");
+    expect(text).toContain("Task");
+    expect(text).toContain("last published state");
+    // An interim generation is not a full refresh, and the summary says so.
+    expect(rendered.container.textContent).toContain("Last published");
+    expect(rendered.container.textContent).not.toContain("Last full refresh");
+    // The notice rides the plain surface, not the closed technical disclosure.
+    expect(
+      partialNotice(rendered.container)!.closest("details"),
+    ).toBeNull();
+  });
+
+  it("says nothing partial once the snapshot is complete", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(
+      statusWith({
+        phase: "complete",
+        outcome: "published",
+        finishedAt: Date.UTC(2026, 9, 19, 12, 34, 0) / 1000,
+        progress: { listed: 12, read: 12, toRead: 12 },
+        snapshot: { present: true, generation: 8, installedAt: 1_000, memberCount: 12 },
+      }),
+    );
+    const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
+
+    await waitFor(() => expect(rendered.queryByText(/Last refreshed /)).toBeTruthy());
+    expect(partialNotice(rendered.container)).toBeNull();
+    expect(rendered.container.textContent).not.toContain("Still checking");
+  });
+
+  it("renders no fake notice from a malformed payload", async () => {
+    const h = makeHarness("ready");
+    const malformed = projectCapacitiesRefreshStatus({
+      configured: true,
+      phase: "reading",
+      progress: { listed: 12, read: 4, unchecked_types: "Task" },
+      snapshot: {
+        present: true,
+        generation: 7,
+        partial: "yes",
+        unchecked_types: { Task: true },
+      },
+    });
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(malformed);
+    const rendered = h.ui(<CapacitiesRefreshPanel active={true} />);
+
+    await waitFor(() =>
+      expect(rendered.getByRole("button", { name: "Refresh now" })).toBeTruthy(),
+    );
+    expect(partialNotice(rendered.container)).toBeNull();
+    expect(rendered.container.textContent).not.toContain("Still checking");
   });
 });

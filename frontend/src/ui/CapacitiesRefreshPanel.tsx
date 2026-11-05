@@ -112,6 +112,26 @@ function plainStatusLine(status: CapacitiesRefreshStatus): string | null {
   return status.snapshot?.present ? "Up to date." : "Not refreshed yet.";
 }
 
+/** R7/R9: the still-checking sentence for an interim publication.
+
+    It is derived only from the installed snapshot's own flags, so a checked
+    type is never named unchecked (or the reverse). A generation the server
+    did not flag partial renders nothing at all, and a partial one with no
+    names still says the read is unfinished rather than inventing names. */
+function partialNoticeText(status: CapacitiesRefreshStatus, running: boolean): string | null {
+  if (status.snapshot?.partial !== true) return null;
+  const names = status.snapshot.uncheckedTypes ?? [];
+  const named = names.length > 0 ? `${names.join(", ")}.` : "";
+  if (running) {
+    return names.length > 0
+      ? `Still checking ${named} Those types keep their last published state until this read finishes.`
+      : "Still checking. Some types keep their last published state until this read finishes.";
+  }
+  return names.length > 0
+    ? `Still unchecked from the last refresh: ${named} Those types keep their last published state.`
+    : "Some types were not fully checked in the last refresh; they keep their last published state.";
+}
+
 export function CapacitiesRefreshPanel({
   active,
   extraNotes = [],
@@ -171,6 +191,11 @@ export function CapacitiesRefreshPanel({
 
   const progressText = running ? plainProgressText(status, nowMs) : null;
   const summaryText = running || !status ? null : runSummaryText(status);
+  // The still-checking notice describes the plan on disk, not the running job:
+  // only the installed snapshot knows which types kept their last published
+  // state. Its label follows the run so a stopped interim never reads as live.
+  const partialText = status ? partialNoticeText(status, running) : null;
+  const partialLabel = running ? "Still checking" : "Partly checked";
   // A wait is a running state; spell it out so Cancel stays offered there.
   const statusLine = status ? plainStatusLine(status) : null;
   const cancellable = running || waiting !== null;
@@ -301,6 +326,16 @@ export function CapacitiesRefreshPanel({
             )}
             {summaryText && <p class="capacities-settings__hint">{summaryText}</p>}
 
+            {partialText && (
+              <p
+                class="capacities-settings__state"
+                role="status"
+                data-refresh-partial="true"
+              >
+                <span class="chip">{partialLabel}</span> {partialText}
+              </p>
+            )}
+
             {attentionCount > 0 && (
               <section class="settings-hub__attention" aria-label="Needs attention">
                 <p class="settings-hub__attention-head">
@@ -359,7 +394,8 @@ export function CapacitiesRefreshPanel({
             <div class="capacities-snapshot">
               {snapshot && snapshot.present ? (
                 <p class="capacities-settings__hint">
-                  Last full refresh: {formatWhen(snapshot.installedAt)} · {snapshot.memberCount} items
+                  {snapshot.partial === true ? "Last published" : "Last full refresh"}:{" "}
+                  {formatWhen(snapshot.installedAt)} · {snapshot.memberCount} items
                 </p>
               ) : (
                 <p class="capacities-settings__empty">No full refresh has finished yet.</p>
@@ -388,7 +424,7 @@ export function CapacitiesRefreshPanel({
               </dl>
               {snapshot && snapshot.present && (
                 <p class="capacities-settings__hint">
-                  Last complete generation {snapshot.generation} · {snapshot.memberCount} members · installed {formatTimestamp(snapshot.installedAt)}
+                  Last {snapshot.partial === true ? "interim" : "complete"} generation {snapshot.generation} · {snapshot.memberCount} members · installed {formatTimestamp(snapshot.installedAt)}
                 </p>
               )}
             </details>

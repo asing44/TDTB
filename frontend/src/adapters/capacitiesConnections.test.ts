@@ -200,6 +200,9 @@ describe("capacities refresh status projection", () => {
       toRead: null,
       waiting: null,
       types: { Project: 3 },
+      // Additive interim-publication keys: this job reports neither.
+      publication: null,
+      uncheckedTypes: [],
     });
     expect(status.progress.read).toBe(5);
     expect(status.coverage.Project).toEqual({
@@ -214,6 +217,9 @@ describe("capacities refresh status projection", () => {
       installedAt: 990,
       memberCount: 3,
       typeCheckTimes: { Project: 995 },
+      // Additive KTD6 keys: a generation the server did not flag is complete.
+      partial: false,
+      uncheckedTypes: [],
     });
   });
 
@@ -245,6 +251,8 @@ describe("capacities refresh status projection", () => {
       toRead: null,
       waiting: null,
       types: {},
+      publication: null,
+      uncheckedTypes: [],
     });
   });
 

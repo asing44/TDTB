@@ -726,6 +726,90 @@ describe("projectCapacitiesRefreshStatus additive KTD4 keys", () => {
   });
 });
 
+describe("projectCapacitiesRefreshStatus interim publication keys", () => {
+  it("projects the interim publication and the unchecked type keys", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      phase: "reading",
+      progress: {
+        listed: 227,
+        read: 176,
+        to_read: 51,
+        types: { Task: 12 },
+        unchecked_types: ["Project", "Task"],
+        publication: {
+          partial: true,
+          interim_count: 2,
+          generation: 9,
+          installed_at: 1792500000.5,
+          unchecked_types: ["Project"],
+          completed_types: ["Task"],
+        },
+      },
+      snapshot: {
+        present: true,
+        generation: 9,
+        revision: null,
+        installed_at: 1792500000.5,
+        member_count: 12,
+        type_check_times: { Task: 1792500000.5 },
+        partial: true,
+        unchecked_types: ["Project"],
+      },
+    });
+
+    expect(status.progress.publication).toEqual({
+      partial: true,
+      interimCount: 2,
+      generation: 9,
+      installedAt: 1792500000.5,
+      uncheckedTypes: ["Project"],
+      completedTypes: ["Task"],
+    });
+    expect(status.progress.uncheckedTypes).toEqual(["Project", "Task"]);
+    expect(status.snapshot.partial).toBe(true);
+    expect(status.snapshot.uncheckedTypes).toEqual(["Project"]);
+  });
+
+  it("projects the safe empty state when an older payload omits both", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      progress: { listed: 12, read: 12, types: {} },
+      snapshot: { present: true, generation: 4, member_count: 12 },
+    });
+
+    expect(status.progress.publication).toBeNull();
+    expect(status.progress.uncheckedTypes).toEqual([]);
+    expect(status.snapshot.partial).toBe(false);
+    expect(status.snapshot.uncheckedTypes).toEqual([]);
+  });
+
+  it("never invents a partial state or a type name from a malformed block", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      progress: {
+        listed: 1,
+        read: 0,
+        unchecked_types: "Task",
+        publication: { partial: "yes", unchecked_types: { Task: true } },
+      },
+      snapshot: {
+        present: true,
+        generation: 4,
+        partial: "yes",
+        unchecked_types: [{ name: "Task" }],
+      },
+    });
+
+    // Unknown shapes read as "no interim publication" and "no names", never as
+    // a notice naming types the server did not report.
+    expect(status.progress.publication).toBeNull();
+    expect(status.progress.uncheckedTypes).toEqual([]);
+    expect(status.snapshot.partial).toBe(false);
+    expect(status.snapshot.uncheckedTypes).toEqual([]);
+  });
+});
+
 describe("Capacities partial coverage (source_warnings)", () => {
   const budgetWarning =
     "Capacities partial — 20 evaluated · 51 deferred across contributing " +

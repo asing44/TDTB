@@ -34,6 +34,7 @@ import type {
   CapacitiesRefreshJob,
   CapacitiesRefreshMode,
   CapacitiesRefreshProgress,
+  CapacitiesRefreshPublication,
   CapacitiesRefreshSnapshot,
   CapacitiesRefreshStatus,
   CapacitiesRefreshWaiting,
@@ -2209,6 +2210,42 @@ function projectCapacitiesRefreshProgress(raw: unknown): CapacitiesRefreshProgre
     toRead: nonNegativeIntegerOrNull(block.to_read),
     waiting: projectCapacitiesRefreshWaiting(block.waiting),
     types,
+    publication: projectCapacitiesRefreshPublication(block.publication),
+    uncheckedTypes: typeKeysOrEmpty(block.unchecked_types),
+  };
+}
+
+/** Type keys from a wire list, keeping only real nonblank strings. A malformed
+    entry is dropped rather than stringified into an invented type name: the
+    names this projects may only ever be the server's own type keys. */
+function typeKeysOrEmpty(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") continue;
+    const key = value.trim();
+    if (key !== "" && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/** Project the additive ``progress.publication`` block. Only an interim
+    publication is reportable, so a block without a boolean ``partial`` —
+    absent, malformed, or unusable — projects as null instead of as a
+    fabricated still-checking record. Names are server keys only. */
+function projectCapacitiesRefreshPublication(
+  raw: unknown,
+): CapacitiesRefreshPublication | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const block = raw as Wire;
+  if (typeof block.partial !== "boolean") return null;
+  return {
+    partial: block.partial,
+    interimCount: nonNegativeIntegerOrNull(block.interim_count) ?? 0,
+    generation: nonNegativeIntegerOrNull(block.generation) ?? 0,
+    installedAt: finiteNumberOrNull(block.installed_at),
+    uncheckedTypes: typeKeysOrEmpty(block.unchecked_types),
+    completedTypes: typeKeysOrEmpty(block.completed_types),
   };
 }
 
@@ -2268,6 +2305,10 @@ function projectCapacitiesRefreshSnapshot(raw: unknown): CapacitiesRefreshSnapsh
     installedAt: finiteNumberOrNull(block.installed_at),
     memberCount: nonNegativeIntegerOrNull(block.member_count) ?? 0,
     typeCheckTimes,
+    // Additive keys (KTD6): absent or malformed reads as a complete generation
+    // with no names, never as an invented still-checking state.
+    partial: block.partial === true,
+    uncheckedTypes: typeKeysOrEmpty(block.unchecked_types),
   };
 }
 

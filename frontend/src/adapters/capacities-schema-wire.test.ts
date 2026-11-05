@@ -173,6 +173,9 @@ describe("projectCapacitiesRefreshStatus schema_change", () => {
       toRead: 3,
       waiting: null,
       types: { Task: 2 },
+      // Additive interim-publication keys: absent here, so no interim record.
+      publication: null,
+      uncheckedTypes: [],
     });
     expect(status.warnings).toEqual(["partial"]);
     expect(status.snapshot).toMatchObject({ present: true, generation: 4, memberCount: 3 });

@@ -2129,6 +2129,43 @@ def test_the_complete_install_clears_partial_and_drops_unconfirmed_members(tmp_p
     assert status["progress"]["unchecked_types"] == []
 
 
+def test_the_status_snapshot_reports_partial_and_unchecked_types(tmp_path):
+    """R7/R9: the status snapshot says which types are still unchecked.
+
+    The snapshot summary is what the Settings panel reads, so the interim
+    generation must be visible there as ``partial`` with the unchecked type
+    keys named, and the complete install must clear both.
+    """
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+    during = []
+
+    def observe(object_id):
+        if object_id == "c":
+            during.append(coordinator.status())
+
+    provider.on_get = observe
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert len(during) == 1
+    interim = during[0]["snapshot"]
+    assert interim["present"] is True
+    assert interim["partial"] is True
+    assert interim["unchecked_types"] == ["T2"]
+    # No unchecked type is claimed as checked, and none is invented.
+    assert interim["type_check_times"] == {PRIMARY: interim["type_check_times"][PRIMARY]}
+    final = status["snapshot"]
+    assert final["partial"] is False
+    assert final["unchecked_types"] == []
+    # A missing snapshot still answers both keys, so no reader has to guess.
+    absent = rr._snapshot_summary(None)
+    assert absent["partial"] is False
+    assert absent["unchecked_types"] == []
+
+
 def test_cancellation_after_an_interim_leaves_it_partial_with_a_warning(tmp_path):
     """R8: a run that stops after an interim leaves it in place, marked."""
     provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
