@@ -14,13 +14,20 @@ Contract (KTD1–KTD3):
 * **One machine-local single-flight job.** A process-local lock plus a POSIX
   advisory lock file serialize Refresh/Rescan across threads and processes.
   Status queries make no provider call and never spawn work.
-* **Endpoint-aware pacing.** GET/content reads default to the documented 30
-  requests per 60 seconds; listings carry their own policy and per-page cost.
-  ``Retry-After``/rate-limit-reset headers are honored when present (up to
-  ``max_backoff``) and a conservative clock pacing is used when they are
-  absent. A rate-limited run waits and resumes by itself within a per-run wait
-  budget; an explicit ``max_retries`` keeps the older count bound. Errors stay
-  truthful and cancellation interrupts every backoff.
+* **Endpoint-aware pacing.** Every response's rate-limit headers are parsed
+  into one budget per endpoint (``RateLimit``/``ratelimit-*`` forms, lowest
+  remaining wins), so pacing follows the API's own numbers while that budget
+  is current: a header above the documented 30 requests per 60 seconds raises
+  throughput, one below lowers it. When no usable header is present — or the
+  budget's reset passes unrefreshed — the documented 30 per 60 seconds governs
+  again. ``Retry-After`` keeps its 429 meaning (up to ``max_backoff``). A
+  rate-limited run waits and resumes by itself within a per-run wait budget;
+  an explicit ``max_retries`` keeps the older count bound. Errors stay truthful
+  and cancellation interrupts every backoff.
+* **Measured runs.** A job document carries a ``progress.metrics`` block with
+  the run's own read count, read timings, read rate per minute, elapsed time,
+  cold flag, 429 count, and the last observed content limit — additive
+  numbers, booleans, and nulls only, never content or exception text.
 * **Read-through refresh TTL.** An explicit Refresh reuses cached object
   content younger than :data:`DEFAULT_CONTENT_TTL_SECONDS` (10 minutes) with
   zero provider reads, so a back-to-back Refresh stays cheap, and re-reads
@@ -213,6 +220,156 @@ def _coerce_seconds(value: Any) -> float | None:
     return number
 
 
+def _coerce_count(value: Any) -> int | None:
+    """An integer read out of a header value, or ``None``.
+
+    A quantity is only usable when it is written as an integer: ``"5"`` is,
+    ``"4.5"`` and ``"four"`` are not, so a malformed number can never widen
+    the pacing budget it was meant to describe.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+#: The rolling window (seconds) of the conservative fallback policy. A header
+#: ``reset`` longer than twice this is not a rate-limit window this module can
+#: trust, so such an observation counts as unusable and the fallback applies.
+FALLBACK_RATE_WINDOW_SECONDS: float = DEFAULT_POLICIES[ENDPOINT_CONTENT].window
+
+#: Response header names that carry a whole rate-limit policy (IETF draft-8).
+RATE_LIMIT_HEADER_NAMES = ("ratelimit", "rate-limit")
+
+#: Per-item policy keys: the structured-field short names (``q``/``r``/``t``)
+#: and their spelled-out equivalents.
+RATE_LIMIT_FIELD_ALIASES = {
+    "q": "limit",
+    "limit": "limit",
+    "r": "remaining",
+    "remaining": "remaining",
+    "t": "reset",
+    "reset": "reset",
+}
+
+#: The split per-field headers read today, most specific prefix first.
+RATE_LIMIT_SPLIT_PREFIXES = ("x-ratelimit-", "ratelimit-", "rate-limit-")
+
+
+@dataclass(frozen=True)
+class RateLimitObservation:
+    """One usable rate-limit budget taken from a response's headers.
+
+    ``reset_seconds`` is the response's own delta-seconds until the window
+    resets, and ``limit`` is the policy's stated ceiling when the header
+    carries one. Anything that is not usable yields ``None`` from
+    :func:`parse_rate_limit`, so the caller keeps its conservative fallback.
+    """
+
+    limit: int | None
+    remaining: int
+    reset_seconds: float
+
+
+def _split_rate_limit_policies(value: str) -> list[dict[str, str]]:
+    """Break one rate-limit header value into per-policy field maps.
+
+    Accepts both published shapes: the parameter list Capacities sends today
+    (``limit=5, remaining=4, reset=58``) and the structured-field form
+    (``"default";r=4;t=58``, optionally several comma-separated policies).
+    Comma-separated items are separate policies only when at least one item
+    names a policy; otherwise they are the parameters of a single policy.
+    """
+    parsed: list[tuple[str | None, dict[str, str]]] = []
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        name: str | None = None
+        fields: dict[str, str] = {}
+        for segment in item.split(";"):
+            segment = segment.strip()
+            if not segment:
+                continue
+            raw_key, separator, raw_value = segment.partition("=")
+            if separator:
+                field = RATE_LIMIT_FIELD_ALIASES.get(
+                    raw_key.strip().strip('"').lower()
+                )
+                if field is not None:
+                    fields[field] = raw_value.strip().strip('"')
+            elif name is None:
+                name = segment.strip('"')
+        parsed.append((name, fields))
+    if any(name is not None for name, _ in parsed):
+        return [fields for _, fields in parsed]
+    merged: dict[str, str] = {}
+    for _, fields in parsed:
+        merged.update(fields)
+    return [merged] if merged else []
+
+
+def _observation_from_fields(
+    fields: Mapping[str, str],
+) -> RateLimitObservation | None:
+    """Coerce one policy's fields into an observation, or ``None``."""
+    remaining = _coerce_count(fields.get("remaining"))
+    if remaining is None or remaining < 0:
+        return None
+    reset = _coerce_seconds(fields.get("reset"))
+    if reset is None or reset > 2 * FALLBACK_RATE_WINDOW_SECONDS:
+        return None
+    limit: int | None = None
+    if "limit" in fields:
+        limit = _coerce_count(fields.get("limit"))
+        if limit is None or limit < 0:
+            return None
+    return RateLimitObservation(
+        limit=limit, remaining=remaining, reset_seconds=float(reset)
+    )
+
+
+def parse_rate_limit(headers: Any) -> RateLimitObservation | None:
+    """The tightest usable rate-limit budget in ``headers``, or ``None``.
+
+    Tolerant by design: the combined ``RateLimit`` header (either published
+    shape) is read first, then the split ``x-ratelimit-*``/``ratelimit-*``
+    fields this module has always honored. Several policies in one header mean
+    the lowest ``remaining`` wins, because the tightest stated budget is the
+    one that cannot be exceeded. A missing or non-integer ``remaining``, a
+    negative number, an unusable ``limit``, or a reset longer than twice the
+    fallback window is unusable, so the caller keeps its conservative window.
+    ``Retry-After`` is not a budget and is never read here.
+    """
+    if not isinstance(headers, Mapping):
+        return None
+    lowered = {str(key).strip().lower(): value for key, value in headers.items()}
+    observations: list[RateLimitObservation] = []
+    for name in RATE_LIMIT_HEADER_NAMES:
+        value = lowered.get(name)
+        if value is None:
+            continue
+        for fields in _split_rate_limit_policies(str(value)):
+            observation = _observation_from_fields(fields)
+            if observation is not None:
+                observations.append(observation)
+    if not observations:
+        split_fields: dict[str, str] = {}
+        for prefix in RATE_LIMIT_SPLIT_PREFIXES:
+            for field in ("limit", "remaining", "reset"):
+                key = f"{prefix}{field}"
+                if key in lowered and field not in split_fields:
+                    split_fields[field] = str(lowered[key])
+        if split_fields:
+            observation = _observation_from_fields(split_fields)
+            if observation is not None:
+                observations.append(observation)
+    if not observations:
+        return None
+    return min(observations, key=lambda item: item.remaining)
+
+
 def _bounded_identifier(value: Any) -> str | None:
     """A short, content-free token from an exception's own code/kind field.
 
@@ -273,6 +430,22 @@ def _failure_where_line(stage: Any) -> str | None:
     return None
 
 
+@dataclass
+class _HeaderBudget:
+    """A live per-endpoint budget taken from one response's headers.
+
+    ``remaining`` counts down locally, ``reset_at`` is the monotonic instant
+    the API said the window resets, and ``limit`` is the stated ceiling when
+    the header carried one. A budget governs pacing only while it is current;
+    once ``reset_at`` passes without a newer observation the conservative
+    fallback window governs again.
+    """
+
+    remaining: int
+    reset_at: float
+    limit: int | None
+
+
 class ProviderPacer:
     """Endpoint-aware, clock-injectable request pacing and 429 backoff."""
 
@@ -307,9 +480,15 @@ class ProviderPacer:
         self.on_wait = on_wait
         #: Cumulative 429 / reset-header cooldown seconds slept in this run.
         self.rate_limit_slept = 0.0
+        #: 429 responses handled in this run; reset by :meth:`begin_run`.
+        self.rate_limited = 0
+        #: The last usable header limit per endpoint (``{limit, window}``),
+        #: kept for the job's run metrics and reset by :meth:`begin_run`.
+        self.observed_limits: dict[str, dict[str, Any]] = {}
         self._times: dict[str, deque[float]] = {}
         self._cooldown_until: dict[str, float] = {}
         self._retry_after: dict[str, float] = {}
+        self._budgets: dict[str, _HeaderBudget] = {}
         self.sleep_calls: list[float] = []
 
     # -- policy / bookkeeping ------------------------------------------
@@ -336,8 +515,11 @@ class ProviderPacer:
         self._check_cancel()
 
     def begin_run(self) -> None:
-        """Reset the per-run rate-limit wait accounting."""
+        """Reset the per-run rate-limit accounting and header budgets."""
         self.rate_limit_slept = 0.0
+        self.rate_limited = 0
+        self.observed_limits.clear()
+        self._budgets.clear()
 
     def _notify_wait(self, endpoint: str, seconds: float, reason: str | None) -> None:
         """Report one rate-limit wait to the hook, then its end (``None``).
@@ -358,23 +540,50 @@ class ProviderPacer:
         finally:
             self._notify_wait(endpoint, 0.0, None)
 
+    def _current_budget(self, endpoint: str) -> _HeaderBudget | None:
+        """This endpoint's live header budget, expiring it when stale."""
+        budget = self._budgets.get(endpoint)
+        if budget is not None and self._clock() >= budget.reset_at:
+            self._budgets.pop(endpoint, None)
+            return None
+        return budget
+
     # -- request admission ---------------------------------------------
 
     def before_request(self, endpoint: str) -> None:
-        """Block until one request for ``endpoint`` is within policy."""
+        """Block until one request for ``endpoint`` is within policy.
+
+        While a header budget is current it alone governs: the local
+        ``remaining`` counts down and reaching zero waits out ``reset_at``
+        through the rate-limit cooldown path, so no request ever exceeds what
+        the API said was left. Once that budget is absent or expired, the
+        conservative rolling window applies as before.
+        """
         self._check_cancel()
         policy = self._policy(endpoint)
         times = self._times_for(endpoint)
         now = self._clock()
-        while times and now - times[0] >= policy.window:
-            times.popleft()
-        if policy.limit > 0 and len(times) >= policy.limit:
-            wait = policy.window - (now - times[0])
-            if wait > 0:
-                self.sleep(wait)
+        budget = self._current_budget(endpoint)
+        if budget is not None:
+            if budget.remaining > 0:
+                budget.remaining -= 1
+            else:
+                wait = max(0.0, budget.reset_at - now)
+                if wait > 0:
+                    self._wait_after_rate_limit(endpoint, wait)
+                self._budgets.pop(endpoint, None)
                 now = self._clock()
-                while times and now - times[0] >= policy.window:
-                    times.popleft()
+                budget = None
+        if budget is None:
+            while times and now - times[0] >= policy.window:
+                times.popleft()
+            if policy.limit > 0 and len(times) >= policy.limit:
+                wait = policy.window - (now - times[0])
+                if wait > 0:
+                    self.sleep(wait)
+                    now = self._clock()
+                    while times and now - times[0] >= policy.window:
+                        times.popleft()
         if policy.min_interval > 0 and times:
             gap = now - times[-1]
             if gap < policy.min_interval:
@@ -389,25 +598,33 @@ class ProviderPacer:
     # -- response observation ------------------------------------------
 
     def observe(self, endpoint: str, headers: Any) -> None:
-        """Record optional rate-limit headers conservatively."""
+        """Record optional rate-limit headers conservatively.
+
+        A usable rate-limit header replaces this endpoint's budget, so pacing
+        follows the API's own per-endpoint numbers until ``reset_at`` passes;
+        an absent or unusable header leaves the fallback window in charge.
+        ``Retry-After`` keeps its existing 429 meaning. Every response's
+        headers — including a 429's — reach this seam, so the budget stays
+        current without an extra provider call.
+        """
         if not isinstance(headers, Mapping):
             return
         lowered = {str(key).lower(): value for key, value in headers.items()}
         retry = _coerce_seconds(lowered.get("retry-after"))
-        remaining = lowered.get("x-ratelimit-remaining")
-        if remaining is None:
-            remaining = lowered.get("ratelimit-remaining")
-        reset = _coerce_seconds(
-            lowered.get("x-ratelimit-reset")
-            if lowered.get("x-ratelimit-reset") is not None
-            else lowered.get("ratelimit-reset")
-        )
+        observation = parse_rate_limit(lowered)
+        if observation is not None:
+            self._budgets[endpoint] = _HeaderBudget(
+                remaining=observation.remaining,
+                reset_at=self._clock() + observation.reset_seconds,
+                limit=observation.limit,
+            )
+            if observation.limit is not None:
+                self.observed_limits[endpoint] = {
+                    "limit": int(observation.limit),
+                    "window": float(observation.reset_seconds),
+                }
         if retry is not None:
             self.note_rate_limited(endpoint, retry)
-        elif str(remaining).strip() == "0" and reset is not None:
-            self._cooldown_until[endpoint] = max(
-                self._cooldown_until.get(endpoint, 0.0), self._clock() + reset
-            )
 
     def note_rate_limited(self, endpoint: str, retry_after: float | None) -> None:
         delay = retry_after
@@ -439,6 +656,9 @@ class ProviderPacer:
             except RefreshCancelled:
                 raise
             except capacities_adapter.CapacitiesRateLimited as exc:
+                # Counted per run from the response that actually arrived, so
+                # a job document can state whether a run met its 429 limit.
+                self.rate_limited += 1
                 self.note_rate_limited(endpoint, getattr(exc, "retry_after", None))
                 if self.max_retries is not None and attempt >= self.max_retries:
                     raise
@@ -844,6 +1064,10 @@ class RefreshCoordinator:
         #: The bounded acquisition stage the job is currently in; used only to
         #: attribute a catch-all failure (``Where: list|read|assemble|install``).
         self._stage: str | None = "list"
+        #: Wall-clock times of this run's first and last fresh content read;
+        #: used only by the job's ``progress.metrics`` block, never admission.
+        self._read_started_at: float | None = None
+        self._read_finished_at: float | None = None
 
     # -- paths / persistence -------------------------------------------
 
@@ -1028,6 +1252,8 @@ class RefreshCoordinator:
 
     def _run(self) -> None:
         self.pacer.begin_run()
+        self._read_started_at = None
+        self._read_finished_at = None
         try:
             self._acquire()
         except RefreshCancelled:
@@ -1098,6 +1324,47 @@ class RefreshCoordinator:
         )
         return detail
 
+    def _build_metrics(self, *, finished_at: float) -> dict[str, Any]:
+        """This run's own numbers for the job's ``progress.metrics`` block.
+
+        Every value is a number, boolean, or null: nothing derived from object
+        content or exception text is stored. ``read_rate_per_minute`` covers
+        only the read phase (it excludes listing time) and is null when the run
+        performed no fresh read or both reads landed on one instant, so it
+        never divides by zero.
+        """
+        job = self._job or {}
+        progress = job.get("progress") or {}
+        reads = _progress_count(progress.get("read"))
+        listed = _progress_count(progress.get("listed"))
+        to_read = _progress_count(progress.get("to_read"))
+        started_at = job.get("started_at")
+        started = (
+            float(started_at)
+            if isinstance(started_at, (int, float)) and not isinstance(started_at, bool)
+            else None
+        )
+        first = self._read_started_at
+        last = self._read_finished_at
+        rate: float | None = None
+        if reads > 0 and first is not None and last is not None:
+            minutes = (last - first) / 60.0
+            if minutes > 0:
+                rate = reads / minutes
+        observed = self.pacer.observed_limits.get(ENDPOINT_CONTENT)
+        return {
+            "reads": reads,
+            "read_started_at": first,
+            "read_finished_at": last,
+            "read_rate_per_minute": rate,
+            "elapsed_seconds": (
+                None if started is None else float(finished_at) - started
+            ),
+            "cold": bool(job.get("mode") == "rescan" or to_read == listed),
+            "rate_limited": int(self.pacer.rate_limited),
+            "observed_limit": dict(observed) if observed is not None else None,
+        }
+
     def _finish(self, phase: str, outcome: str, warnings: list[str]) -> None:
         job = self._job or {}
         now = self._wall_clock()
@@ -1114,7 +1381,9 @@ class RefreshCoordinator:
             "finished_at": now,
         }
         self._job = job
-        self._persist_job()
+        # Finalize the run metrics against the real finish instant; a run that
+        # never reached its read phase still gets the elapsed time it consumed.
+        self._progress_field("metrics", self._build_metrics(finished_at=now))
 
     def _set_phase(self, phase: str) -> None:
         if self.cancel_event.is_set():
@@ -1302,7 +1571,16 @@ class RefreshCoordinator:
                 if fresh:
                     # Only an actual provider read advances the read counter, so
                     # the job's progress stays truthful when content is reused.
+                    read_at = self._wall_clock()
+                    if self._read_started_at is None:
+                        self._read_started_at = read_at
+                    self._read_finished_at = read_at
                     self._progress(type_key=type_key, read=1)
+        # The read phase is over: publish its own numbers before the run moves
+        # on to assembly, so a run that fails later still reports what it read.
+        self._progress_field(
+            "metrics", self._build_metrics(finished_at=self._wall_clock())
+        )
         if unreadable:
             raise RefreshIncomplete(
                 "One or more required Capacities objects could not be read; "
@@ -1513,6 +1791,13 @@ class RefreshCoordinator:
 
 def _raise_cancelled() -> None:
     raise RefreshCancelled("cancelled")
+
+
+def _progress_count(value: Any) -> int:
+    """A non-negative count read back out of the job's ``progress`` block."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return max(0, int(value))
 
 
 def _snapshot_summary(snapshot: refresh_state.CompleteSnapshot | None) -> dict[str, Any]:

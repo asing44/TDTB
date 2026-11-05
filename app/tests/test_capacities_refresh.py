@@ -1502,3 +1502,450 @@ def test_cancel_during_long_rate_limit_wait_keeps_prior_generation(tmp_path):
     snapshot = store.load_snapshot("all")
     assert snapshot is not None and snapshot.generation == 1
     assert status["progress"]["waiting"] is None
+
+
+# ---------------------------------------------------------------------------
+# Latency plan U1 (KTD1) — one tolerant RateLimit parser
+# ---------------------------------------------------------------------------
+
+def test_parse_rate_limit_reads_the_combined_draft_header():
+    observation = rr.parse_rate_limit({"RateLimit": "limit=5, remaining=4, reset=58"})
+
+    assert observation == rr.RateLimitObservation(
+        limit=5, remaining=4, reset_seconds=58.0
+    )
+
+
+def test_parse_rate_limit_reads_the_structured_field_form():
+    observation = rr.parse_rate_limit({"RateLimit": '"default";q=5;r=4;t=58'})
+
+    assert observation == rr.RateLimitObservation(
+        limit=5, remaining=4, reset_seconds=58.0
+    )
+
+
+def test_parse_rate_limit_reads_the_structured_field_form_without_a_limit():
+    observation = rr.parse_rate_limit({"ratelimit": '"default";r=4;t=58'})
+
+    assert observation == rr.RateLimitObservation(
+        limit=None, remaining=4, reset_seconds=58.0
+    )
+
+
+def test_parse_rate_limit_reads_the_split_x_ratelimit_headers():
+    observation = rr.parse_rate_limit(
+        {
+            "X-RateLimit-Limit": "30",
+            "X-RateLimit-Remaining": "12",
+            "X-RateLimit-Reset": "42",
+        }
+    )
+
+    assert observation == rr.RateLimitObservation(
+        limit=30, remaining=12, reset_seconds=42.0
+    )
+
+
+def test_parse_rate_limit_reads_the_split_ratelimit_headers():
+    observation = rr.parse_rate_limit(
+        {
+            "ratelimit-limit": "30",
+            "ratelimit-remaining": "3",
+            "ratelimit-reset": "17",
+        }
+    )
+
+    assert observation == rr.RateLimitObservation(
+        limit=30, remaining=3, reset_seconds=17.0
+    )
+
+
+def test_parse_rate_limit_reads_a_zero_remaining_split_header():
+    """The cooldown shape read today stays a usable observation."""
+    observation = rr.parse_rate_limit(
+        {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "7"}
+    )
+
+    assert observation == rr.RateLimitObservation(
+        limit=None, remaining=0, reset_seconds=7.0
+    )
+
+
+def test_parse_rate_limit_takes_the_lowest_remaining_policy():
+    observation = rr.parse_rate_limit(
+        {
+            "RateLimit": (
+                '"default";q=30;r=7;t=58, "content";q=5;r=2;t=40'
+            )
+        }
+    )
+
+    assert observation == rr.RateLimitObservation(
+        limit=5, remaining=2, reset_seconds=40.0
+    )
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param({}, id="no headers"),
+        pytest.param(None, id="no mapping"),
+        pytest.param({"RateLimit": "nonsense"}, id="garbage value"),
+        pytest.param({"RateLimit": "limit=5, reset=58"}, id="missing remaining"),
+        pytest.param(
+            {"RateLimit": "limit=5, remaining=four, reset=58"},
+            id="non-integer remaining",
+        ),
+        pytest.param(
+            {"RateLimit": "limit=5, remaining=-1, reset=58"},
+            id="negative remaining",
+        ),
+        pytest.param(
+            {"RateLimit": "limit=5, remaining=4, reset=abc"},
+            id="non-integer reset",
+        ),
+        pytest.param(
+            {"RateLimit": "limit=5, remaining=4, reset=121"},
+            id="reset above twice the fallback window",
+        ),
+        pytest.param(
+            {"RateLimit": "limit=oops, remaining=4, reset=58"},
+            id="garbage limit",
+        ),
+        pytest.param({"Retry-After": "5"}, id="retry-after only"),
+        pytest.param(
+            {"RateLimit": "limit=5, remaining=4"}, id="missing reset"
+        ),
+    ],
+)
+def test_parse_rate_limit_rejects_unusable_headers(headers):
+    assert rr.parse_rate_limit(headers) is None
+
+
+# ---------------------------------------------------------------------------
+# Latency plan U1 (KTD2/KTD3) — the header budget replaces the fixed window
+# ---------------------------------------------------------------------------
+
+def _pacer(clock, sleeper=None, **overrides):
+    sleeper = sleeper if sleeper is not None else Sleeper(clock)
+    return rr.ProviderPacer(clock=clock, sleeper=sleeper, **overrides), sleeper
+
+
+def test_observe_records_the_observed_limit_for_content():
+    clock = Clock()
+    pacer, _ = _pacer(clock)
+
+    pacer.observe(rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=4, reset=58"})
+
+    assert pacer.observed_limits[rr.ENDPOINT_CONTENT] == {
+        "limit": 5,
+        "window": 58.0,
+    }
+
+
+def test_begin_run_resets_the_rate_limited_count_and_observed_limit():
+    clock = Clock()
+    pacer, _ = _pacer(clock)
+    pacer.observe(rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=4, reset=58"})
+    pacer.rate_limited = 3
+
+    pacer.begin_run()
+
+    assert pacer.rate_limited == 0
+    assert pacer.observed_limits == {}
+
+
+def test_ae1_the_header_budget_paces_the_third_request():
+    """AE1: remaining=2 lets two reads out, then waits out the reset."""
+    clock = Clock()
+    waits = []
+    pacer, sleeper = _pacer(
+        clock,
+        on_wait=lambda endpoint, seconds, reason: waits.append(
+            (endpoint, seconds, reason)
+        ),
+    )
+    pacer.observe(
+        rr.ENDPOINT_CONTENT, {"RateLimit": "limit=30, remaining=2, reset=40"}
+    )
+
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == [pytest.approx(40.0)]
+    # A budget wait reports itself the way a reset-header cooldown does, then
+    # clears once the wait is over.
+    assert waits[0] == (
+        rr.ENDPOINT_CONTENT,
+        pytest.approx(40.0),
+        rr.RATE_LIMIT_WAIT_REASON,
+    )
+    assert waits[-1] == (rr.ENDPOINT_CONTENT, 0.0, None)
+
+
+def test_ae2_no_header_keeps_the_thirty_per_minute_window():
+    """AE2: with no usable header the documented 30/60 ceiling applies."""
+    clock = Clock()
+    pacer, sleeper = _pacer(clock)
+
+    for _ in range(30):
+        pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == [pytest.approx(60.0)]
+
+
+def test_an_unusable_header_keeps_the_thirty_per_minute_window():
+    clock = Clock()
+    pacer, sleeper = _pacer(clock)
+    pacer.observe(rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=4, reset=999"})
+
+    for _ in range(30):
+        pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+    assert sleeper.calls == [pytest.approx(60.0)]
+
+
+def test_a_generous_header_budget_raises_throughput_above_the_fallback():
+    clock = Clock()
+    pacer, sleeper = _pacer(clock)
+    pacer.observe(
+        rr.ENDPOINT_CONTENT, {"RateLimit": "limit=120, remaining=100, reset=60"}
+    )
+
+    for _ in range(40):
+        pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+
+
+def test_a_tight_header_budget_lowers_throughput_below_the_fallback():
+    clock = Clock()
+    pacer, sleeper = _pacer(clock)
+    pacer.observe(rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=5, reset=60"})
+
+    for _ in range(5):
+        pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == [pytest.approx(60.0)]
+
+
+def test_an_expired_budget_falls_back_to_the_fixed_window():
+    clock = Clock()
+    pacer, sleeper = _pacer(clock)
+    pacer.observe(rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=5, reset=10"})
+    # The reset passes with no further observation, so the budget is stale.
+    clock.advance(11)
+
+    for _ in range(30):
+        pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == []
+    pacer.before_request(rr.ENDPOINT_CONTENT)
+
+    assert sleeper.calls == [pytest.approx(60.0)]
+
+
+def test_a_429_still_retries_and_is_counted_once(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    attempts = {"n": 0}
+
+    def flaky(object_id):
+        if object_id == "a" and attempts["n"] < 1:
+            attempts["n"] += 1
+            raise ca.CapacitiesRateLimited("slow down", retry_after=1.5)
+
+    provider.on_get = flaky
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, clock=clock, sleeper=sleeper
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete"
+    assert status["outcome"] == "published"
+    assert sleeper.calls == [1.5]
+    assert coordinator.pacer.rate_limited == 1
+    assert store.load_snapshot("all") is not None
+
+
+# ---------------------------------------------------------------------------
+# Latency plan U2 (KTD4) — run metrics in the job document
+# ---------------------------------------------------------------------------
+
+METRIC_KEYS = {
+    "reads",
+    "read_started_at",
+    "read_finished_at",
+    "read_rate_per_minute",
+    "elapsed_seconds",
+    "cold",
+    "rate_limited",
+    "observed_limit",
+}
+
+
+def _assert_metrics_shape(metrics):
+    """Every metric is a number, boolean, or null — never a string."""
+    assert set(metrics) == METRIC_KEYS
+    for key in (
+        "reads",
+        "read_started_at",
+        "read_finished_at",
+        "read_rate_per_minute",
+        "elapsed_seconds",
+        "rate_limited",
+    ):
+        value = metrics[key]
+        assert value is None or type(value) in (int, float), key
+    assert type(metrics["cold"]) is bool
+    observed = metrics["observed_limit"]
+    assert observed is None or (
+        set(observed) == {"limit", "window"}
+        and type(observed["limit"]) is int
+        and type(observed["window"]) in (int, float)
+    )
+
+
+def test_ae3_a_cold_run_records_its_reads_timings_and_rate(tmp_path):
+    """AE3: a cold run records what the 5-minute target is checked against."""
+    wall = Clock(now=1000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c"]})
+    provider.on_get = lambda object_id: wall.advance(30.0)
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, wall_clock=wall)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["reads"] == 3
+    assert metrics["reads"] == status["progress"]["read"]
+    assert metrics["cold"] is True
+    assert metrics["read_started_at"] == 1030.0
+    assert metrics["read_finished_at"] == 1090.0
+    # Three reads over one minute of read time.
+    assert metrics["read_rate_per_minute"] == pytest.approx(3.0)
+    assert metrics["elapsed_seconds"] == pytest.approx(90.0)
+    assert metrics["rate_limited"] == 0
+    assert metrics["observed_limit"] is None
+    # The block survives a read back from the durable document.
+    document = json.loads(coordinator._job_path().read_text(encoding="utf-8"))
+    assert document["version"] == rr.JOB_SCHEMA_VERSION
+    assert document["job"]["progress"]["metrics"] == metrics
+
+
+def test_a_warm_run_reports_zero_reads_and_a_null_rate(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    for object_id, type_id in (("a", PRIMARY), ("b", PRIMARY), ("c", "T2")):
+        store.put(object_id, type_id, _content(object_id, type_id))
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["reads"] == 0
+    assert metrics["cold"] is False
+    assert metrics["read_started_at"] is None
+    assert metrics["read_finished_at"] is None
+    assert metrics["read_rate_per_minute"] is None
+    assert metrics["elapsed_seconds"] >= 0
+
+
+def test_a_run_with_one_recovered_429_records_the_count(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    attempts = {"n": 0}
+
+    def flaky(object_id):
+        if object_id == "a" and attempts["n"] < 1:
+            attempts["n"] += 1
+            raise ca.CapacitiesRateLimited("slow down", retry_after=1.5)
+
+    provider.on_get = flaky
+    coordinator, _, _, _ = _coordinator(
+        tmp_path, provider, clock=clock, sleeper=sleeper
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["outcome"] == "published"
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["rate_limited"] == 1
+
+
+def test_the_observed_limit_reaches_the_metrics(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+    pacer = coordinator.pacer
+
+    def observe(object_id):
+        pacer.observe(
+            rr.ENDPOINT_CONTENT, {"RateLimit": "limit=5, remaining=4, reset=58"}
+        )
+
+    provider.on_get = observe
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["observed_limit"] == {"limit": 5, "window": 58.0}
+
+
+def test_a_failed_run_still_records_elapsed_time_and_only_numbers(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.get_error = ca.CapacitiesContractError("secret contract text")
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, max_retries=0)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert type(metrics["elapsed_seconds"]) is float
+    assert metrics["read_rate_per_minute"] is None
+    # Nothing derived from an exception reached the block.
+    assert "secret" not in json.dumps(metrics)
+
+
+def test_a_cancelled_run_still_records_elapsed_time(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    def cancel_during_read(object_id):
+        if object_id == "b":
+            coordinator.cancel()
+
+    provider.on_get = cancel_during_read
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "cancelled"
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert type(metrics["elapsed_seconds"]) is float
+    assert metrics["read_started_at"] is not None
