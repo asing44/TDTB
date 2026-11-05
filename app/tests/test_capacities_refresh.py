@@ -12,6 +12,7 @@ import json
 import logging
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -2291,3 +2292,84 @@ def test_progress_names_the_unchecked_types_while_the_read_continues(tmp_path):
     assert status["progress"]["unchecked_types"] == []
     # Only type keys, counts, times, and booleans: no content, no diagnostics.
     assert "secret" not in json.dumps(status["job"])
+
+
+def _parity_evidence(tmp_path, *, header=None):
+    """One cold run's evidence for the R5 parity guard.
+
+    Admission is a pure function of the installed members and their cached
+    content, so a run is compared by three things: which members the published
+    generation holds, which rows that generation admits for the day, and the
+    exact order content was read in.
+    """
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c", "d"]})
+    coordinator, store, _, sleeper = _coordinator(tmp_path, provider)
+    # Pin the logical day so the admitted-row comparison cannot depend on the
+    # calendar day the test happens to run on.
+    coordinator.logical_day = date(2026, 11, 5)
+    if header is not None:
+        pacer = coordinator.pacer
+
+        def observe(object_id):
+            pacer.observe(rr.ENDPOINT_CONTENT, header)
+
+        provider.on_get = observe
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+    assert status["outcome"] == "published", status
+
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None
+    merged = []
+    for member in snapshot.members:
+        cached = store.get(member.object_id, member.type_key)
+        assert cached is not None
+        merged.append({**_row(member.object_id, member.type_key), **cached.content})
+    admitted = coordinator.adapter.items_for_day_from_objects(
+        coordinator.logical_day, merged
+    )
+    return {
+        "members": sorted(member.object_id for member in snapshot.members),
+        "items": sorted(
+            str(item["id"] if isinstance(item, dict) else item.id)
+            for item in admitted.items
+        ),
+        "reads": list(provider.get_calls),
+        "partial": snapshot.partial,
+        "unchecked": tuple(snapshot.unchecked_types),
+        "waits": len(sleeper.calls),
+    }
+
+
+def test_the_admitted_rows_and_read_order_survive_any_pacing_budget(tmp_path):
+    """R5: pacing and per-type publishing cannot change what gets planned.
+
+    The same cold data runs under the conservative fallback window, a generous
+    observed budget, and a tight one that forces waits. Every condition must
+    publish the same members and admit the same rows, in the same read order —
+    and each of those runs ends on a complete generation, not an interim one.
+    """
+    fallback = _parity_evidence(tmp_path / "fallback")
+    generous = _parity_evidence(
+        tmp_path / "generous", header={"RateLimit": "limit=120, remaining=100, reset=60"}
+    )
+    tight = _parity_evidence(
+        tmp_path / "tight", header={"RateLimit": "limit=1, remaining=0, reset=60"}
+    )
+
+    for name, run in (("fallback", fallback), ("generous", generous), ("tight", tight)):
+        assert run["partial"] is False, name
+        assert run["unchecked"] == (), name
+        assert run["members"] == fallback["members"], name
+        assert run["items"] == fallback["items"], name
+        assert run["reads"] == fallback["reads"], name
+
+    # The three conditions must genuinely differ in pacing, or the comparison
+    # above proves nothing about pacing at all.
+    assert generous["waits"] == 0, generous
+    assert tight["waits"] > 0, tight
+
+    # A guard that compared two empty results would prove nothing.
+    assert fallback["items"] == ["A", "B", "C", "D"], fallback
+    assert fallback["reads"] == ["a", "b", "c", "d"], fallback

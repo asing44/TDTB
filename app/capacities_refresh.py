@@ -1749,7 +1749,9 @@ class RefreshCoordinator:
             row
             for type_key in listing_types
             for row in rows_merged_by_type.get(type_key, ())
-        ]        # The read phase is over: publish its own numbers before the run moves
+        ]
+
+        # The read phase is over: publish its own numbers before the run moves
         # on to assembly, so a run that fails later still reports what it read.
         self._progress_field(
             "metrics", self._build_metrics(finished_at=self._wall_clock())
