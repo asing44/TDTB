@@ -87,6 +87,24 @@ describe("U7 footer", () => {
     expect(primary.disabled).toBe(false);
   });
 
+  it("does not block sequencing on Capacities drop and reconcile tallies", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.sourceWarnings = [
+        "Capacities type 'Task': 102 objects dropped — 98 no-effective-assignment, 3 future-date, 1 tdtb-excluded",
+        "Capacities type 'Project': 1 object dropped — 1 closed-source-status",
+        "53 cached Capacities objects are not in the published generation; Refresh to reconcile.",
+        "2 cached Capacities objects changed type since the last Refresh; Refresh to reconcile.",
+      ];
+      sc.inputs.sourceHealth = sourceHealthOf(sc.inputs.sourceWarnings);
+    });
+    const r = h.ui(<Footer />);
+    expect(r.queryByText(/Can't sequence until sources are healthy\./)).toBeNull();
+    const primary = r
+      .getByText(/^Sequence (\d+h|\d+m).* →$/)
+      .closest("button") as HTMLButtonElement;
+    expect(primary.disabled).toBe(false);
+  });
+
   it("shows the ← Day setup back link on Plan tasks and opens day setup", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Footer />);

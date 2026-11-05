@@ -1698,6 +1698,18 @@ export function countAdvisorySkipped(warnings: readonly string[]): number {
 const advisoryTypeStaleness =
   /^\s*Capacities structure \S+ unchanged since .+; Refresh to check it again\.\s*$/;
 
+/** Capacities intake tallies: per-type drop counts (``Capacities type 'X': N
+    objects dropped — <reason counts>``) and the cached-vs-published reconcile
+    counts (``N cached Capacities objects are not in the published generation;
+    Refresh to reconcile.`` / ``... changed type since the last Refresh; ...``).
+    They describe objects deliberately left out of, or pending in, the plan —
+    nothing failed to read — so they never hold sequencing (2026-11-05 owner
+    decision). The refresh-fix action clears the reconcile counts. */
+const advisoryCapacitiesTally = [
+  /^\s*Capacities type '.+': \d+ objects? dropped — .+$/,
+  /^\s*\d+ cached Capacities objects (?:are not in the published generation|changed type since the last Refresh); Refresh to reconcile\.\s*$/,
+];
+
 /** Mistyped Assigned On declarations the adapter ignores and works around:
     an unknown property, a property that is not a date, or a settings
     declaration that shadows the record mapping. Assignment still runs from
@@ -1765,6 +1777,7 @@ function isAdvisoryWarning(warning: string): boolean {
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
     advisoryCapacitiesReviewNotice.test(warning) ||
+    advisoryCapacitiesTally.some((pattern) => pattern.test(warning)) ||
     advisorySelectionNotice.test(warning) ||
     advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning)) ||
     isCalendarWarning(warning)
@@ -1797,6 +1810,7 @@ export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
     value is unchanged by the retirement of the full-screen Connections page. */
 function advisoryFixOf(warning: string): AdvisoryNoteFix {
   if (advisoryTypeStaleness.test(warning)) return "refresh";
+  if (/Refresh to reconcile\.\s*$/.test(warning)) return "refresh";
   if (advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning))) {
     return "connections";
   }
