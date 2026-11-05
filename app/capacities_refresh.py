@@ -3,8 +3,9 @@
 This module owns the acquisition half of the direct Capacities refresh (U2):
 it enumerates every configured type completely, re-reads only the content that
 is new, uncached, or older than the refresh-mode read-through TTL (and every
-scoped object for a Rescan), paces every provider read, and installs exactly
-one complete generation through the U1 store (``capacities_refresh_state``).
+scoped object for a Rescan), paces every provider read, and publishes through
+the U1 store (``capacities_refresh_state``) as each type finishes and once more
+when the whole read completes.
 It never rewrites the legacy live reader; it reuses the adapter's transport
 contract, pagination, object normalization, and projection through public
 seams.
@@ -34,10 +35,23 @@ Contract (KTD1–KTD3):
   older content so an Assigned On/status/title edit made in Capacities reaches
   TDTB on the next Refresh. A Rescan ignores the TTL and re-reads every scoped
   object. The U1 store itself never expires an entry.
-* **Complete scope or nothing.** Any incomplete listing, failed required read,
-  changed configuration revision, or changed source space prevents
-  installation. The previous complete generation and every successful read are
-  preserved.
+* **Per-type publication in a priority order.** Types are listed completely
+  up front, then read one type at a time in a deterministic priority order
+  (smallest read count first, operator-overridable through the coordinator's
+  ``type_order``): as a type finishes reading, an *interim* generation is
+  installed that publishes the finished types fresh and keeps every unread type
+  at its last published state, naming those types on the generation and in the
+  job (``progress.publication``/``progress.unchecked_types``). The final install
+  publishes the complete generation, which clears the interim flag and drops
+  every member the complete read did not confirm. A type whose content was
+  entirely reused from the cache publishes nothing early: it read no provider
+  content, so it has nothing newer to show.
+* **Complete scope or nothing, for the complete install.** Any incomplete
+  listing, failed required read, changed configuration revision, or changed
+  source space prevents the *complete* installation. A run that stops after an
+  interim stays interim: it is marked partial, names its unchecked types, and
+  never claims a complete read. The previous complete generation and every
+  successful read are preserved.
 * **No secret leakage.** Warnings are bounded fixed strings; exception text,
   tokens, and filesystem paths never reach a warning or a job document.
 
@@ -138,6 +152,14 @@ TAG_EXCLUSION_WARNING = (
     "metadata could not be evaluated by stable identity. Repair the source "
     "tag payload or clear the exclusions, then retry; the previous complete "
     "result is preserved."
+)
+#: The one bounded notice a run adds when it stops after publishing an interim
+#: generation: the plan on screen is that run's partial result, not a complete
+#: read, and the named types keep their last published state.
+INTERIM_RETAINED_WARNING = (
+    "The published Capacities result is interim: the refresh stopped before "
+    "every object type was read, so the unchecked types keep their last "
+    "published state until a complete refresh finishes."
 )
 
 
@@ -982,6 +1004,7 @@ class RefreshCoordinator:
         content_ttl: float = DEFAULT_CONTENT_TTL_SECONDS,
         configuration_revision: int | None = None,
         space_id_supplier: Callable[[], str | None] | None = None,
+        type_order: Iterable[str] | None = None,
     ) -> None:
         if not isinstance(space_id, str) or not space_id.strip():
             raise ValueError("space_id must be a nonblank string")
@@ -1011,6 +1034,17 @@ class RefreshCoordinator:
         # combined revision is a sum, so a source space switch can leave it
         # equal while the adapter was frozen for another space.
         self.space_id_supplier = space_id_supplier
+        #: The operator's own type priority (KTD7), configured through the
+        #: caller's settings: the named types are read and published first, in
+        #: this order, and every other type follows smallest read count first.
+        #: Empty means the deterministic smallest-first order alone.
+        self.type_order = tuple(
+            key
+            for key in (
+                _text(value) for value in (type_order or ())
+            )
+            if key
+        )
         self.logical_day = logical_day
         self.config_guard = config_guard
         self._wall_clock = wall_clock
@@ -1068,6 +1102,17 @@ class RefreshCoordinator:
         #: used only by the job's ``progress.metrics`` block, never admission.
         self._read_started_at: float | None = None
         self._read_finished_at: float | None = None
+        #: The types this run has finished reading, in the order it finished
+        #: them; only ever used to describe the interim publication truthfully.
+        self._completed_types: list[str] = []
+        #: The types not yet fully read, sorted. Mirrored into the job's
+        #: ``progress.unchecked_types`` so the panel can name them (R7/R9).
+        self._unchecked_types: tuple[str, ...] = ()
+        #: The interim publication this run last installed, or ``None``. Every
+        #: value is a type key, a count, an epoch, or a flag — never content.
+        self._publication: dict[str, Any] | None = None
+        self._interim_count = 0
+        self._installed_at: float | None = None
 
     # -- paths / persistence -------------------------------------------
 
@@ -1198,6 +1243,17 @@ class RefreshCoordinator:
                     "to_read": 0,
                     "waiting": None,
                     "types": {},
+                    "unchecked_types": [],
+                    "publication": {
+                        "partial": False,
+                        "interim_count": 0,
+                        "generation": (
+                            prior.generation if prior is not None else 0
+                        ),
+                        "installed_at": None,
+                        "unchecked_types": [],
+                        "completed_types": [],
+                    },
                 },
                 "warnings": [],
             }
@@ -1254,6 +1310,11 @@ class RefreshCoordinator:
         self.pacer.begin_run()
         self._read_started_at = None
         self._read_finished_at = None
+        self._completed_types = []
+        self._unchecked_types = ()
+        self._publication = None
+        self._interim_count = 0
+        self._installed_at = None
         try:
             self._acquire()
         except RefreshCancelled:
@@ -1368,6 +1429,13 @@ class RefreshCoordinator:
     def _finish(self, phase: str, outcome: str, warnings: list[str]) -> None:
         job = self._job or {}
         now = self._wall_clock()
+        # R8: a run that stops after an interim publication says so. The plan on
+        # screen is that run's partial result, and the notice names the shared
+        # fact (unchecked types keep their last published state) in one bounded
+        # string that can never carry content or exception text.
+        publication = self._publication_record(phase=phase)
+        if publication["partial"] and INTERIM_RETAINED_WARNING not in warnings:
+            warnings = [*warnings, INTERIM_RETAINED_WARNING]
         existing = list(job.get("warnings", ()))
         for warning in warnings:
             if warning not in existing:
@@ -1384,6 +1452,81 @@ class RefreshCoordinator:
         # Finalize the run metrics against the real finish instant; a run that
         # never reached its read phase still gets the elapsed time it consumed.
         self._progress_field("metrics", self._build_metrics(finished_at=now))
+        # ... and the publication state, so a final read never has to infer it.
+        self._progress_field(
+            "unchecked_types", list(publication["unchecked_types"])
+        )
+        self._progress_field("publication", publication)
+
+    def _publication_record(self, *, phase: str) -> dict[str, Any]:
+        """The job's ``progress.publication`` block for one terminal phase.
+
+        ``partial`` is True exactly when the generation installed last is an
+        interim one: the run published while reading and never finished, so the
+        unchecked types are named and keep their last published state. A run
+        that reached ``complete`` replaced the interim whole and clears the
+        flag. Only type keys, counts, one epoch, and flags are stored.
+        """
+        job = self._job or {}
+        partial = bool(self._interim_count) and phase != "complete"
+        return {
+            "partial": partial,
+            "interim_count": int(self._interim_count),
+            "generation": _progress_count(job.get("generation")),
+            "installed_at": self._installed_at,
+            "unchecked_types": list(self._unchecked_types) if partial else [],
+            "completed_types": sorted(set(self._completed_types)),
+        }
+
+    def _note_unchecked(self, type_keys: Iterable[str]) -> None:
+        """Persist the types this run has not finished reading yet, sorted."""
+        unchecked = tuple(sorted({_text(key) for key in type_keys if _text(key)}))
+        if unchecked == self._unchecked_types:
+            return
+        self._unchecked_types = unchecked
+        self._progress_field("unchecked_types", list(unchecked))
+
+    def _note_publication(self, *, unchecked: Iterable[str]) -> None:
+        """Persist one installed interim generation and its unchecked types."""
+        job = self._job
+        if job is None:
+            return
+        self._publication = {
+            "partial": True,
+            "interim_count": int(self._interim_count),
+            "generation": _progress_count(job.get("generation")),
+            "installed_at": self._installed_at,
+            "unchecked_types": sorted(
+                {_text(key) for key in unchecked if _text(key)}
+            ),
+            "completed_types": sorted(set(self._completed_types)),
+        }
+        progress = dict(job.get("progress") or {})
+        progress["publication"] = self._publication
+        progress["unchecked_types"] = list(self._unchecked_types)
+        self._job = {
+            **job,
+            "progress": progress,
+            "updated_at": self._installed_at or self._wall_clock(),
+        }
+        self._persist_job()
+
+    def _publish_order(
+        self, type_keys: Iterable[str], read_counts: Mapping[str, int]
+    ) -> list[str]:
+        """KTD7's read-and-publish order: smallest read count first.
+
+        Every mapped contributing type is read; the order only decides which
+        type finishes (and so publishes) soonest, which gets the most types
+        fresh in the least time. It is deterministic — equal read counts fall
+        back to the type key — and the operator's configured ``type_order``
+        goes first, in that order, before the smallest-first remainder.
+        """
+        keys = list(dict.fromkeys(type_keys))
+        priority = [key for key in self.type_order if key in keys]
+        rest = [key for key in keys if key not in set(priority)]
+        rest.sort(key=lambda key: (int(read_counts.get(key, 0)), key))
+        return priority + rest
 
     def _set_phase(self, phase: str) -> None:
         if self.cancel_event.is_set():
@@ -1524,27 +1667,35 @@ class RefreshCoordinator:
 
         # Hydrate: reuse cached content younger than the refresh TTL, re-read
         # stale or uncached content (ordinary) or the whole scoped type
-        # (Rescan). Successful reads persist immediately. Types are visited in
-        # sorted configured order and each listing in its own order, so a
-        # Refresh always re-reads stale objects in the same stable sequence.
+        # (Rescan). Successful reads persist immediately. Each listing is read
+        # in its own order, and the types are visited in the KTD7 priority
+        # order (smallest read count first), so a Refresh always re-reads stale
+        # objects in the same stable sequence.
         self._stage = "read"
         rescan = mode == "rescan"
         # The read target behind "176/227": the same predicate hydration uses,
         # so the count cannot drift from the reads the run actually performs.
-        to_read = sum(
-            1
+        # The per-type counts also order the run, so one pass serves both.
+        to_read_by_type = {
+            type_key: sum(
+                1
+                for row in rows_by_type[type_key]
+                if self._needs_read(_text(row.get("id")), type_key, rescan=rescan)
+            )
             for type_key in listing_types
-            for row in rows_by_type[type_key]
-            if self._needs_read(_text(row.get("id")), type_key, rescan=rescan)
-        )
-        self._progress_field("to_read", int(to_read))
-        merged: list[dict[str, Any]] = []
+        }
+        self._progress_field("to_read", int(sum(to_read_by_type.values())))
+        publish_order = self._publish_order(listing_types, to_read_by_type)
+        self._note_unchecked(publish_order)
+        rows_merged_by_type: dict[str, list[dict[str, Any]]] = {}
         unreadable = False
         #: Cached reads whose stored ``structureId`` disagrees with the type key
         #: this run listed them under: a re-typed object, which the projection
         #: would otherwise map with another type's property mapping.
         retargeted = 0
-        for type_key in listing_types:
+        for type_key in publish_order:
+            type_rows: list[dict[str, Any]] = []
+            fresh_reads = 0
             for row in rows_by_type[type_key]:
                 if self.cancel_event.is_set():
                     _raise_cancelled()
@@ -1567,16 +1718,38 @@ class RefreshCoordinator:
                 cached_type = _text(content.get("structureId"))
                 if cached_type and cached_type != type_key:
                     retargeted += 1
-                merged.append({**row, **content})
+                type_rows.append({**row, **content})
                 if fresh:
                     # Only an actual provider read advances the read counter, so
                     # the job's progress stays truthful when content is reused.
+                    fresh_reads += 1
                     read_at = self._wall_clock()
                     if self._read_started_at is None:
                         self._read_started_at = read_at
                     self._read_finished_at = read_at
                     self._progress(type_key=type_key, read=1)
-        # The read phase is over: publish its own numbers before the run moves
+            rows_merged_by_type[type_key] = type_rows
+            self._completed_types = [*self._completed_types, type_key]
+            finished = set(self._completed_types)
+            remaining = [key for key in publish_order if key not in finished]
+            self._note_unchecked(remaining)
+            # R6/KTD6: publish this type's fresh rows now, keeping every type
+            # still being read at its last published state. A type whose
+            # content was entirely reused has nothing newer to show, and a type
+            # whose read failed cannot be published as checked, so neither
+            # installs an interim generation.
+            if fresh_reads and remaining and not unreadable:
+                self._publish_interim(
+                    completed=self._completed_types,
+                    unchecked=remaining,
+                    listings=listings,
+                    retained_types=retained_types,
+                )
+        merged: list[dict[str, Any]] = [
+            row
+            for type_key in listing_types
+            for row in rows_merged_by_type.get(type_key, ())
+        ]        # The read phase is over: publish its own numbers before the run moves
         # on to assembly, so a run that fails later still reports what it read.
         self._progress_field(
             "metrics", self._build_metrics(finished_at=self._wall_clock())
@@ -1629,9 +1802,10 @@ class RefreshCoordinator:
                     raise RefreshStale()
             snapshot = self.store.install_generation(
                 evidence,
-                expected_generation=int(job.get("generation") or 0),
+                expected_generation=int((self._job or {}).get("generation") or 0),
                 structures=structures_payload,
             )
+        self._installed_at = self._wall_clock()
         job = self._job or {}
         self._job = {**job, "generation": snapshot.generation}
         # The projection warnings — including the bounded review surface for
@@ -1668,6 +1842,98 @@ class RefreshCoordinator:
             previous=previous_structures,
             current=structures_payload,
             generation=snapshot.generation,
+        )
+
+    def _publish_interim(
+        self,
+        *,
+        completed: Iterable[str],
+        unchecked: Iterable[str],
+        listings: Iterable[refresh_state.TypeListing],
+        retained_types: Iterable[str],
+    ) -> None:
+        """Install an interim generation for the types finished so far (R6/R8).
+
+        The finished types are published from this run's own complete listings;
+        every type still being read keeps its last published members (the store
+        refuses an install that would silently drop one), and the generation is
+        marked partial with those types named as unchecked, so no surface can
+        mistake it for a complete read. The final complete install supersedes it
+        whole. A failure, cancellation, or staleness after this install leaves
+        it in place; the job's warnings and publication block describe that.
+
+        The freshness guard is the same one the complete install uses: an
+        interim publication must never be stamped with a revision or source
+        space the run was not built against.
+        """
+        if self.cancel_event.is_set():
+            _raise_cancelled()
+        job = self._job or {}
+        finished = set(completed)
+        unchecked = list(unchecked)
+        try:
+            prior = self.store.load_snapshot(self.scope_key)
+        except refresh_state.RefreshStateError:
+            raise
+        prior_types = (
+            {member.type_key for member in prior.members}
+            if prior is not None
+            else set()
+        )
+        # Every type that keeps published members but was not read this run must
+        # be named as retained: the types still queued, plus the types this run
+        # never intended to read (a scope that lost eligibility).
+        retained = sorted(
+            {
+                key
+                for key in (*retained_types, *unchecked)
+                if key in prior_types and key not in finished
+            }
+        )
+        evidence = refresh_state.SnapshotEvidence(
+            scope_key=self.scope_key,
+            revision=int(job.get("revision") or 0),
+            required_types=tuple(sorted(finished)),
+            listings=tuple(
+                listing for listing in listings if listing.type_key in finished
+            ),
+            retained_types=tuple(retained),
+            partial=True,
+            unchecked_types=tuple(unchecked),
+        )
+        stage = self._stage
+        self._stage = "install"
+        guard = self.config_guard() if callable(self.config_guard) else nullcontext()
+        with guard:
+            current = self.revision_supplier()
+            if type(current) is not int or current != evidence.revision:
+                raise RefreshStale()
+            if self.space_id_supplier is not None:
+                current_space = self.space_id_supplier()
+                if (
+                    not isinstance(current_space, str)
+                    or current_space != self.space_id
+                ):
+                    raise RefreshStale()
+            snapshot = self.store.install_generation(
+                evidence,
+                expected_generation=int(job.get("generation") or 0),
+            )
+        self._stage = stage
+        self._interim_count += 1
+        self._installed_at = self._wall_clock()
+        job = self._job or {}
+        self._job = {
+            **job,
+            "generation": snapshot.generation,
+            "updated_at": self._installed_at,
+        }
+        self._note_publication(unchecked=unchecked)
+        logger.info(
+            "Capacities refresh published an interim generation: "
+            "types=%d unchecked=%d",
+            len(finished),
+            len(unchecked),
         )
 
     def _record_schema_change(

@@ -68,6 +68,7 @@ def _coordinator(
     content_ttl=None,
     rate_limit_budget_seconds=None,
     max_backoff=None,
+    type_order=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
@@ -88,6 +89,8 @@ def _coordinator(
         overrides["rate_limit_budget_seconds"] = rate_limit_budget_seconds
     if max_backoff is not None:
         overrides["max_backoff"] = max_backoff
+    if type_order is not None:
+        overrides["type_order"] = type_order
     return (
         rr.RefreshCoordinator(
             root=tmp_path / "state",
@@ -286,7 +289,9 @@ def test_rescan_one_type_rereads_only_that_type(tmp_path):
     coordinator, store, _, _ = _coordinator(tmp_path, provider)
     coordinator.start()
     coordinator.wait(timeout=5)
-    assert provider.get_calls == ["a", "b", "c"]
+    # KTD7's priority order: the one-read type finishes first, then the two-read
+    # primary type, and each listing is read in its own order.
+    assert provider.get_calls == ["c", "a", "b"]
 
     # Second run: scoped Rescan of the primary type only.
     coordinator.start(mode="rescan", scope=PRIMARY)
@@ -480,7 +485,7 @@ def test_cancel_during_hydration_retains_reads_and_keeps_snapshot(tmp_path):
     coordinator.start()
     first = coordinator.wait(timeout=5)
     assert first["phase"] == "complete"
-    assert store.load_snapshot("all").generation == 1
+    prior_generation = store.load_snapshot("all").generation
     store.put("a", PRIMARY, _content("a", PRIMARY))
 
     def cancel_after_first(object_id):
@@ -497,7 +502,7 @@ def test_cancel_during_hydration_retains_reads_and_keeps_snapshot(tmp_path):
     assert store.get("b", PRIMARY) is not None
     # The prior published generation is untouched.
     snapshot = store.load_snapshot("all")
-    assert snapshot is not None and snapshot.generation == 1
+    assert snapshot is not None and snapshot.generation == prior_generation
 
 
 def test_cancel_interrupts_rate_limit_backoff(tmp_path):
@@ -717,7 +722,11 @@ def test_a_published_refresh_persists_its_structure_contract(tmp_path):
     assert status["phase"] == "complete", status
     contract = store.load_structure_contract("all")
     assert contract is not None
-    assert contract.generation == store.load_snapshot("all").generation == 1
+    # The contract rides the complete publication, whichever generation number
+    # the run's interim publications reached first.
+    published = store.load_snapshot("all")
+    assert published.partial is False
+    assert contract.generation == published.generation
     assert contract.structures == _structures(*TYPES)
 
 
@@ -735,7 +744,7 @@ def test_a_single_type_rescan_stores_the_full_structure_contract(tmp_path):
     assert status["phase"] == "complete", status
     contract = store.load_structure_contract("all")
     assert contract is not None
-    assert contract.generation == 2
+    assert contract.generation == store.load_snapshot("all").generation
     assert contract.structures == _structures(*TYPES)
 
 
@@ -762,7 +771,7 @@ def test_a_cancelled_run_keeps_the_previous_generations_contract(tmp_path):
     assert changed.fetch_calls == 1
     kept = store.load_structure_contract("all")
     assert kept is not None
-    assert kept.generation == 1
+    assert kept.generation == previous.generation
     assert kept.structures == previous.structures
 
 
@@ -789,7 +798,7 @@ def test_a_refused_refresh_keeps_the_previous_generations_contract(tmp_path):
     assert status["outcome"] == "staleConfiguration", status
     kept = store.load_structure_contract("all")
     assert kept is not None
-    assert kept.generation == 1
+    assert kept.generation == previous.generation
     assert kept.structures == previous.structures
 
 
@@ -1949,3 +1958,299 @@ def test_a_cancelled_run_still_records_elapsed_time(tmp_path):
     _assert_metrics_shape(metrics)
     assert type(metrics["elapsed_seconds"]) is float
     assert metrics["read_started_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Latency plan U6 (R6/R8/R9, KTD6/KTD7) — per-type acquisition and publish
+# ---------------------------------------------------------------------------
+
+def _snapshot_when_seen(store, object_id, *, wanted, seen):
+    """Record the installed snapshot the first time ``wanted`` is read.
+
+    The provider hook fires at the top of the read for that object, so the
+    snapshot it captures is exactly what the plan showed after the previous
+    type finished and before this one was read.
+    """
+    if object_id == wanted:
+        seen.append(store.load_snapshot("all"))
+
+
+def test_an_interim_generation_is_published_before_a_later_type_is_read(tmp_path):
+    """R6/AE4: the plan is published as each type finishes, not only at the end."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    seen = []
+    provider.on_get = lambda object_id: _snapshot_when_seen(
+        store, object_id, wanted="c", seen=seen
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    # Read counts order the run: one read for the primary type, two for T2. By
+    # the time T2's first object is read, the primary type has been published.
+    assert provider.get_calls == ["a", "c", "d"]
+    assert len(seen) == 1
+    interim = seen[0]
+    assert interim is not None
+    assert interim.partial is True
+    assert interim.unchecked_types == ("T2",)
+    assert {(m.object_id, m.type_key) for m in interim.members} == {("a", PRIMARY)}
+    # The finished read replaces the interim whole, with no member merged in.
+    final = store.load_snapshot("all")
+    assert final.partial is False and final.unchecked_types == ()
+    assert final.generation == interim.generation + 1
+    assert {(m.object_id, m.type_key) for m in final.members} == {
+        ("a", PRIMARY),
+        ("c", "T2"),
+        ("d", "T2"),
+    }
+
+
+def test_types_are_read_smallest_read_count_first(tmp_path):
+    """KTD7: the cheapest type finishes (and publishes) soonest."""
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c"]})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+
+    assert provider.get_calls == ["c", "a", "b"]
+
+
+def test_the_publish_order_is_deterministic_for_equal_read_counts(tmp_path):
+    """KTD7: equal read counts fall back to the type key, never to run order."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+    assert provider.get_calls == ["a", "c"]
+
+    provider.get_calls.clear()
+    coordinator.start(mode="rescan")
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+    assert provider.get_calls == ["a", "c"]
+
+
+def test_the_operator_can_override_the_publish_order(tmp_path):
+    """KTD7: the order is operator-adjustable, and the rest still sort by size."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, _, _, _ = _coordinator(
+        tmp_path, provider, type_order=("T2",)
+    )
+
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+
+    assert provider.get_calls == ["c", "d", "a"]
+
+
+def test_an_interim_install_keeps_the_unread_types_published_members(tmp_path):
+    """R8/KTD6: unchecked types keep their last published state."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+    baseline = store.load_snapshot("all")
+    assert baseline is not None
+
+    seen = []
+    provider.on_get = lambda object_id: _snapshot_when_seen(
+        store, object_id, wanted="c", seen=seen
+    )
+    coordinator.start(mode="rescan")
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    interim = seen[0]
+    assert interim.partial is True
+    assert interim.unchecked_types == ("T2",)
+    assert {m.object_id for m in interim.members_of_type("T2")} == {"c", "d"}
+    # The retained type keeps its own check time: it was not checked again.
+    assert interim.check_time("T2") == baseline.check_time("T2")
+
+
+def test_a_warm_refresh_publishes_no_interim_generation(tmp_path):
+    """R6: a type whose content was entirely reused has nothing newer to show."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    for object_id, type_key in (("a", PRIMARY), ("c", "T2")):
+        store.put(object_id, type_key, _content(object_id, type_key))
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    snapshot = store.load_snapshot("all")
+    assert snapshot.generation == 1
+    assert snapshot.partial is False
+    assert status["progress"]["publication"]["interim_count"] == 0
+
+
+def test_the_complete_install_clears_partial_and_drops_unconfirmed_members(tmp_path):
+    """AE5: no member survives that the complete read did not confirm."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+
+    # The second run lists one fewer T2 object than the interim retained.
+    narrowed = _paged_provider(
+        objects={PRIMARY: ["a"], "T2": ["c", "d"]},
+        pages={
+            ("T2", None): {
+                "objects": [_row("c", "T2")],
+                "next_cursor": None,
+            }
+        },
+    )
+    second, _, _, _ = _coordinator(tmp_path, narrowed)
+    seen = []
+    narrowed.on_get = lambda object_id: _snapshot_when_seen(
+        store, object_id, wanted="c", seen=seen
+    )
+
+    second.start(mode="rescan")
+    status = second.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    interim = seen[0]
+    assert interim.partial is True
+    assert {m.object_id for m in interim.members_of_type("T2")} == {"c", "d"}
+    final = store.load_snapshot("all")
+    assert final.partial is False and final.unchecked_types == ()
+    assert {(m.object_id, m.type_key) for m in final.members} == {
+        ("a", PRIMARY),
+        ("c", "T2"),
+    }
+    assert status["progress"]["publication"]["partial"] is False
+    assert status["progress"]["unchecked_types"] == []
+
+
+def test_cancellation_after_an_interim_leaves_it_partial_with_a_warning(tmp_path):
+    """R8: a run that stops after an interim leaves it in place, marked."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+
+    def cancel_on_the_later_type(object_id):
+        if object_id == "c":
+            coordinator.cancel()
+
+    provider.on_get = cancel_on_the_later_type
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "cancelled"
+    assert status["outcome"] == "cancelled"
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None
+    assert snapshot.partial is True
+    assert snapshot.unchecked_types == ("T2",)
+    assert {m.object_id for m in snapshot.members} == {"a"}
+    assert status["progress"]["publication"]["partial"] is True
+    assert status["progress"]["publication"]["unchecked_types"] == ["T2"]
+    assert rr.INTERIM_RETAINED_WARNING in status["warnings"]
+    assert rr.CANCEL_WARNING in status["warnings"]
+
+
+def test_staleness_after_an_interim_leaves_the_interim_in_place(tmp_path):
+    """R8: a configuration change after an interim keeps the interim truthful."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    values = iter([1, 1, 2])
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, revision=lambda: next(values, 2)
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None
+    assert snapshot.partial is True
+    assert snapshot.unchecked_types == ("T2",)
+    assert rr.STALE_WARNING in status["warnings"]
+    assert rr.INTERIM_RETAINED_WARNING in status["warnings"]
+
+
+def test_a_failure_after_an_interim_leaves_the_interim_in_place(tmp_path):
+    """R8: a failed required read still leaves the interim, never a complete one."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    provider.fail_gets["d"] = FileNotFoundError("404")
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert status["outcome"] == "noCapacities"
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None
+    assert snapshot.partial is True
+    assert snapshot.unchecked_types == ("T2",)
+    assert {m.object_id for m in snapshot.members} == {"a"}
+    assert rr.INTERIM_RETAINED_WARNING in status["warnings"]
+
+
+def test_single_flight_holds_across_the_interim_publication(tmp_path):
+    """R3: the whole run, interim install included, is one single-flight job."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    other, _, _, _ = _coordinator(tmp_path, provider)
+    attempts = []
+
+    def contend(object_id):
+        if object_id != "c":
+            return
+        assert store.load_snapshot("all").partial is True
+        for candidate in (coordinator, other):
+            try:
+                candidate.start()
+            except rr.RefreshBusyError:
+                attempts.append("busy")
+
+    provider.on_get = contend
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert attempts == ["busy", "busy"]
+
+
+def test_progress_names_the_unchecked_types_while_the_read_continues(tmp_path):
+    """R7/R9: the job names the types still unchecked, and stays truthful."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c", "d"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    during = []
+
+    def observe(object_id):
+        if object_id == "c":
+            during.append(coordinator.status())
+
+    provider.on_get = observe
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert len(during) == 1
+    published = during[0]["progress"]["publication"]
+    assert published["partial"] is True
+    assert published["interim_count"] == 1
+    assert published["unchecked_types"] == ["T2"]
+    assert published["completed_types"] == [PRIMARY]
+    assert during[0]["progress"]["unchecked_types"] == ["T2"]
+    # The other progress fields stay truthful during and after the run.
+    assert during[0]["progress"]["read"] == 1
+    assert during[0]["progress"]["to_read"] == 3
+    final = status["progress"]["publication"]
+    assert final["partial"] is False
+    assert final["interim_count"] == 1
+    assert status["progress"]["unchecked_types"] == []
+    # Only type keys, counts, times, and booleans: no content, no diagnostics.
+    assert "secret" not in json.dumps(status["job"])
