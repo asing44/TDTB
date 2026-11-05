@@ -11974,3 +11974,17 @@ button.strip-cal {
 .setup-drawer.settings-shell {
   width: min(760px, 100vw);
 }
+
+/* Source mark: swatch + source name beside the origin chip, always visible.
+   Reuses the .qrow__swatch--{source} tints; the label inherits the meta ink. */
+.source-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+.source-mark__label {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
