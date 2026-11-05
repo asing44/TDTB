@@ -82,6 +82,52 @@ describe("kindLabel: human KIND, never a raw structure id", () => {
 });
 
 describe("rendered rows carry the clearer labels", () => {
+  it("shows an always-visible source mark beside the origin chip for each source", () => {
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.assigned.push(
+      projectAssigned({
+        name: "Team offsite",
+        source: "calendar",
+        assigned: true,
+        blocks: 1,
+        identity: "calendar:ev-2:2026-10-13",
+        path: "calendar://ev-2/2026-10-13",
+        event_id: "ev-2",
+        calendar_id: "cal-1",
+        calendar_title: "Evan & Nate",
+      }),
+    );
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: { ...h.scenario.ledger } });
+    const { container } = h.ui(<Queue />);
+    const rows = Array.from((container as HTMLElement).querySelectorAll(".qrow__source"));
+    const seen = new Set<string>();
+    for (const el of rows) {
+      const mark = el.querySelector(".source-mark");
+      const chip = el.querySelector(".qrow__src");
+      if (!chip) continue;
+      const key = chip.className.match(/qrow__src--(\w+)/)![1]!;
+      if (mark) {
+        expect(mark.getAttribute("data-source")).toBe(key);
+        expect(mark.querySelector(".qrow__swatch")).toBeTruthy();
+        expect(mark.textContent).toBe(
+          { todoist: "Todoist", capacities: "Capacities", calendar: "Calendar" }[key],
+        );
+        // The mark leads the origin chip; the chip is unchanged.
+        expect(mark.nextElementSibling).toBe(chip);
+        seen.add(key);
+      } else {
+        // A chip that already names its source (bare "Todoist", or the
+        // Calendar swatch + label fallback) needs no second mark.
+        expect(chip.textContent).toBe(key === "calendar" ? "Calendar" : "Todoist");
+        if (key === "calendar") expect(el.querySelector(".qrow__swatch--calendar")).toBeTruthy();
+        seen.add(key);
+      }
+    }
+    expect(seen.has("capacities")).toBe(true);
+    expect(seen.has("calendar")).toBe(true);
+  });
+
   it("names the source as a chip on every row and drops the TASK badge", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);

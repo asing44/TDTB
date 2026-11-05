@@ -155,3 +155,26 @@ export function OriginChip({ spec, source }: { spec: OriginChipSpec; source: str
     </span>
   );
 }
+
+/** Always-visible source indicator (swatch + name) that sits beside the origin
+    chip. The origin chip says WHAT a row is (Capacities type, Todoist project);
+    this says WHERE it came from, so a Capacities "Task" reads differently from
+    a Todoist task without hovering. Skipped when the chip already names the
+    source (a bare "Todoist" chip). Swatch tints live in app.css. */
+export function SourceMark({
+  source,
+  label,
+  chipLabel,
+}: {
+  source: string;
+  label: string;
+  chipLabel?: string | null;
+}) {
+  if (chipLabel === label) return null;
+  return (
+    <span class={`source-mark source-mark--${source}`} data-source={source} title={`Source: ${label}`}>
+      <span class={`qrow__swatch qrow__swatch--${source}`} aria-hidden="true" />
+      <span class="source-mark__label">{label}</span>
+    </span>
+  );
+}

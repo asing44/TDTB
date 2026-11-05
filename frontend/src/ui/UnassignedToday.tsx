@@ -52,7 +52,7 @@ import {
 } from "../model/drawerGroups";
 import { dueLabel } from "../model/urgency";
 import { kindLabel } from "./TaskRow";
-import { OriginChip, chipSpecFor, originChipSpec, type OriginChipSpec } from "./sourceChip";
+import { OriginChip, SourceMark, chipSpecFor, originChipSpec, type OriginChipSpec } from "./sourceChip";
 import {
   assignmentRows,
   effectiveBlocks,
@@ -92,9 +92,15 @@ function NewBadge() {
 
 function SourceChip({ source, spec }: { source: string; spec?: OriginChipSpec | null }) {
   const key = sourceKey(source);
-  if (spec) return <OriginChip spec={spec} source={key} />;
+  const mark = (chip: OriginChipSpec) => (
+    <>
+      <SourceMark source={key} label={SOURCE_LABEL[source] ?? "Other"} chipLabel={chip.label} />
+      <OriginChip spec={chip} source={key} />
+    </>
+  );
+  if (spec) return mark(spec);
   const bare = chipSpecFor({ source });
-  if (bare) return <OriginChip spec={bare} source={key} />;
+  if (bare) return mark(bare);
   return (
     <>
       <span class={`qrow__swatch qrow__swatch--${key}`} aria-hidden="true" />

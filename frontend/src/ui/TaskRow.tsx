@@ -30,7 +30,7 @@ import { labelChipClass } from "./sourceChip";
 import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
-import { OriginChip, originChipSpec } from "./sourceChip";
+import { OriginChip, SourceMark, originChipSpec } from "./sourceChip";
 
 /** What Complete does on a Capacities row, in the words the control carries.
     Capacities write-back is out of scope, so the row is skipped for today. */
@@ -334,7 +334,10 @@ export function TaskRow({
         ) : null}
         <span class="qrow__source" title={metaDetail || (item.path ?? undefined)}>
           {origin ? (
-            <OriginChip spec={origin} source={chip.key} />
+            <>
+              <SourceMark source={chip.key} label={chip.label} chipLabel={origin.label} />
+              <OriginChip spec={origin} source={chip.key} />
+            </>
           ) : (
             <>
               <span class={`qrow__swatch qrow__swatch--${chip.key}`} aria-hidden="true" />
