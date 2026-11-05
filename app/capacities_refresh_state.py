@@ -23,10 +23,18 @@ Contract (KTD2/KTD3):
 * **Nothing is silently evicted.** Reaching the storage bound raises
   :class:`RefreshStateStorageError` and preserves both the existing objects
   and the prior generation.
-* **Complete evidence only.** A generation installs only from a complete
-  listing of every required type, a successful cached read for every member,
-  and a current configuration revision; complete listing absence is the only
-  removal evidence.
+* **Complete evidence only — with named interim generations.** A complete
+  generation installs only from a complete listing of every required type, a
+  successful cached read for every member, and a current configuration
+  revision. An *interim* generation is the same install with
+  ``SnapshotEvidence.partial`` set: the types that finished reading are
+  freshly listed, ``retained_types`` keep their previously published members,
+  and ``unchecked_types`` names every type that was still being read, so no
+  surface can mistake it for a complete read. A later complete install
+  supersedes an interim one whole: members the complete listing did not
+  confirm are removed and nothing is merged from the interim. Complete listing
+  absence is the only removal evidence, and an incomplete listing still
+  installs nothing.
 * **Namespace isolation.** Objects are keyed by provider origin + space +
   type + object; pointers are keyed by origin + space. Stored
   bytes for another scope are never served, and they are never overwritten by
@@ -303,7 +311,13 @@ class SnapshotMember:
 
 @dataclass(frozen=True)
 class CompleteSnapshot:
-    """The atomically installed, complete generation pointer."""
+    """The atomically installed, complete-or-interim generation pointer.
+
+    ``partial`` marks a generation published while its run was still reading:
+    ``unchecked_types`` then names the types kept at their last published
+    state. A complete generation carries ``partial=False`` and no unchecked
+    types.
+    """
 
     scope_key: str
     revision: int
@@ -312,6 +326,8 @@ class CompleteSnapshot:
     listing_checked_at: float
     members: tuple[SnapshotMember, ...]
     type_check_times: tuple[tuple[str, float], ...] = ()
+    partial: bool = False
+    unchecked_types: tuple[str, ...] = ()
 
     def has(self, object_id: str, type_key: str) -> bool:
         return any(
@@ -353,7 +369,9 @@ class SnapshotEvidence:
     ``retained_types`` are types this run did not touch; their published
     members are carried forward from the prior generation (or the install is
     refused, never silently dropped). ``unreadable_objects`` names required
-    reads that failed, which also prevents installation.
+    reads that failed, which also prevents installation. ``partial`` marks an
+    interim generation installed before the run finished, and
+    ``unchecked_types`` names the types it kept at their last published state.
     """
 
     scope_key: str
@@ -362,6 +380,8 @@ class SnapshotEvidence:
     listings: tuple[TypeListing, ...] = ()
     retained_types: tuple[str, ...] = ()
     unreadable_objects: tuple[str, ...] = ()
+    partial: bool = False
+    unchecked_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -405,6 +425,32 @@ def _require_finite(value: Any, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be a finite number")
     return number
+
+
+def _interim_flags(evidence: SnapshotEvidence) -> tuple[bool, tuple[str, ...]]:
+    """Validate and normalize one install's interim-publication fields.
+
+    The returned type keys are stripped, deduplicated, and sorted, so the
+    stored and returned order never depends on the caller. Naming unchecked
+    types on a generation that claims to be complete is refused: that pairing
+    would silently mark unchecked types as checked.
+    """
+    partial = evidence.partial
+    if not isinstance(partial, bool):
+        raise ValueError("partial must be a bool")
+    declared = evidence.unchecked_types
+    if isinstance(declared, str) or not isinstance(declared, (tuple, list, set)):
+        raise ValueError("unchecked_types must be a collection of type keys")
+    unchecked: set[str] = set()
+    for value in declared:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("unchecked_types must contain nonblank type keys")
+        unchecked.add(value.strip())
+    if unchecked and not partial:
+        raise ValueError(
+            "a complete generation cannot name unchecked types; set partial"
+        )
+    return partial, tuple(sorted(unchecked))
 
 
 def _iso_utc(epoch: Any) -> str:
@@ -796,13 +842,20 @@ class RefreshStateStore:
         expected_generation: int,
         structures: Any = None,
     ) -> CompleteSnapshot:
-        """Atomically install one complete generation, or refuse.
+        """Atomically install one complete or interim generation, or refuse.
 
         Refuses (preserving the prior generation and every cached read) when
         the caller's expected generation or configuration revision is stale,
         when a required listing is incomplete, when a required read failed, or
         when any member has no cached read. Removals happen only here, only as
         the difference a complete listing proves.
+
+        The same call installs an interim generation when
+        ``evidence.partial`` is set: the types it freshly listed are published
+        now, and ``evidence.retained_types`` keep their previously published
+        members while ``evidence.unchecked_types`` names them for the reader.
+        A later complete install replaces an interim generation whole, with no
+        member carried over from it.
 
         When ``structures`` is supplied, the raw payload is stored after the
         pointer, stamped with the installed generation. A failed contract write
@@ -814,6 +867,7 @@ class RefreshStateStore:
             raise ValueError("structures must be a JSON object or array")
         expected = _require_int(expected_generation, "expected_generation")
         scope_key = _require_text(evidence.scope_key, "scope_key")
+        partial, unchecked_types = _interim_flags(evidence)
         with self._locked():
             prior = self._load_pointer_unlocked(scope_key)
             prior_generation = prior.generation if prior is not None else 0
@@ -839,6 +893,8 @@ class RefreshStateStore:
                 ),
                 members=members,
                 type_check_times=type_check_times,
+                partial=partial,
+                unchecked_types=unchecked_types,
             )
             capacities_cache_io.atomic_write_json(
                 self._snapshot_path(scope_key), self._snapshot_document(snapshot)
@@ -1046,6 +1102,8 @@ class RefreshStateStore:
             "installed_at": snapshot.installed_at,
             "listing_checked_at": snapshot.listing_checked_at,
             "type_check_times": dict(snapshot.type_check_times),
+            "partial": snapshot.partial,
+            "unchecked_types": list(snapshot.unchecked_types),
             "members": [
                 {
                     "object_id": member.object_id,
@@ -1190,6 +1248,34 @@ class RefreshStateStore:
                     )
                 times.append((type_key, float(checked_at)))
 
+        # Interim-publication fields arrived after the first pointers were
+        # written, so an absent pair means a complete generation. Present but
+        # unusable bytes are never guessed at, exactly like the fields above.
+        partial = raw.get("partial", False)
+        unchecked: set[str] = set()
+        if not isinstance(partial, bool) or not isinstance(
+            raw.get("unchecked_types", []), list
+        ):
+            self._warn(
+                "snapshot-invalid",
+                "Capacities refresh state: the stored complete pointer is "
+                "unreadable; installation is blocked until it is repaired.",
+            )
+            raise RefreshStateFormatError(
+                "complete pointer interim fields are invalid"
+            )
+        for value in raw.get("unchecked_types", []):
+            if not isinstance(value, str) or not value.strip():
+                self._warn(
+                    "snapshot-invalid",
+                    "Capacities refresh state: the stored complete pointer is "
+                    "unreadable; installation is blocked until it is repaired.",
+                )
+                raise RefreshStateFormatError(
+                    "complete pointer unchecked types are invalid"
+                )
+            unchecked.add(value.strip())
+
         return CompleteSnapshot(
             scope_key=scope_key,
             revision=int(revision),
@@ -1198,6 +1284,8 @@ class RefreshStateStore:
             listing_checked_at=float(listing_checked_at),
             members=tuple(members),
             type_check_times=tuple(sorted(times)),
+            partial=partial,
+            unchecked_types=tuple(sorted(unchecked)),
         )
 
     # -- interrupted-run markers ---------------------------------------

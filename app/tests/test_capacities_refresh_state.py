@@ -58,7 +58,8 @@ def _listing(type_key, object_ids, checked_at, *, complete=True):
 
 
 def _install(store, *, revision=1, expected=0, types=("T",), listings=(),
-             retained=(), unreadable=(), scope=SCOPE, structures=None):
+             retained=(), unreadable=(), scope=SCOPE, structures=None,
+             partial=False, unchecked=()):
     return store.install_generation(
         rs.SnapshotEvidence(
             scope_key=scope,
@@ -67,6 +68,8 @@ def _install(store, *, revision=1, expected=0, types=("T",), listings=(),
             listings=tuple(listings),
             retained_types=tuple(retained),
             unreadable_objects=tuple(unreadable),
+            partial=partial,
+            unchecked_types=tuple(unchecked),
         ),
         expected_generation=expected,
         **({} if structures is None else {"structures": structures}),
@@ -382,6 +385,282 @@ def test_rescan_combines_with_retained_prior_types(tmp_path):
             types=("T1",),
             listings=[_listing("T1", ["a"], 22.0)],
         )
+
+
+# ---------------------------------------------------------------------------
+# R6/R8/KTD6 — interim generations named by unchecked type
+# ---------------------------------------------------------------------------
+
+def test_an_interim_install_keeps_retained_members_and_marks_the_generation_partial(
+    tmp_path,
+):
+    clock = _Clock()
+    root = tmp_path / "refresh-state"
+    store = _store(tmp_path, root=root, clock=clock)
+    store.put("a", "T1", {"v": "a"}, content_read_at=1.0)
+    store.put("b", "T2", {"v": "b"}, content_read_at=1.0)
+    published = _install(
+        store,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 10.0), _listing("T2", ["b"], 11.0)],
+    )
+    assert (published.partial, published.unchecked_types) == (False, ())
+
+    clock.advance(60.0)
+    store.put("a", "T1", {"v": "a2"}, content_read_at=70.0)
+    interim = _install(
+        store,
+        expected=1,
+        types=("T1",),
+        listings=[_listing("T1", ["a"], 70.0)],
+        retained=("T2",),
+        partial=True,
+        unchecked=("T2",),
+    )
+
+    assert interim.partial is True
+    assert interim.unchecked_types == ("T2",)
+    # The finished type is fresh; the unchecked type keeps its last published
+    # member and its original check time.
+    assert interim.has("a", "T1") and interim.has("b", "T2")
+    assert interim.check_time("T2") == 11.0
+    assert store.get("a", "T1").content == {"v": "a2"}
+
+    # A fresh process reads the same interim publication back from its bytes.
+    reloaded = _store(tmp_path, root=root, clock=clock).load_snapshot(SCOPE)
+    assert reloaded is not None
+    assert reloaded.generation == interim.generation == 2
+    assert reloaded.partial is True
+    assert reloaded.unchecked_types == ("T2",)
+    assert {(m.object_id, m.type_key) for m in reloaded.members} == {
+        ("a", "T1"),
+        ("b", "T2"),
+    }
+
+
+def test_the_interim_flags_are_persisted_as_content_free_pointer_fields(tmp_path):
+    root = tmp_path / "refresh-state"
+    store = _store(tmp_path, root=root)
+    store.put("a", "T1", {"v": "a"}, content_read_at=1.0)
+    store.put("b", "T2", {"v": "b"}, content_read_at=1.0)
+    _install(
+        store,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 10.0), _listing("T2", ["b"], 11.0)],
+    )
+    _install(
+        store,
+        expected=1,
+        types=("T1",),
+        listings=[_listing("T1", ["a"], 20.0)],
+        retained=("T2",),
+        partial=True,
+        unchecked=("T2",),
+    )
+
+    document = json.loads(_pointer(root).read_text(encoding="utf-8"))
+    assert document["partial"] is True
+    assert document["unchecked_types"] == ["T2"]
+    # Only the flag and the type keys are added: no content, no diagnostics.
+    assert set(document) == {
+        "version",
+        "namespace",
+        "scope_key",
+        "revision",
+        "generation",
+        "installed_at",
+        "listing_checked_at",
+        "type_check_times",
+        "members",
+        "partial",
+        "unchecked_types",
+    }
+
+
+def test_a_complete_install_keeps_no_member_the_superseded_interim_retained(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    for object_id, type_key in (("a", "T1"), ("b", "T1"), ("c", "T2")):
+        store.put(object_id, type_key, {"v": object_id}, content_read_at=1.0)
+    _install(
+        store,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a", "b"], 10.0), _listing("T2", ["c"], 11.0)],
+    )
+
+    # T1 finished first and b is gone; T2 is still being read, so c stays.
+    interim = _install(
+        store,
+        expected=1,
+        types=("T1",),
+        listings=[_listing("T1", ["a"], 20.0)],
+        retained=("T2",),
+        partial=True,
+        unchecked=("T2",),
+    )
+    assert not interim.has("b", "T1")
+    assert interim.has("c", "T2")
+
+    complete = _install(
+        store,
+        expected=2,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 30.0), _listing("T2", [], 31.0)],
+    )
+
+    assert complete.partial is False
+    assert complete.unchecked_types == ()
+    # The complete read replaces the interim whole: nothing merges back in.
+    assert {(m.object_id, m.type_key) for m in complete.members} == {("a", "T1")}
+    loaded = store.load_snapshot(SCOPE)
+    assert loaded.partial is False
+    assert loaded.unchecked_types == ()
+    assert {(m.object_id, m.type_key) for m in loaded.members} == {("a", "T1")}
+
+
+def test_an_interim_install_never_replaces_a_newer_generation(tmp_path):
+    root = tmp_path / "refresh-state"
+    store = _store(tmp_path, root=root)
+    store.put("a", "T1", {"v": "a"}, content_read_at=1.0)
+    store.put("b", "T2", {"v": "b"}, content_read_at=1.0)
+    _install(
+        store,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 10.0), _listing("T2", ["b"], 11.0)],
+    )
+    _install(
+        store,
+        expected=1,
+        types=("T1",),
+        listings=[_listing("T1", ["a"], 20.0)],
+        retained=("T2",),
+        partial=True,
+        unchecked=("T2",),
+    )
+    # Another run wins the race and lands a newer complete generation.
+    _install(
+        store,
+        expected=2,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 30.0), _listing("T2", ["b"], 31.0)],
+    )
+    published = _pointer(root).read_bytes()
+
+    # Its own interim install now carries a stale expectation, as before.
+    with pytest.raises(rs.SnapshotConflictError):
+        _install(
+            store,
+            expected=2,
+            types=("T1",),
+            listings=[_listing("T1", ["a"], 40.0)],
+            retained=("T2",),
+            partial=True,
+            unchecked=("T2",),
+        )
+
+    assert _pointer(root).read_bytes() == published
+    loaded = store.load_snapshot(SCOPE)
+    assert (loaded.generation, loaded.partial, loaded.unchecked_types) == (
+        3,
+        False,
+        (),
+    )
+    assert {(m.object_id, m.type_key) for m in loaded.members} == {
+        ("a", "T1"),
+        ("b", "T2"),
+    }
+
+
+def test_an_interim_install_still_refuses_an_incomplete_listing(tmp_path):
+    store = _store(tmp_path)
+    store.put("a", "T1", {"v": "a"}, content_read_at=1.0)
+    store.put("b", "T2", {"v": "b"}, content_read_at=1.0)
+    _install(
+        store,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 10.0), _listing("T2", ["b"], 11.0)],
+    )
+
+    with pytest.raises(rs.RefreshStateIncompleteError):
+        _install(
+            store,
+            expected=1,
+            types=("T1",),
+            listings=[_listing("T1", ["a"], 20.0, complete=False)],
+            retained=("T2",),
+            partial=True,
+            unchecked=("T2",),
+        )
+    # A required type with no listing at all is refused the same way.
+    with pytest.raises(rs.RefreshStateIncompleteError):
+        _install(
+            store,
+            expected=1,
+            types=("T1", "T2"),
+            listings=[_listing("T1", ["a"], 20.0)],
+            partial=True,
+            unchecked=("T2",),
+        )
+
+    loaded = store.load_snapshot(SCOPE)
+    assert (loaded.generation, loaded.partial, loaded.unchecked_types) == (
+        1,
+        False,
+        (),
+    )
+
+
+def test_a_stored_generation_without_the_interim_fields_loads_as_complete(
+    tmp_path,
+):
+    root = tmp_path / "refresh-state"
+    store = _store(tmp_path, root=root)
+    store.put("a", "T1", {"v": "a"}, content_read_at=1.0)
+    _install(store, types=("T1",), listings=[_listing("T1", ["a"], 10.0)])
+
+    # An older payload carries neither field; it must read as complete.
+    pointer = _pointer(root)
+    document = json.loads(pointer.read_text(encoding="utf-8"))
+    document.pop("partial", None)
+    document.pop("unchecked_types", None)
+    pointer.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded = _store(tmp_path, root=root).load_snapshot(SCOPE)
+    assert loaded is not None
+    assert (loaded.generation, loaded.partial, loaded.unchecked_types) == (
+        1,
+        False,
+        (),
+    )
+    assert {(m.object_id, m.type_key) for m in loaded.members} == {("a", "T1")}
+    assert store.drain_warnings() == []
+
+    # The older payload is still a valid base for the next installation.
+    store.put("b", "T2", {"v": "b"}, content_read_at=2.0)
+    following = _install(
+        store,
+        expected=1,
+        types=("T1", "T2"),
+        listings=[_listing("T1", ["a"], 11.0), _listing("T2", ["b"], 12.0)],
+    )
+    assert (following.generation, following.partial) == (2, False)
+
+
+def test_the_new_evidence_fields_default_to_complete_and_refuse_a_contradiction(
+    tmp_path,
+):
+    evidence = rs.SnapshotEvidence(scope_key=SCOPE, revision=1, required_types=("T",))
+    assert (evidence.partial, evidence.unchecked_types) == (False, ())
+
+    store = _store(tmp_path)
+    store.put("a", "T", {"v": "a"}, content_read_at=1.0)
+    with pytest.raises(ValueError):
+        _install(store, listings=[_listing("T", ["a"], 10.0)], unchecked=("T2",))
+    with pytest.raises(ValueError):
+        _install(store, listings=[_listing("T", ["a"], 10.0)], partial="yes")
+
+    assert store.load_snapshot(SCOPE) is None
 
 
 # ---------------------------------------------------------------------------
