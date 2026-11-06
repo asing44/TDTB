@@ -129,7 +129,7 @@ Deferred:
   - Counters: `read_counts()` returns `{"rest": n, "mcp": n, "fell_back": bool}` plus per-source elapsed seconds.
 - KTD2. **Token custody (`app/capacities_mcp_auth.py`).** `FileTokenStorage` implements `mcp.client.auth.TokenStorage`.
   - It holds one JSON document: `{"version": 1, "client_info": {...}, "tokens": {...}, "access_expires_at": <epoch|null>}`.
-  - Default path is `~/.config/tdtb/capacities-mcp-oauth.json`, a sibling of the existing credential slot (`capacities_builder.py:121`). It is outside synced folders.
+  - Default path is `~/.config/tdtb/capacities-mcp/oauth.json`, in its own 0700 directory because the shared `~/.config/tdtb` is 0755. It is outside synced folders.
   - The directory is 0700 and the file 0600. Writes are atomic: an `O_EXCL` 0600 temp file plus rename, the pattern at `capacities_settings.py:1253`. Like `load_capacities_token` (`capacities_builder.py:217-230`), any mode looser than 0600 is rejected.
   - Refresh tokens rotate on every refresh (U0), so `set_tokens` must complete its temp-write and rename while holding the custody lock: a crash between the server's rotation and the write strands the credential. Single-writer assumption: only the TDTB server process refreshes while a job runs.
   - `set_tokens` also keeps the previous `refresh_token` when the new token lacks one, and stores `access_expires_at = now + expires_in`.
