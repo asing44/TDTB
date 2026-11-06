@@ -69,7 +69,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 #: the REST credential slot, outside every repository, synced folder, and
 #: backup tree, because it holds a long-lived refresh token.
 DEFAULT_CUSTODY_PATH = (
-    Path.home() / ".config" / "tdtb" / "capacities-mcp-oauth.json"
+    Path.home() / ".config" / "tdtb" / "capacities-mcp" / "oauth.json"
 )
 
 CUSTODY_VERSION = 1

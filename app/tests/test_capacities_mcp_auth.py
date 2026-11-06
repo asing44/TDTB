@@ -114,10 +114,11 @@ def test_round_trip_through_asyncio_run(tmp_path):
 
 
 def test_default_path_is_machine_local(tmp_path):
-    # The default is a sibling of the REST credential slot and never a repo
-    # path; it is only ever resolved, never read here.
-    assert cma.DEFAULT_CUSTODY_PATH.name == "capacities-mcp-oauth.json"
-    assert cma.DEFAULT_CUSTODY_PATH.parent.name == "tdtb"
+    # The default lives in its own directory under ~/.config/tdtb (the shared
+    # parent is 0755) and never in a repo path; it is only resolved here.
+    assert cma.DEFAULT_CUSTODY_PATH.name == "oauth.json"
+    assert cma.DEFAULT_CUSTODY_PATH.parent.name == "capacities-mcp"
+    assert cma.DEFAULT_CUSTODY_PATH.parent.parent.name == "tdtb"
     assert str(cma.DEFAULT_CUSTODY_PATH).startswith(str(Path.home()))
     assert repr(cma.FileTokenStorage()) == "<FileTokenStorage>"
     assert str(tmp_path) not in repr(cma.FileTokenStorage(tmp_path / "x.json"))
