@@ -1322,6 +1322,9 @@ class RefreshCoordinator:
         configuration_revision: int | None = None,
         space_id_supplier: Callable[[], str | None] | None = None,
         type_order: Iterable[str] | None = None,
+        provider_factory: (
+            Callable[[ProviderPacer, threading.Event], Any] | None
+        ) = None,
     ) -> None:
         if not isinstance(space_id, str) or not space_id.strip():
             raise ValueError("space_id must be a nonblank string")
@@ -1378,7 +1381,18 @@ class RefreshCoordinator:
             rate_limit_budget_seconds=rate_limit_budget_seconds,
             on_wait=self._note_rate_limit_wait,
         )
-        self.provider = PacedProvider(provider, self.pacer)
+        self.provider = PacedProvider(
+            # ``provider_factory`` is the U6 seam for a provider that can only be
+            # built once this run's pacer and cancel event exist (the split
+            # content reader needs both). Without it ``provider`` is used as
+            # given, which is exactly today's REST-only path.
+            (
+                provider_factory(self.pacer, self.cancel_event)
+                if provider_factory is not None
+                else provider
+            ),
+            self.pacer,
+        )
         self.adapter = capacities_adapter.CapacitiesAdapter(
             self.provider,
             capacities_adapter.CapacitiesConfig(

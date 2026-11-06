@@ -89,6 +89,11 @@ from shadow import TOKEN_ENV_PATH
 STATE_FILENAME = "capacities-source.json"
 STATE_LOCK_FILENAME = "capacities-source.lock"
 
+#: The one ``read_source`` mode that may build the MCP splitter (R12/KTD10).
+#: Every other value — including the stored default ``rest`` — is the kill
+#: switch: the bare REST client, exactly as before.
+MCP_READ_SOURCE = "auto"
+
 #: How long a per-object content read stays reusable. The provider allows 30
 #: requests per minute; this TTL is what lets consecutive refreshes inside one
 #: minute reuse content instead of spending the budget again.
@@ -1126,6 +1131,15 @@ class CapacitiesBuilderConfig:
     #: Machine-local direct-refresh store root. ``None`` uses
     #: ``refresh_state_dir()``; tests inject a ``tmp_path``.
     refresh_state_path: Path | None = None
+    #: Machine-local MCP custody document. ``None`` uses ``FileTokenStorage``'s
+    #: default (``~/.config/tdtb/capacities-mcp/oauth.json``); tests inject a
+    #: ``tmp_path``. Never read on the ``rest`` path.
+    mcp_token_path: Path | None = None
+    #: MCP test seams, handed straight to ``McpProvider``. ``None`` uses the
+    #: streamable-HTTP session and one metadata GET. Never touched on the
+    #: ``rest`` path.
+    mcp_session_factory: Any = None
+    mcp_metadata_loader: Any = None
 
 
 def _mode_declarations(settings: Any) -> tuple[dict[str, str], dict[str, str]]:
@@ -1544,6 +1558,66 @@ def _config_save_guard() -> Iterator[None]:
             _release_lock_file(handle)
 
 
+def _mcp_splitter_factory(
+    record: Any,
+    cfg: CapacitiesBuilderConfig,
+    rest: Any,
+) -> Callable[[Any, threading.Event], Any] | None:
+    """The lazy splitter factory for ``read_source: auto``, else ``None`` (R12).
+
+    Two states return ``None``, i.e. exactly today's bare REST client with no
+    splitter and no MCP import side effect:
+
+    - no custody file at all, because the operator simply has not consented yet
+      and a warning per run would be noise (R9);
+    - ``read_source: rest``, which never calls this function.
+
+    A custody file that exists but is unusable (loose permissions, invalid or
+    half-written, a symlink) still builds the splitter: its ``McpProvider``
+    refuses ``begin_run`` and U4b turns that refusal into a REST-only run plus
+    the one bounded fallback warning (R6). That keeps the operator-visible
+    signal without this builder ever raising into a start-up path.
+
+    The splitter itself cannot be built here: its two paced content readables
+    need the coordinator's own pacer and cancel event (U5), which exist only
+    after the coordinator is constructed. So the factory closes over the REST
+    client and the MCP provider, and ``RefreshCoordinator`` calls it with those
+    two values (``provider_factory`` seam).
+
+    No network happens at build: ``McpProvider`` opens nothing until
+    ``begin_run``, and the custody read is one local file.
+    """
+    import capacities_mcp
+    import capacities_mcp_auth
+    import capacities_read_source
+
+    storage = capacities_mcp_auth.FileTokenStorage(cfg.mcp_token_path)
+    if not storage.is_configured() and not os.path.lexists(storage.path):
+        return None
+    mcp = capacities_mcp.McpProvider(
+        record.space_id,
+        storage,
+        session_factory=cfg.mcp_session_factory,
+        metadata_loader=cfg.mcp_metadata_loader,
+    )
+    # Bound the library's OAuth logging before any read can reach it (KTD9).
+    capacities_mcp.install_secret_free_logging()
+
+    def factory(pacer: Any, cancel_event: threading.Event | None) -> Any:
+        content_reader, mcp_pace = capacities_refresh.paced_content_callables(
+            pacer, rest
+        )
+        return capacities_read_source.ReadSourceSplitter(
+            rest,
+            mcp=mcp,
+            content_reader=content_reader,
+            mcp_pace=mcp_pace,
+            cancel_event=cancel_event,
+        )
+
+    return factory
+
+
 def build_refresh_coordinator(
     config: CapacitiesBuilderConfig | None = None,
 ) -> capacities_refresh.RefreshCoordinator | None:
@@ -1576,9 +1650,15 @@ def build_refresh_coordinator(
     stored tag-exclusion policy is loaded the same way and handed to the
     coordinator so its internal adapter filters both candidate surfaces.
     Malformed rules or exclusions storage raises visibly rather than silently
-    disabling stored-rule eligibility or the exclusion policy. The legacy
-    :func:`build_capacities_adapter` path is unchanged and never reads the
-    exclusions store.
+    disabling stored-rule eligibility or the exclusion policy. Only the
+    ``read_source`` setting (R12/KTD10) can change the read path: ``rest`` —
+    the default and the kill switch — passes the bare REST client exactly as
+    before, and ``auto`` passes a lazy splitter factory instead, which yields a
+    ``ReadSourceSplitter`` over that same client plus an MCP content provider
+    only when a custody file exists. The MCP fallback on any failure is the
+    splitter's own (R6), so a start-up path here never raises for a read-source
+    reason. The legacy :func:`build_capacities_adapter` path is unchanged and
+    never reads the exclusions store, and completion re-reads stay REST.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
     pre_build_space = refresh_source_space_id()
@@ -1618,6 +1698,11 @@ def build_refresh_coordinator(
         ),
     )
     store = build_refresh_state(record.space_id, cfg)
+    provider_factory = (
+        _mcp_splitter_factory(record, cfg, client)
+        if settings.read_source == MCP_READ_SOURCE
+        else None
+    )
 
     return capacities_refresh.RefreshCoordinator(
         root=_refresh_state_root(cfg),
@@ -1637,6 +1722,7 @@ def build_refresh_coordinator(
         rules=rules,
         exclusion_policy=exclusion_policy,
         max_pages=cfg.max_pages,
+        provider_factory=provider_factory,
     )
 
 
