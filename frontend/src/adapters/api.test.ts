@@ -73,7 +73,7 @@ describe("reads", () => {
     route("/settings/capacities", {
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 3,
         statuses: {
           open: ["In Progress", "Active", "In Progress"],
@@ -84,6 +84,7 @@ describe("reads", () => {
           Project: { mode: "active", statuses: null },
         },
         native: { deadline_horizon_days: 4 },
+        read_source: "rest",
         excluded: { "capacities:space-1:RootTask:task-1": true },
       },
       available_structures: [
@@ -104,7 +105,7 @@ describe("reads", () => {
     });
     const settings = await new ApiAdapter().loadCapacitiesSettings();
     expect(settings).toEqual({
-      version: 2,
+      version: 3,
       revision: 3,
       persisted: true,
       // Both vocabularies land deduplicated and sorted.
@@ -136,7 +137,10 @@ describe("reads", () => {
           reason: "Assigned declaration names property 'gone', which the last published Capacities contract does not define; pick a live property in Settings or clear the mapping.",
         },
       ],
-      // An absent `migrated_from` means the stored file is already schema v2.
+      // The schema-v3 read route gate rides along on the same read; `rest`
+      // keeps the plain provider pinned.
+      readSource: "rest",
+      // An absent `migrated_from` means the stored file is already current.
       migratedFrom: null,
     });
     expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
@@ -151,6 +155,7 @@ describe("reads", () => {
         statuses: { open: ["active"], completed: ["Completed"] },
         types: {},
         native: { deadline_horizon_days: 2 },
+        read_source: "rest",
         excluded: {},
       },
     });
@@ -161,7 +166,7 @@ describe("reads", () => {
     route("/settings/capacities", {
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 2,
         statuses: { open: ["active", "In Progress"], completed: ["Completed"] },
         types: {
@@ -174,6 +179,7 @@ describe("reads", () => {
           },
         },
         native: { deadline_horizon_days: 2 },
+        read_source: "rest",
         excluded: {},
       },
     });
@@ -194,7 +200,7 @@ describe("reads", () => {
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 3,
         statuses: { open: ["In Progress", "active"], completed: ["Completed"] },
         types: {
@@ -207,6 +213,7 @@ describe("reads", () => {
           },
         },
         native: { deadline_horizon_days: 2 },
+        read_source: "rest",
         excluded: {},
       },
     });
@@ -461,7 +468,7 @@ describe("Capacities settings save", () => {
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 1,
         statuses: { open: ["active"], completed: ["Completed"] },
         types: {
@@ -472,6 +479,7 @@ describe("Capacities settings save", () => {
           },
         },
         native: { deadline_horizon_days: 5 },
+        read_source: "rest",
         excluded: { "capacities:space-1:custom:object-1": true },
       },
     });
@@ -511,11 +519,12 @@ describe("Capacities settings save", () => {
     route("/settings/capacities/save", {
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 1,
         statuses: { open: [], completed: [] },
         types: {},
         native: { deadline_horizon_days: 0 },
+        read_source: "rest",
         excluded: {},
       },
     });
