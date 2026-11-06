@@ -92,6 +92,7 @@ describe("U7 footer", () => {
       sc.inputs.sourceWarnings = [
         "Capacities type 'Task': 102 objects dropped — 98 no-effective-assignment, 3 future-date, 1 tdtb-excluded",
         "Capacities type 'Project': 1 object dropped — 1 closed-source-status",
+        "Capacities type 'Project': 6 objects not admitted — 6 status_unknown; set the source status to admit it",
         "53 cached Capacities objects are not in the published generation; Refresh to reconcile.",
         "2 cached Capacities objects changed type since the last Refresh; Refresh to reconcile.",
       ];

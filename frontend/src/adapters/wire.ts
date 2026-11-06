@@ -1708,6 +1708,7 @@ const advisoryTypeStaleness =
     decision). The refresh-fix action clears the reconcile counts. */
 const advisoryCapacitiesTally = [
   /^\s*Capacities type '.+': \d+ objects? dropped — .+$/,
+  /^\s*Capacities type '.+': \d+ objects? not admitted — .+$/,
   /^\s*\d+ cached Capacities objects (?:are not in the published generation|changed type since the last Refresh); Refresh to reconcile\.\s*$/,
 ];
 
