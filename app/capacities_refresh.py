@@ -27,8 +27,10 @@ Contract (KTD1–KTD3):
   and cancellation interrupts every backoff.
 * **Measured runs.** A job document carries a ``progress.metrics`` block with
   the run's own read count, read timings, read rate per minute, elapsed time,
-  cold flag, 429 count, and the last observed content limit — additive
-  numbers, booleans, and nulls only, never content or exception text.
+  cold flag, 429 count, the last observed content limit, and whether any
+  response header this run even looked like a rate-limit header (by name, never
+  by value) — additive numbers, booleans, short header names, and nulls only,
+  never content or exception text.
 * **Read-through refresh TTL.** An explicit Refresh reuses cached object
   content younger than :data:`DEFAULT_CONTENT_TTL_SECONDS` (10 minutes) with
   zero provider reads, so a back-to-back Refresh stays cheap, and re-reads
@@ -45,7 +47,10 @@ Contract (KTD1–KTD3):
   publishes the complete generation, which clears the interim flag and drops
   every member the complete read did not confirm. A type whose content was
   entirely reused from the cache publishes nothing early: it read no provider
-  content, so it has nothing newer to show.
+  content, so it has nothing newer to show. A type with even one unreadable
+  object is not a checked type: it publishes no interim of its own and stays
+  unchecked, while every later type that reads cleanly still publishes. The
+  failure is per type, never run-wide.
 * **Complete scope or nothing, for the complete install.** Any incomplete
   listing, failed required read, changed configuration revision, or changed
   source space prevents the *complete* installation. A run that stops after an
@@ -53,7 +58,9 @@ Contract (KTD1–KTD3):
   never claims a complete read. The previous complete generation and every
   successful read are preserved.
 * **No secret leakage.** Warnings are bounded fixed strings; exception text,
-  tokens, and filesystem paths never reach a warning or a job document.
+  tokens, header values, and filesystem paths never reach a warning or a job
+  document. A per-object read diagnostic names the object id and the exception
+  CLASS NAME only.
 
 Machine-local only: the caller owns the state root (``app_config.state_dir()``)
 so raw object content never enters a synced folder.
@@ -127,6 +134,13 @@ FAILURE_WARNING = (
 #: included.
 CAUSE_PREFIX = "Cause: "
 WHERE_PREFIX = "Where: "
+#: How many per-object read diagnostics a run keeps. Past the cap one
+#: ``+N more`` summary line stands in, so a run with many unreadable objects
+#: cannot flood the job's warnings.
+UNREADABLE_DIAGNOSTIC_LIMIT = 5
+#: How many distinct rate-limit header NAMES the run metrics keep (names only:
+#: a header value carries quota state and is never stored).
+RATE_LIMIT_HEADER_NAME_LIMIT = 5
 #: The fixed acquisition-stage vocabulary a failure can be attributed to.
 #: Bounded and closed so neither the job document nor the server log can
 #: carry source content.
@@ -425,6 +439,32 @@ def _bounded_detail(value: Any) -> str | None:
     return cleaned[:200]
 
 
+def _bounded_header_name(value: Any) -> str | None:
+    """A <=64-character printable header NAME, or ``None`` when unusable.
+
+    Only the name is ever kept: a header value carries quota state, so it is
+    never stored, logged, or rendered.
+    """
+    if not isinstance(value, str):
+        return None
+    token = "".join(char for char in value if char.isprintable()).strip()
+    if not token or len(token) > 64:
+        return None
+    return token
+
+
+def _unreadable_object_line(object_id: Any, exc: BaseException) -> str:
+    """One bounded diagnostic for an object this run could not read.
+
+    The object id and the exception CLASS NAME only: the exception message,
+    response headers, and object content never reach a warning or a job
+    document.
+    """
+    identifier = _bounded_identifier(object_id) or "unknown"
+    name = _bounded_identifier(type(exc).__name__) or "Exception"
+    return f"Capacities object {identifier} could not be read ({name})"
+
+
 def _failure_cause_line(exc: BaseException) -> str:
     """One bounded cause line: the exception CLASS NAME, plus only the
     structured facts the exception itself already exposes — the retry-after
@@ -507,6 +547,13 @@ class ProviderPacer:
         #: The last usable header limit per endpoint (``{limit, window}``),
         #: kept for the job's run metrics and reset by :meth:`begin_run`.
         self.observed_limits: dict[str, dict[str, Any]] = {}
+        #: Whether any observed response carried a header NAME containing
+        #: ``ratelimit``, and which names those were (names only, insertion
+        #: order, deduplicated). Reset by :meth:`begin_run`; reported in the
+        #: job's run metrics so a null limit can be told apart from an
+        #: unparsable header.
+        self.rate_limit_header_seen = False
+        self.rate_limit_header_names: list[str] = []
         self._times: dict[str, deque[float]] = {}
         self._cooldown_until: dict[str, float] = {}
         self._retry_after: dict[str, float] = {}
@@ -541,6 +588,8 @@ class ProviderPacer:
         self.rate_limit_slept = 0.0
         self.rate_limited = 0
         self.observed_limits.clear()
+        self.rate_limit_header_seen = False
+        self.rate_limit_header_names.clear()
         self._budgets.clear()
 
     def _notify_wait(self, endpoint: str, seconds: float, reason: str | None) -> None:
@@ -631,6 +680,16 @@ class ProviderPacer:
         """
         if not isinstance(headers, Mapping):
             return
+        # Visibility first: whether the API even sends a rate-limit header is
+        # what makes a null observed limit diagnosable. Names only — a header
+        # value is never kept.
+        matched = [str(key) for key in headers if "ratelimit" in str(key).lower()]
+        if matched:
+            self.rate_limit_header_seen = True
+            for raw in matched:
+                name = _bounded_header_name(raw)
+                if name is not None and name not in self.rate_limit_header_names:
+                    self.rate_limit_header_names.append(name)
         lowered = {str(key).lower(): value for key, value in headers.items()}
         retry = _coerce_seconds(lowered.get("retry-after"))
         observation = parse_rate_limit(lowered)
@@ -1113,6 +1172,11 @@ class RefreshCoordinator:
         self._publication: dict[str, Any] | None = None
         self._interim_count = 0
         self._installed_at: float | None = None
+        #: Bounded per-object read diagnostics (object id and exception CLASS
+        #: NAME only) and the count behind the ``+N more`` summary. Reset per
+        #: run; rendered through the job's warnings channel.
+        self._unreadable_object_lines: list[str] = []
+        self._unreadable_object_count = 0
 
     # -- paths / persistence -------------------------------------------
 
@@ -1315,6 +1379,8 @@ class RefreshCoordinator:
         self._publication = None
         self._interim_count = 0
         self._installed_at = None
+        self._unreadable_object_lines = []
+        self._unreadable_object_count = 0
         try:
             self._acquire()
         except RefreshCancelled:
@@ -1388,11 +1454,13 @@ class RefreshCoordinator:
     def _build_metrics(self, *, finished_at: float) -> dict[str, Any]:
         """This run's own numbers for the job's ``progress.metrics`` block.
 
-        Every value is a number, boolean, or null: nothing derived from object
-        content or exception text is stored. ``read_rate_per_minute`` covers
-        only the read phase (it excludes listing time) and is null when the run
-        performed no fresh read or both reads landed on one instant, so it
-        never divides by zero.
+        Every value is a number, boolean, short header name, or null: nothing
+        derived from object content or exception text is stored.
+        ``read_rate_per_minute`` covers only the read phase (it excludes listing
+        time) and is null when the run performed no fresh read or both reads
+        landed on one instant, so it never divides by zero.
+        ``rate_limit_header_names`` holds header NAMES only — never a value —
+        so a null ``observed_limit`` can be told apart from an absent header.
         """
         job = self._job or {}
         progress = job.get("progress") or {}
@@ -1424,7 +1492,32 @@ class RefreshCoordinator:
             "cold": bool(job.get("mode") == "rescan" or to_read == listed),
             "rate_limited": int(self.pacer.rate_limited),
             "observed_limit": dict(observed) if observed is not None else None,
+            "rate_limit_header_seen": bool(self.pacer.rate_limit_header_seen),
+            "rate_limit_header_names": sorted(self.pacer.rate_limit_header_names)[
+                :RATE_LIMIT_HEADER_NAME_LIMIT
+            ],
         }
+
+    def _note_unreadable_object(self, object_id: Any, exc: BaseException) -> None:
+        """Record one bounded, content-free diagnostic for an unreadable object.
+
+        The object id and the exception CLASS NAME only; the message, headers,
+        and content are never captured. Past the cap the run keeps a count so
+        the warnings can end in one ``+N more`` summary line.
+        """
+        self._unreadable_object_count += 1
+        if len(self._unreadable_object_lines) < UNREADABLE_DIAGNOSTIC_LIMIT:
+            self._unreadable_object_lines.append(
+                _unreadable_object_line(object_id, exc)
+            )
+
+    def _unreadable_object_warnings(self) -> list[str]:
+        """The capped read diagnostics for this run, plus one ``+N more`` line."""
+        lines = list(self._unreadable_object_lines)
+        extra = int(self._unreadable_object_count) - len(lines)
+        if extra > 0:
+            lines.append(f"+{extra} more")
+        return lines
 
     def _finish(self, phase: str, outcome: str, warnings: list[str]) -> None:
         job = self._job or {}
@@ -1436,6 +1529,9 @@ class RefreshCoordinator:
         publication = self._publication_record(phase=phase)
         if publication["partial"] and INTERIM_RETAINED_WARNING not in warnings:
             warnings = [*warnings, INTERIM_RETAINED_WARNING]
+        # The per-object read diagnostics ride the same bounded channel, so an
+        # operator can tell which object failed and with which exception class.
+        warnings = [*warnings, *self._unreadable_object_warnings()]
         existing = list(job.get("warnings", ()))
         for warning in warnings:
             if warning not in existing:
@@ -1688,7 +1784,12 @@ class RefreshCoordinator:
         publish_order = self._publish_order(listing_types, to_read_by_type)
         self._note_unchecked(publish_order)
         rows_merged_by_type: dict[str, list[dict[str, Any]]] = {}
-        unreadable = False
+        #: The types with at least one unreadable object. The flag is per type
+        #: (never run-wide): such a type is not a checked type, so it publishes
+        #: no interim and stays unchecked, while later types that read cleanly
+        #: still publish. Any entry here still fails the whole run at the end of
+        #: the read phase, so no complete generation is installed.
+        unreadable_types: list[str] = []
         #: Cached reads whose stored ``structureId`` disagrees with the type key
         #: this run listed them under: a re-typed object, which the projection
         #: would otherwise map with another type's property mapping.
@@ -1696,6 +1797,7 @@ class RefreshCoordinator:
         for type_key in publish_order:
             type_rows: list[dict[str, Any]] = []
             fresh_reads = 0
+            type_unreadable = 0
             for row in rows_by_type[type_key]:
                 if self.cancel_event.is_set():
                     _raise_cancelled()
@@ -1712,8 +1814,9 @@ class RefreshCoordinator:
                     # A rate limit that outlived the per-run wait budget fails
                     # the run truthfully (Cause/Where), not one object.
                     raise
-                except Exception:  # noqa: BLE001 — one unreadable object
-                    unreadable = True
+                except Exception as exc:  # noqa: BLE001 — one unreadable object
+                    type_unreadable += 1
+                    self._note_unreadable_object(object_id, exc)
                     continue
                 cached_type = _text(content.get("structureId"))
                 if cached_type and cached_type != type_key:
@@ -1729,16 +1832,22 @@ class RefreshCoordinator:
                     self._read_finished_at = read_at
                     self._progress(type_key=type_key, read=1)
             rows_merged_by_type[type_key] = type_rows
-            self._completed_types = [*self._completed_types, type_key]
+            if type_unreadable:
+                # Not a checked type: one of its objects was never read, so it
+                # stays out of ``completed_types`` and stays unchecked.
+                unreadable_types.append(type_key)
+            else:
+                self._completed_types = [*self._completed_types, type_key]
             finished = set(self._completed_types)
             remaining = [key for key in publish_order if key not in finished]
             self._note_unchecked(remaining)
             # R6/KTD6: publish this type's fresh rows now, keeping every type
             # still being read at its last published state. A type whose
             # content was entirely reused has nothing newer to show, and a type
-            # whose read failed cannot be published as checked, so neither
-            # installs an interim generation.
-            if fresh_reads and remaining and not unreadable:
+            # whose own read failed cannot be published as checked, so neither
+            # installs an interim generation. A failure in one type never
+            # suppresses another type's interim: the guard is per type.
+            if fresh_reads and remaining and not type_unreadable:
                 self._publish_interim(
                     completed=self._completed_types,
                     unchecked=remaining,
@@ -1756,7 +1865,7 @@ class RefreshCoordinator:
         self._progress_field(
             "metrics", self._build_metrics(finished_at=self._wall_clock())
         )
-        if unreadable:
+        if unreadable_types:
             raise RefreshIncomplete(
                 "One or more required Capacities objects could not be read; "
                 "the previous complete result is preserved."

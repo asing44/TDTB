@@ -1805,11 +1805,18 @@ METRIC_KEYS = {
     "cold",
     "rate_limited",
     "observed_limit",
+    "rate_limit_header_seen",
+    "rate_limit_header_names",
 }
 
 
 def _assert_metrics_shape(metrics):
-    """Every metric is a number, boolean, or null — never a string."""
+    """Every metric is a number, boolean, or null — never a string.
+
+    The one string-bearing field is ``rate_limit_header_names``, and it may
+    hold only short header NAMES (never a value): that is what tells an
+    operator whether a rate-limit header was absent or unparsable.
+    """
     assert set(metrics) == METRIC_KEYS
     for key in (
         "reads",
@@ -1822,6 +1829,14 @@ def _assert_metrics_shape(metrics):
         value = metrics[key]
         assert value is None or type(value) in (int, float), key
     assert type(metrics["cold"]) is bool
+    assert type(metrics["rate_limit_header_seen"]) is bool
+    names = metrics["rate_limit_header_names"]
+    assert isinstance(names, list)
+    assert len(names) <= 5
+    assert names == sorted(names)
+    for name in names:
+        assert isinstance(name, str), name
+        assert 0 < len(name) <= 64, name
     observed = metrics["observed_limit"]
     assert observed is None or (
         set(observed) == {"limit", "window"}
@@ -2373,3 +2388,283 @@ def test_the_admitted_rows_and_read_order_survive_any_pacing_budget(tmp_path):
     # A guard that compared two empty results would prove nothing.
     assert fallback["items"] == ["A", "B", "C", "D"], fallback
     assert fallback["reads"] == ["a", "b", "c", "d"], fallback
+
+
+# ---------------------------------------------------------------------------
+# Live-run 2026-11-06 — per-type unreadable objects and header visibility
+# ---------------------------------------------------------------------------
+
+#: Five mapped types, read and published in exactly this order, so "type 3 of
+#: 5" is a fact of the fixture rather than of read counts.
+FIVE_TYPES = (PRIMARY, "T2", "T3", "T4", "T5")
+
+#: The run-level refusal a partial read still produces, unchanged by the
+#: per-type bookkeeping below.
+INCOMPLETE_READ_WARNING = (
+    "One or more required Capacities objects could not be read; the previous "
+    "complete result is preserved."
+)
+
+
+def _five_type_run(tmp_path, *, fail_gets=None, fail_ids=None):
+    """One cold five-type run: one object per type, in ``FIVE_TYPES`` order.
+
+    ``fail_gets`` maps an object id to the exception its read raises;
+    ``fail_ids`` instead replaces the one-object listing of every named type.
+    """
+    objects = {
+        type_id: [f"o{index}"] for index, type_id in enumerate(FIVE_TYPES, 1)
+    }
+    for type_id, ids in (fail_ids or {}).items():
+        objects[type_id] = list(ids)
+    provider = _paged_provider(
+        objects=objects, structures=_structures(*FIVE_TYPES)
+    )
+    provider.fail_gets.update(fail_gets or {})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, mappings=FIVE_TYPES, type_order=FIVE_TYPES
+    )
+    return provider, coordinator, store
+
+
+def test_one_unreadable_object_in_the_middle_type_does_not_stop_later_interims(
+    tmp_path,
+):
+    """A type whose read failed publishes nothing; the later types still do.
+
+    Live run 2026-11-06: one unreadable object in the third type suppressed
+    every later type's interim publication, because the "a read failed" flag
+    was run-wide instead of per type. The type that failed must also stay
+    unchecked and out of ``completed_types``: one of its objects was never read.
+    """
+    provider, coordinator, store = _five_type_run(
+        tmp_path, fail_gets={"o3": FileNotFoundError("404")}
+    )
+    seen = {}
+
+    def observe(object_id):
+        if object_id == "o5":
+            # The snapshot on screen while the last type is being read: it was
+            # installed when T4 finished, after T3's read had already failed.
+            seen["at_o5"] = store.load_snapshot("all")
+
+    provider.on_get = observe
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "noCapacities", status
+    # T4 published its own interim even though T3 failed before it.
+    at_o5 = seen["at_o5"]
+    assert at_o5 is not None
+    assert at_o5.partial is True
+    assert {(m.object_id, m.type_key) for m in at_o5.members} == {
+        ("o1", PRIMARY),
+        ("o2", "T2"),
+        ("o4", "T4"),
+    }
+    assert at_o5.unchecked_types == ("T3", "T5")
+
+    publication = status["progress"]["publication"]
+    assert publication["partial"] is True
+    # T1, T2, T4, and T5 each published an interim; T3 could not.
+    assert publication["interim_count"] == 4
+    assert publication["completed_types"] == [PRIMARY, "T2", "T4", "T5"]
+    # The failed type is still named as unchecked, in the job and the snapshot.
+    assert publication["unchecked_types"] == ["T3"]
+    assert status["progress"]["unchecked_types"] == ["T3"]
+    assert status["snapshot"]["partial"] is True
+    assert status["snapshot"]["unchecked_types"] == ["T3"]
+    final = store.load_snapshot("all")
+    assert final is not None
+    assert final.partial is True
+    assert final.unchecked_types == ("T3",)
+    assert {m.object_id for m in final.members} == {"o1", "o2", "o4", "o5"}
+    # The run still fails, and the partial result says so.
+    assert INCOMPLETE_READ_WARNING in status["warnings"]
+    assert rr.INTERIM_RETAINED_WARNING in status["warnings"]
+
+
+def test_an_unreadable_object_in_the_last_type_keeps_the_earlier_interims(
+    tmp_path,
+):
+    """The last type cannot publish either, and the run still fails."""
+    provider, coordinator, store = _five_type_run(
+        tmp_path, fail_gets={"o5": FileNotFoundError("404")}
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "noCapacities", status
+    publication = status["progress"]["publication"]
+    assert publication["partial"] is True
+    assert publication["interim_count"] == 4
+    assert publication["completed_types"] == [PRIMARY, "T2", "T3", "T4"]
+    assert publication["unchecked_types"] == ["T5"]
+    assert status["progress"]["unchecked_types"] == ["T5"]
+    assert status["snapshot"]["partial"] is True
+    assert status["snapshot"]["unchecked_types"] == ["T5"]
+    final = store.load_snapshot("all")
+    assert final is not None
+    assert final.partial is True
+    assert final.unchecked_types == ("T5",)
+    assert {m.object_id for m in final.members} == {"o1", "o2", "o3", "o4"}
+    assert INCOMPLETE_READ_WARNING in status["warnings"]
+    assert rr.INTERIM_RETAINED_WARNING in status["warnings"]
+
+
+def test_the_same_five_type_run_publishes_complete_when_every_read_succeeds(
+    tmp_path,
+):
+    """The all-clean control: one complete generation, nothing partial."""
+    provider, coordinator, store = _five_type_run(tmp_path)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert status["outcome"] == "published", status
+    publication = status["progress"]["publication"]
+    assert publication["partial"] is False
+    assert publication["completed_types"] == list(FIVE_TYPES)
+    assert publication["unchecked_types"] == []
+    assert status["progress"]["unchecked_types"] == []
+    final = store.load_snapshot("all")
+    assert final is not None
+    assert final.partial is False
+    assert final.unchecked_types == ()
+    assert {(m.object_id, m.type_key) for m in final.members} == {
+        (f"o{index}", type_id)
+        for index, type_id in enumerate(FIVE_TYPES, 1)
+    }
+    assert status["warnings"] == []
+    assert INCOMPLETE_READ_WARNING not in status["warnings"]
+    assert rr.INTERIM_RETAINED_WARNING not in status["warnings"]
+
+
+def test_an_unreadable_object_records_only_its_id_and_exception_class(tmp_path):
+    """Diagnosability: the id and the class name, never the exception message."""
+    provider, coordinator, _ = _five_type_run(
+        tmp_path, fail_gets={"o3": RuntimeError("Bearer super-secret-token")}
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    line = "Capacities object o3 could not be read (RuntimeError)"
+    assert line in status["warnings"]
+    assert all("super-secret-token" not in w for w in status["warnings"])
+    # Neither surface may carry the exception text, headers, or paths.
+    document = json.loads(coordinator._job_path().read_text(encoding="utf-8"))
+    assert line in document["job"]["warnings"]
+    assert "super-secret-token" not in json.dumps(document)
+    # The run-level failure wording is unchanged by the per-object diagnostic.
+    assert INCOMPLETE_READ_WARNING in status["warnings"]
+
+
+def test_more_unreadable_objects_than_the_cap_add_one_summary_line(tmp_path):
+    """The diagnostic channel is bounded: five lines, then ``+N more``."""
+    cap = rr.UNREADABLE_DIAGNOSTIC_LIMIT
+    failing = [f"u{index}" for index in range(1, cap + 3)]
+    provider, coordinator, _ = _five_type_run(
+        tmp_path,
+        fail_ids={PRIMARY: failing},
+        fail_gets={object_id: FileNotFoundError("404") for object_id in failing},
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    lines = [
+        warning
+        for warning in status["warnings"]
+        if warning.startswith("Capacities object ")
+    ]
+    assert len(lines) == cap
+    assert [warning.split()[2] for warning in lines] == failing[:cap]
+    assert all("(FileNotFoundError)" in warning for warning in lines)
+    summaries = [warning for warning in status["warnings"] if warning.startswith("+")]
+    assert summaries == ["+2 more"]
+
+
+def test_the_rate_limit_header_names_are_recorded_without_their_values(tmp_path):
+    """Names only, sorted, capped at five — the failure diagnosis of 2026-11-06."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+    pacer = coordinator.pacer
+    headers = {
+        "RateLimit-Limit": "limit=5, remaining=4",
+        "RateLimit-Remaining": "4",
+        "RateLimit-Reset": "58",
+        "RateLimit-Policy": "30;w=60",
+        "X-RateLimit-Burst": "10",
+        "X-RateLimit-Remaining": "3",
+        "Content-Type": "application/json",
+    }
+    provider.on_get = lambda object_id: pacer.observe(
+        rr.ENDPOINT_CONTENT, headers
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["rate_limit_header_seen"] is True
+    ratelimit_names = sorted(
+        name for name in headers if "ratelimit" in name.lower()
+    )
+    assert len(ratelimit_names) == 6
+    assert metrics["rate_limit_header_names"] == ratelimit_names[:5]
+    # Names only: no header value reaches the job document.
+    text = coordinator._job_path().read_text(encoding="utf-8")
+    assert "remaining=4" not in text
+    assert "30;w=60" not in text
+    assert "application/json" not in text
+
+
+def test_no_observed_header_reports_not_seen_and_no_names(tmp_path):
+    """Without a rate-limit header the run says so instead of guessing."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["rate_limit_header_seen"] is False
+    assert metrics["rate_limit_header_names"] == []
+
+
+def test_begin_run_resets_the_header_visibility():
+    """Per-run accounting: no observation from an earlier run survives."""
+    clock = Clock()
+    pacer, _ = _pacer(clock)
+    pacer.observe(
+        rr.ENDPOINT_CONTENT,
+        {"RateLimit-Limit": "limit=5, remaining=4", "Content-Type": "text/plain"},
+    )
+    assert pacer.rate_limit_header_seen is True
+    assert pacer.rate_limit_header_names == ["RateLimit-Limit"]
+
+    pacer.begin_run()
+
+    assert pacer.rate_limit_header_seen is False
+    assert pacer.rate_limit_header_names == []
+
+
+def test_a_non_mapping_response_body_records_no_header_visibility():
+    """Only real response headers count as an observation."""
+    clock = Clock()
+    pacer, _ = _pacer(clock)
+
+    pacer.observe(rr.ENDPOINT_CONTENT, [("RateLimit-Limit", "limit=5")])
+
+    assert pacer.rate_limit_header_seen is False
+    assert pacer.rate_limit_header_names == []
