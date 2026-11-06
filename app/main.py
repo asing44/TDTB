@@ -8102,5 +8102,4 @@ if __name__ == "__main__":
     except Exception as exc:  # noqa: BLE001 — grant is best-effort at boot
         print(f"EventKit grant request skipped: {exc}")
 
-    print(f"X-TDTB-Token: {app.state.token}")
     uvicorn.run(app, host="127.0.0.1", port=8746)  # localhost-only by contract
