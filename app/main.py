@@ -4062,8 +4062,9 @@ def create_app() -> FastAPI:
         answers an empty list rather than a guess.
 
         ``migrated_from`` is additive and only present when the stored file is
-        still schema version 1: it was translated in memory, so a client can
-        say the next save rewrites it (with a ``.bak-v1-`` sibling backup)."""
+        still an older schema version (1 or 2): it was translated in memory, so
+        a client can say the next save rewrites it (with a
+        ``.bak-v<stored version>-`` sibling backup)."""
         try:
             result = capacities_settings.read_settings()
         except (capacities_settings.SettingsStoreError, OSError) as exc:
@@ -4090,8 +4091,11 @@ def create_app() -> FastAPI:
                 result.settings, structure_titles
             ),
         }
-        if result.source_version == capacities_settings.SCHEMA_VERSION_V1:
-            body["migrated_from"] = capacities_settings.SCHEMA_VERSION_V1
+        if (
+            result.source_version is not None
+            and result.source_version < capacities_settings.SCHEMA_VERSION
+        ):
+            body["migrated_from"] = result.source_version
         return body
 
     @app.post("/settings/capacities/save", dependencies=[Depends(require_token)])

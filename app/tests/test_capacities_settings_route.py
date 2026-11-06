@@ -184,7 +184,7 @@ class TestGet:
         body = response.json()
         assert body["persisted"] is False
         assert body["settings"] == {
-            "version": 2,
+            "version": 3,
             "revision": 0,
             "statuses": {
                 "open": ["active"],
@@ -192,6 +192,7 @@ class TestGet:
             },
             "types": {},
             "native": {"deadline_horizon_days": 2},
+            "read_source": "rest",
             "excluded": {},
         }
         # A migration report only describes a file that EXISTS.
@@ -255,7 +256,7 @@ class TestGet:
         assert response.status_code == 200
         body = response.json()
         assert body["available_structures"] == []
-        assert body["settings"]["version"] == 2
+        assert body["settings"]["version"] == 3
         assert path.read_bytes() == b"{not json!!"
 
 
@@ -286,7 +287,7 @@ class TestPostPersistence:
         assert response.status_code == 200
         body = response.json()
         assert body["persisted"] is True
-        assert body["settings"]["version"] == 2
+        assert body["settings"]["version"] == 3
         assert body["settings"]["revision"] == 1
         assert body["settings"]["native"] == {"deadline_horizon_days": 4}
         assert body["settings"]["excluded"] == {NATIVE: True, CUSTOM: True}
@@ -298,7 +299,7 @@ class TestPostPersistence:
         }
         assert body["settings"]["types"] == {}
         assert cs.settings_path().is_file()
-        assert _stored_document()["version"] == 2
+        assert _stored_document()["version"] == 3
 
     def test_post_is_a_full_replacement(self, client):
         client.post(
@@ -1153,6 +1154,7 @@ class TestStructureTitles:
             "statuses",
             "types",
             "native",
+            "read_source",
             "excluded",
         }
         assert body["persisted"] is True
@@ -1401,7 +1403,7 @@ class TestVersionOneMigration:
         body = response.json()
         assert body["persisted"] is True
         assert body["migrated_from"] == 1
-        assert body["settings"]["version"] == 2
+        assert body["settings"]["version"] == 3
         # The revision is carried verbatim so the client can still save.
         assert body["settings"]["revision"] == 3
         assert body["settings"]["statuses"] == {
@@ -1436,12 +1438,12 @@ class TestVersionOneMigration:
         )
 
         assert response.status_code == 200
-        assert response.json()["settings"]["version"] == 2
+        assert response.json()["settings"]["version"] == 3
         assert response.json()["settings"]["revision"] == 4
-        # The rewrite is version 2 on disk, and the migration is no longer
+        # The rewrite is version 3 on disk, and the migration is no longer
         # reported because the file itself is current.
         stored = _stored_document()
-        assert stored["version"] == 2
+        assert stored["version"] == 3
         assert stored["revision"] == 4
         assert "migrated_from" not in client.get("/settings/capacities").json()
 

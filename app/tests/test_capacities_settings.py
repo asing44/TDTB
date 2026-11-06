@@ -45,11 +45,12 @@ def _bytes() -> bytes:
 
 def _valid_payload(**overrides) -> dict:
     payload = {
-        "version": 2,
+        "version": 3,
         "revision": 0,
         "statuses": {"open": ["active"], "completed": ["Completed", "Dropped"]},
         "types": {},
         "native": {"deadline_horizon_days": 2},
+        "read_source": "rest",
         "excluded": {},
     }
     payload.update(overrides)
@@ -72,8 +73,8 @@ def _validated(**kwargs):
 
 
 class TestPathsAndDefault:
-    def test_schema_version_is_two(self):
-        assert cs.SCHEMA_VERSION == 2
+    def test_schema_version_is_three(self):
+        assert cs.SCHEMA_VERSION == 3
 
     def test_paths_derive_only_from_app_home(self, tmp_path):
         assert cs.settings_path() == app_config.state_dir() / "capacities-settings.json"
@@ -139,7 +140,7 @@ class TestRoundTrip:
         result = cs.read_settings()
 
         assert result.persisted is True
-        assert result.source_version == 2
+        assert result.source_version == 3
         assert result.settings == saved
         assert result.settings.statuses.open == frozenset({"In Progress"})
         assert result.settings.native.deadline_horizon_days == 14
@@ -236,7 +237,7 @@ class TestStrictDecoding:
             _valid_payload(extra_key="x"),                              # unknown top-level
             {k: v for k, v in _valid_payload().items() if k != "native"},  # missing key
             _valid_payload(version=True),
-            _valid_payload(version=3),
+            _valid_payload(version=4),
             _valid_payload(version="2"),
             _valid_payload(revision=True),
             _valid_payload(revision=-1),
