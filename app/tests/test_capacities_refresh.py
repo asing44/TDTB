@@ -41,6 +41,8 @@ from capacities_refresh_helpers import (  # noqa: E402
     _row,
     _store,
     _structures,
+    gate_rest_behind_mcp,
+    split_provider,
 )
 
 
@@ -71,6 +73,7 @@ def _coordinator(
     rate_limit_budget_seconds=None,
     max_backoff=None,
     type_order=None,
+    policies=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
@@ -93,6 +96,8 @@ def _coordinator(
         overrides["max_backoff"] = max_backoff
     if type_order is not None:
         overrides["type_order"] = type_order
+    if policies is not None:
+        overrides["policies"] = policies
     return (
         rr.RefreshCoordinator(
             root=tmp_path / "state",
@@ -1811,6 +1816,13 @@ METRIC_KEYS = {
     # Live-run 2026-11-06: the one bounded retry's own counts.
     "retried_reads",
     "retry_recovered",
+    # MCP read plan U5 (R7/KTD8): which content sources served this run.
+    "read_source",
+    "rest_reads",
+    "mcp_reads",
+    "read_source_fell_back",
+    "rest_read_seconds",
+    "mcp_read_seconds",
 }
 
 
@@ -1819,9 +1831,17 @@ def _assert_metrics_shape(metrics):
 
     The one string-bearing field is ``rate_limit_header_names``, and it may
     hold only short header NAMES (never a value): that is what tells an
-    operator whether a rate-limit header was absent or unparsable.
+    operator whether a rate-limit header was absent or unparsable. The second
+    is ``read_source``, which is one of the fixed source words.
     """
     assert set(metrics) == METRIC_KEYS
+    assert metrics["read_source"] in {"rest", "split"}
+    assert type(metrics["rest_reads"]) is int
+    assert type(metrics["mcp_reads"]) is int
+    assert type(metrics["read_source_fell_back"]) is bool
+    for key in ("rest_read_seconds", "mcp_read_seconds"):
+        value = metrics[key]
+        assert value is None or (type(value) is float and value >= 0.0), key
     for key in (
         "reads",
         "read_started_at",
@@ -2951,3 +2971,306 @@ def test_many_failing_objects_cost_exactly_one_extra_read_each(tmp_path):
     lines = [w for w in status["warnings"] if w.startswith("Capacities object ")]
     assert [line.split()[2] for line in lines] == failing
     assert all("(ReadTimeout, after 1 retry)" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# MCP read plan U5 (R4/R6/R7/R10; KTD6/KTD8; AE2/AE5) - two paced sources
+# ---------------------------------------------------------------------------
+
+def _published_evidence(coordinator, store):
+    """Members, admitted rows, and partiality of the installed generation.
+
+    Admission is a pure function of the installed members and their cached
+    content, so these three things are what a read-source change must not move.
+    """
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None
+    merged = []
+    for member in snapshot.members:
+        cached = store.get(member.object_id, member.type_key)
+        assert cached is not None
+        merged.append({**_row(member.object_id, member.type_key), **cached.content})
+    admitted = coordinator.adapter.items_for_day_from_objects(
+        coordinator.logical_day, merged
+    )
+    return {
+        "members": sorted(member.object_id for member in snapshot.members),
+        "items": sorted(
+            str(item["id"] if isinstance(item, dict) else item.id)
+            for item in admitted.items
+        ),
+        "partial": snapshot.partial,
+        "unchecked": tuple(snapshot.unchecked_types),
+    }
+
+
+def test_ae5_the_mcp_budget_never_touches_the_rest_content_budget():
+    """AE5/R4: each source paces on its own endpoint and only its own."""
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    pacer = rr.ProviderPacer(
+        clock=clock, sleeper=sleeper, cancel_event=threading.Event()
+    )
+    rest = _paged_provider(objects={PRIMARY: ["a"]})
+    content_reader, mcp_pace = rr.paced_content_callables(pacer, rest)
+
+    for _ in range(40):
+        mcp_pace()
+
+    # 40 MCP reads fit five 35-per-60 s windows: one wait at the 36th read.
+    assert sleeper.calls == [rr.MCP_CONTENT_WINDOW_SECONDS]
+    assert len(pacer._times[rr.ENDPOINT_MCP_CONTENT]) == 40 - rr.MCP_CONTENT_LIMIT
+    assert not pacer._times.get(rr.ENDPOINT_CONTENT)
+    assert rest.get_calls == []
+
+    # ... and the other direction: REST content pacing leaves MCP untouched.
+    rest_clock = Clock()
+    rest_sleeper = Sleeper(rest_clock)
+    rest_pacer = rr.ProviderPacer(
+        clock=rest_clock, sleeper=rest_sleeper, cancel_event=threading.Event()
+    )
+    rest_reader, _ = rr.paced_content_callables(rest_pacer, rest)
+    for _ in range(40):
+        rest_reader("a")
+
+    assert rest_sleeper.calls == [60.0]
+    assert len(rest_pacer._times[rr.ENDPOINT_CONTENT]) == 40 - 30
+    assert not rest_pacer._times.get(rr.ENDPOINT_MCP_CONTENT)
+    assert len(rest.get_calls) == 40
+
+
+def _fallback_run(tmp_path, *, behaviors=None, begin_error=None):
+    """One cold split run whose MCP source is lost, plus its fakes."""
+    provider, rest, mcp = split_provider(
+        objects={PRIMARY: ["a", "b"], "T2": ["c"]},
+        behaviors=behaviors,
+        begin_error=begin_error,
+    )
+    if begin_error is None:
+        gate_rest_behind_mcp(rest, mcp)
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, type_order=TYPES
+    )
+    coordinator.logical_day = date(2026, 11, 5)
+    provider.bind(coordinator.pacer, coordinator.cancel_event)
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+    return provider, rest, mcp, coordinator, store, status
+
+
+def test_ae2_mcp_unavailable_on_the_first_read_falls_back_to_rest(tmp_path):
+    """AE2/R6: the in-flight id is re-read by REST and the run still publishes."""
+    provider, rest, mcp, coordinator, store, status = _fallback_run(
+        tmp_path,
+        behaviors=[ca.CapacitiesReadSourceUnavailable("", retry_after=None)],
+    )
+
+    assert status["outcome"] == "published", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["read_source"] == "rest"
+    assert metrics["mcp_reads"] == 0
+    assert metrics["rest_reads"] == 3
+    assert metrics["read_source_fell_back"] is True
+    # Source loss is not a read retry and not an unreadable object (R13).
+    assert metrics["retried_reads"] == 0
+    assert metrics["retry_recovered"] == 0
+    assert not [w for w in status["warnings"] if w.startswith("Capacities object ")]
+    assert status["warnings"].count(rr.MCP_FALLBACK_WARNING) == 1
+
+    # The id the MCP worker claimed was re-read by REST, so no read was lost.
+    assert len(mcp.calls) == 1
+    assert mcp.ids[0] in rest.get_calls
+    assert sorted(rest.get_calls) == ["a", "b", "c"]
+    assert sorted(provider.primed and [i for i, _ in provider.primed]) == ["a", "b", "c"]
+
+    rest_only = _published_evidence(coordinator, store)
+    assert rest_only["items"] == ["A", "B", "C"], rest_only
+    assert rest_only["partial"] is False, rest_only
+    # The MCP worker stopped, and nothing outlived the run.
+    assert provider.splitter.queue.live_worker_count == 0
+    assert mcp.end_calls >= 1
+
+
+def test_an_mcp_429_is_source_loss_not_a_rate_limit_or_a_retry(tmp_path):
+    """R13/AE6: an MCP throttle increments neither counter and loses no read."""
+    provider, rest, mcp, coordinator, store, status = _fallback_run(
+        tmp_path,
+        behaviors=[
+            ca.CapacitiesReadSourceUnavailable("", retry_after=39.0)
+        ],
+    )
+
+    assert status["outcome"] == "published", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["rate_limited"] == 0
+    assert metrics["retried_reads"] == 0
+    assert metrics["read_source"] == "rest"
+    assert metrics["read_source_fell_back"] is True
+    assert sorted(rest.get_calls) == ["a", "b", "c"]
+    assert status["warnings"].count(rr.MCP_FALLBACK_WARNING) == 1
+
+
+def test_mcp_that_cannot_open_at_all_is_a_rest_run_with_one_warning(tmp_path):
+    """R6: a refused MCP start is a REST-only run, reported, never an error."""
+    provider, rest, mcp, coordinator, store, status = _fallback_run(
+        tmp_path,
+        begin_error=ca.CapacitiesReadSourceUnavailable("", retry_after=None),
+    )
+
+    assert status["outcome"] == "published", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["read_source"] == "rest"
+    assert metrics["mcp_reads"] == 0
+    assert metrics["rest_reads"] == 3
+    assert metrics["read_source_fell_back"] is True
+    assert status["warnings"].count(rr.MCP_FALLBACK_WARNING) == 1
+    assert mcp.calls == []
+    assert sorted(rest.get_calls) == ["a", "b", "c"]
+
+
+def test_cancellation_during_an_mcp_paced_wait_cancels_and_joins_both_workers(
+    tmp_path,
+):
+    """R10: a cancel inside the mcp_content wait still ends the run cleanly."""
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider, rest, mcp = split_provider(objects={PRIMARY: ["a", "b", "c"]})
+    gate_rest_behind_mcp(rest, mcp)
+    coordinator, store, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        clock=clock,
+        sleeper=sleeper,
+        type_order=TYPES,
+        # One MCP read per window, so the second one has to wait.
+        policies={
+            rr.ENDPOINT_MCP_CONTENT: rr.EndpointPolicy(limit=1, window=60.0)
+        },
+    )
+    provider.bind(coordinator.pacer, coordinator.cancel_event)
+    sleeper.on_sleep = lambda seconds: coordinator.cancel()
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "cancelled", status
+    assert sleeper.calls, "the MCP window wait never happened"
+    assert provider.splitter.queue.live_worker_count == 0
+    assert mcp.end_calls >= 1
+
+
+def test_prime_sees_exactly_the_ids_and_order_a_rest_only_run_reads(tmp_path):
+    """R11: the primed batch is the read loop's own order, reads only."""
+    objects = {PRIMARY: ["a", "b"], "T2": ["c", "d"]}
+    provider, rest, mcp = split_provider(objects=objects)
+    coordinator, store, _, _ = _coordinator(
+        tmp_path / "split", provider, type_order=TYPES
+    )
+    provider.bind(coordinator.pacer, coordinator.cancel_event)
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+    assert status["outcome"] == "published", status
+
+    plain = _paged_provider(objects=objects)
+    plain_coordinator, _, _, _ = _coordinator(
+        tmp_path / "plain", plain, type_order=TYPES
+    )
+    plain_coordinator.start()
+    plain_coordinator.wait(timeout=5)
+
+    expected = [
+        (object_id, type_id)
+        for type_id in TYPES
+        for object_id in objects[type_id]
+    ]
+    assert [object_id for object_id, _ in provider.primed] == plain.get_calls
+    assert provider.primed == expected
+    # Every primed id was read exactly once, by one source or the other.
+    assert sorted(rest.get_calls + mcp.ids) == ["a", "b", "c", "d"]
+
+    # A warm run reuses cached content, so nothing is primed: a batch can never
+    # cause a read the sequential path would not have made.
+    provider.primed.clear()
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+    assert status["outcome"] == "published", status
+    assert provider.primed == []
+
+
+def test_a_split_run_publishes_and_admits_exactly_what_a_rest_only_run_does(
+    tmp_path,
+):
+    """R1: which source read an object cannot change what gets planned."""
+    rest_run = _parity_evidence(tmp_path / "rest")
+    assert rest_run["items"] == ["A", "B", "C", "D"], rest_run
+
+    objects = {PRIMARY: ["a", "b"], "T2": ["c", "d"]}
+    provider, rest, mcp = split_provider(objects=objects)
+    gate_rest_behind_mcp(rest, mcp)
+    coordinator, store, _, _ = _coordinator(tmp_path / "split", provider)
+    coordinator.logical_day = date(2026, 11, 5)
+    provider.bind(coordinator.pacer, coordinator.cancel_event)
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+    assert status["outcome"] == "published", status
+
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["read_source"] == "split"
+    assert metrics["mcp_reads"] >= 1
+    assert metrics["rest_reads"] >= 1
+    assert metrics["mcp_reads"] + metrics["rest_reads"] == 4
+    assert metrics["read_source_fell_back"] is False
+    assert metrics["rest_read_seconds"] is not None
+    assert metrics["mcp_read_seconds"] is not None
+    assert sorted(rest.get_calls + mcp.ids) == ["a", "b", "c", "d"]
+
+    split_run = _published_evidence(coordinator, store)
+    assert split_run["members"] == rest_run["members"], split_run
+    assert split_run["items"] == rest_run["items"], split_run
+    assert split_run["partial"] is False, split_run
+    assert split_run["unchecked"] == (), split_run
+    assert provider.splitter.queue.live_worker_count == 0
+
+
+def test_a_split_run_status_query_makes_no_provider_calls(tmp_path):
+    """R10: status never reads, whichever provider built the run."""
+    provider, rest, mcp = split_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, type_order=TYPES)
+    provider.bind(coordinator.pacer, coordinator.cancel_event)
+    coordinator.start()
+    coordinator.wait(timeout=5)
+    before = (
+        len(rest.get_calls),
+        len(mcp.calls),
+        len(provider.primed),
+    )
+
+    for _ in range(3):
+        coordinator.status()
+
+    assert (len(rest.get_calls), len(mcp.calls), len(provider.primed)) == before
+
+
+def test_a_provider_without_read_counts_reports_the_rest_defaults(tmp_path):
+    """KTD8: the new keys are always present, REST-only for a plain provider."""
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["outcome"] == "published", status
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["read_source"] == "rest"
+    assert metrics["reads"] == 2
+    assert metrics["rest_reads"] == 2
+    assert metrics["mcp_reads"] == 0
+    assert metrics["read_source_fell_back"] is False
+    assert metrics["rest_read_seconds"] is None
+    assert metrics["mcp_read_seconds"] is None
+    assert rr.MCP_FALLBACK_WARNING not in status["warnings"]
