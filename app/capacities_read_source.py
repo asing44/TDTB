@@ -43,12 +43,28 @@ unblocks pending ``get_object`` callers by raising the run-level cancel signal
 cancel path is unchanged. ``end_run`` and ``close`` join every worker, so no
 worker thread outlives a run, a cancel, or a failure (R10).
 
-:class:`ReadSourceSplitter` is the REST-only shell the coordinator's provider
-seam wraps. It implements the provider protocol, delegates everything except
-content reads straight to the REST client, and serves content reads from the
-queue when the current type batch is primed, else with a direct REST read. U4b
-adds the MCP worker and requeue-on-source-loss on top of this shell; U5 wires
-pacing through the injected content reader.
+:class:`ReadSourceSplitter` is the provider seam the coordinator wraps. It
+implements the provider protocol, delegates everything except content reads
+straight to the REST client, and serves content reads from the queue when the
+current type batch is primed, else with a direct REST read.
+
+U4b adds the second (MCP) worker on top of that shell. Both workers claim from
+the same cursor, so each primed id is read exactly once by whichever source
+claimed it. MCP failure is source loss, never a read outcome:
+
+- ``CapacitiesReadSourceUnavailable`` (authorization, session, transport, 429)
+  stops the MCP worker and requeues that exact index to REST, so the read is not
+  lost and no object becomes unreadable (R6, R13).
+- ``CapacitiesContractError`` (for example a ``spaceId`` mismatch or a malformed
+  payload) is also requeued to REST once, because a source-specific quirk must
+  not lose an object; it counts as an MCP failure toward the breaker (AE4).
+- Three consecutive MCP failures of any cause stop the worker even when each
+  failure alone was recoverable; a success resets the count (KTD7).
+
+``read_source`` reports ``"split"`` once MCP has actually served a read this
+run, else ``"rest"``; ``read_counts()`` carries the per-source counts, elapsed
+seconds, and ``fell_back`` that U5 turns into ``progress.metrics`` (R7). U5 also
+wires real pacing through ``content_reader`` (REST) and ``mcp_pace`` (MCP).
 """
 
 from __future__ import annotations
@@ -57,6 +73,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 
+import capacities_adapter
 import capacities_refresh
 
 #: Result of one slot, or the exception the read raised. ``None`` error with a
@@ -79,8 +96,27 @@ _WAIT_SLICE = 0.05
 
 #: A content read takes ``(object_id, structure_id)``. ``structure_id`` is the
 #: REST listing row's structure id, or ``None`` for a direct read that has no
-#: primed entry; U4b needs it for MCP normalization (U3).
+#: primed entry; the MCP worker needs it for normalization (U3, KTD5).
 ReadContent = Callable[[str, "str | None"], dict[str, Any]]
+
+#: Consecutive MCP failures that switch the MCP worker off for the run (KTD7).
+MCP_FAILURE_LIMIT = 3
+
+
+class _RequeueClaim(Exception):
+    """Internal: this claim's index goes back to the other worker.
+
+    Raised by a source's read callable when the read must not be stored in its
+    slot: source loss (the index is re-read by REST) or an object MCP cannot
+    serve. ``stop`` tells the worker to exit after the requeue, which is how a
+    lost source stops claiming without leaving a read unclaimed. The exception
+    never reaches the consumer, so it is neither an unreadable object nor a
+    transient retry (R13).
+    """
+
+    def __init__(self, *, stop: bool) -> None:
+        super().__init__("")
+        self.stop = stop
 
 
 def _normalize_entries(
@@ -128,7 +164,9 @@ class ContentCommitQueue:
     U4b/U5 extension points, protected and stable:
 
     - ``_start_worker(reader, source=...)`` starts one worker for a source;
+    - ``_ensure_worker(reader, source=...)`` starts it only if none is alive;
     - ``_requeue(index)`` puts a failed claim back for another worker;
+    - ``_mark_fell_back()`` records source loss for :meth:`read_counts`;
     - :attr:`_fell_back` is reported by :meth:`read_counts`.
     """
 
@@ -245,14 +283,19 @@ class ContentCommitQueue:
         if normalized:
             self._ensure_default_worker()
 
-    def _claim(self) -> int | None:
-        """The next index to read, or ``None`` when the batch is drained."""
+    def _claim(self, source: str = "rest") -> int | None:
+        """The next index to read for ``source``, or ``None`` to stop.
+
+        Requeued indices are only ever handed to a non-MCP source: a requeue is
+        how the splitter says "REST must read this one", so the source that
+        refused it can never reclaim it.
+        """
         with self._cond:
             while True:
                 if self._closed or self._stopping or self.cancel_event.is_set():
                     self._cond.notify_all()
                     return None
-                if self._requeued:
+                if self._requeued and source != "mcp":
                     index = self._requeued.pop(0)
                     # A requeued index is claimable again; its slot is empty.
                     self._cond.notify_all()
@@ -277,16 +320,26 @@ class ContentCommitQueue:
             self._requeued.append(index)
             self._cond.notify_all()
 
+    def _mark_fell_back(self) -> None:
+        """Record that a source was lost this run (reported by :meth:`read_counts`)."""
+        with self._cond:
+            self._fell_back = True
+            self._cond.notify_all()
+
     # -- workers --------------------------------------------------------
 
     def _ensure_default_worker(self) -> None:
         """Start the single REST worker for a batch, if none is alive."""
+        self._ensure_worker(self._read_content, source="rest")
+
+    def _ensure_worker(self, read_content: ReadContent, *, source: str) -> None:
+        """Start one worker for ``source`` unless one is already alive."""
         with self._cond:
             alive = [entry for entry in self._workers if entry[0].is_alive()]
             self._workers = alive
-            if any(source == "rest" for _, source in alive):
+            if any(name == source for _, name in alive):
                 return
-        self._start_worker(self._read_content, source="rest")
+        self._start_worker(read_content, source=source)
 
     def _start_worker(self, read_content: ReadContent, *, source: str) -> None:
         """Start one worker reading for ``source`` (U4b adds ``"mcp"``).
@@ -309,7 +362,7 @@ class ContentCommitQueue:
     def _worker_loop(self, read_content: ReadContent, source: str) -> None:
         """Claim, read, store - until the batch is drained or cancelled."""
         while True:
-            index = self._claim()
+            index = self._claim(source)
             if index is None:
                 return
             with self._cond:
@@ -319,21 +372,33 @@ class ContentCommitQueue:
             started = self._clock()
             value: Any = None
             error: BaseException | None = None
+            requeued = False
+            stop = False
             try:
                 value = read_content(object_id, structure_id)
+            except _RequeueClaim as exc:
+                # Source loss, or an object this source must not serve: the
+                # slot stays empty so the other worker reads it (R6, R13).
+                requeued = True
+                stop = exc.stop
             except Exception as exc:  # noqa: BLE001 - stored for the consumer
                 error = exc
             elapsed = max(0.0, self._clock() - started)
             with self._cond:
-                self._reads[source] = self._reads.get(source, 0) + 1
-                self._elapsed[source] = self._elapsed.get(source, 0.0) + elapsed
-                if index < len(self._slots):
-                    slot = self._slots[index]
-                    if not slot.done:
-                        slot.value = value
-                        slot.error = error
-                        slot.done = True
+                if not requeued:
+                    self._reads[source] = self._reads.get(source, 0) + 1
+                    self._elapsed[source] = self._elapsed.get(source, 0.0) + elapsed
+                    if index < len(self._slots):
+                        slot = self._slots[index]
+                        if not slot.done:
+                            slot.value = value
+                            slot.error = error
+                            slot.done = True
                 self._cond.notify_all()
+            if requeued:
+                self._requeue(index)
+            if stop:
+                return
 
     def _join_workers(self) -> None:
         with self._cond:
@@ -408,9 +473,10 @@ class ContentCommitQueue:
     def read_counts(self) -> dict[str, Any]:
         """Per-source read counts and elapsed read seconds for this run (R7).
 
-        Shaped so U4b adds nothing new: ``mcp`` is already present and stays
-        zero until an MCP worker exists, and ``fell_back`` is the MCP worker's
-        own report (source loss), never a guess made here.
+        A claim a source refused (U4b's requeue) is not a read, so it adds no
+        count and no elapsed time: ``rest + mcp`` is the number of objects this
+        run actually read. ``fell_back`` is the splitter's report of source
+        loss, never a guess made here.
         """
         with self._cond:
             return {
@@ -423,30 +489,38 @@ class ContentCommitQueue:
 
 
 class ReadSourceSplitter:
-    """The content-read splitter shell: REST-only today, two sources in U4b.
+    """The content-read splitter: REST plus an optional MCP worker (KTD1, KTD7).
 
     Implements the same provider surface the coordinator wraps, so ``PacedProvider``
     can wrap it unchanged: structures, listing, patch, ``base_url``,
     ``supports_object_listing``, and ``set_rate_observer`` delegate straight to
-    the REST client, and only ``get_object`` is served from the queue.
+    the REST client, and only content reads are served from the queue. Listing
+    stays REST because MCP lists by object-type name, not structure id, and the
+    mapping is unverified (Key Decisions); writes stay REST because the REST
+    path is the single writer (R2).
 
-    ``content_reader`` is the REST content read the queue's worker uses; the
+    ``content_reader`` is the REST content read the queue's REST worker uses; the
     default is the REST client's own ``get_object``. U5 supplies a paced reader
     here (the worker is the only issuer of REST content requests once a batch is
     primed), which is why :attr:`paces_content_reads` is True: the provider seam
     above must not pace a second time. A read outside the primed batch - the
-    coordinator's one-shot retry, or an adapter read - goes through the same
-    reader on the calling thread, so it is paced the same way.
+    coordinator's one-shot retry, an adapter read, or the completion re-read -
+    goes through the same reader on the calling thread, so it is paced the same
+    way and never reaches MCP.
 
-    ``get_object`` keeps the provider protocol's signature (``object_id`` only).
-    U4b gets the structure id from the primed entry, which is why :meth:`prime`
-    already takes ``(object_id, structure_id)`` pairs. A
-    ``for_completion=True`` bypass (KTD1's REST-only completion re-read) is a
-    U4b/U5 addition; today the completion re-read simply is not primed, so it
-    already takes the direct REST path.
+    ``mcp`` is an :class:`capacities_mcp.McpProvider`-like object (``begin_run``,
+    ``end_run``, ``get_object(object_id, structure_id=...)``, ``close``). It is
+    optional: without it the splitter is exactly U4a's REST-only shell. With it,
+    :meth:`begin_run` asks MCP to open once; a refusal there (missing custody, for
+    example) means MCP is off for the run and the run stays REST-only with
+    ``fell_back`` reported, never an error (R6).
+
+    ``mcp_pace`` is called before every MCP read, so MCP is paced on its own
+    budget and never on the REST one (R4). It defaults to a no-op; U5 injects
+    the real ``mcp_content`` pacer, which honours ``cancel_event``.
     """
 
-    #: Content reads are paced inside this splitter's reader, not by the seam
+    #: Content reads are paced inside this splitter's readers, not by the seam
     #: above it (U5).
     paces_content_reads = True
 
@@ -454,20 +528,37 @@ class ReadSourceSplitter:
         self,
         rest: Any,
         *,
+        mcp: Any = None,
         content_reader: Callable[[str], dict[str, Any]] | None = None,
+        mcp_pace: Callable[[], None] | None = None,
         cancel_event: threading.Event | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.rest = rest
+        self.mcp = mcp
         self.cancel_event = (
             cancel_event if cancel_event is not None else threading.Event()
         )
         self._content_reader = content_reader or rest.get_object
+        self._mcp_pace = mcp_pace or (lambda: None)
         self.queue = ContentCommitQueue(
             self._read_rest, cancel_event=self.cancel_event, clock=clock
         )
-        #: Which source served this run (``rest`` until U4b reports ``mixed``).
-        self.read_source = "rest"
+        #: Whether the MCP worker may claim in this run (begin_run's verdict).
+        self._mcp_active = False
+        #: Consecutive MCP failures; a success resets it (KTD7 breaker).
+        self._mcp_failures = 0
+
+    @property
+    def read_source(self) -> str:
+        """``"split"`` once MCP served a read this run, else ``"rest"`` (R7).
+
+        A run that fell back after one MCP read still reports ``"split"``: the
+        value says which sources were actually used, while ``fell_back`` says
+        whether one was lost. U5 turns these into ``read_source``/``mcp_reads``
+        in ``progress.metrics``.
+        """
+        return "split" if self.queue.read_counts()["mcp"] else "rest"
 
     # -- delegated provider surface -------------------------------------
 
@@ -480,7 +571,10 @@ class ReadSourceSplitter:
         return getattr(self.rest, "supports_object_listing", False) is True
 
     def set_rate_observer(self, observer: Any) -> None:
-        """Forward the header observer to REST (``capacities_refresh.py:863``)."""
+        """Forward the header observer to REST (``capacities_refresh.py:863``).
+
+        MCP has no header observer: its budget is static (KTD6).
+        """
         setter = getattr(self.rest, "set_rate_observer", None)
         if callable(setter):
             setter(observer)
@@ -495,27 +589,87 @@ class ReadSourceSplitter:
         return self.rest.patch_object(object_id, properties)
 
     def close(self) -> None:
-        """Stop the workers, then best-effort close the REST client."""
+        """Stop the workers, then best-effort close MCP and the REST client."""
         self.queue.close()
-        closer = getattr(self.rest, "close", None)
-        if callable(closer):
-            try:
-                closer()
-            except Exception:  # noqa: BLE001 - best-effort close
-                pass
+        self._mcp_active = False
+        for client in (self.mcp, self.rest):
+            closer = getattr(client, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001 - best-effort close
+                    pass
 
     # -- content reads ---------------------------------------------------
 
     def _read_rest(self, object_id: str, structure_id: str | None) -> dict[str, Any]:
-        """The queue's REST read; the normalizer part of ``structure_id`` is unused."""
+        """The queue's REST read; ``structure_id`` is REST-neutral, so unused."""
         return self._content_reader(object_id)
+
+    def _read_mcp(self, object_id: str, structure_id: str | None) -> dict[str, Any]:
+        """The queue's MCP read, with this run's failover policy (KTD7).
+
+        Runs on the MCP worker thread only, so the breaker counters need no lock
+        beyond the single writer. Every failure path either requeues the index
+        to REST (source loss, or an object MCP must not serve) or stores the
+        error in the slot like a REST error - never both, and never a retry.
+        """
+        if self.cancel_event.is_set():
+            raise _RequeueClaim(stop=True)
+        if structure_id is None:
+            # No listing row, so no normalization identity: REST reads it.
+            raise _RequeueClaim(stop=False)
+        self._mcp_pace()
+        if self.cancel_event.is_set():
+            raise _RequeueClaim(stop=True)
+        try:
+            value = self.mcp.get_object(object_id, structure_id=structure_id)
+        except capacities_refresh.RefreshCancelled:
+            # Cancelled while waiting on the MCP pacer: not a read, not a
+            # failure, and the worker stops so no thread survives the cancel.
+            raise _RequeueClaim(stop=True) from None
+        except capacities_adapter.CapacitiesReadSourceUnavailable:
+            # Throttle, auth, session, transport: source loss for the run.
+            self._note_mcp_failure(stop=True)
+            raise _RequeueClaim(stop=True) from None
+        except capacities_adapter.CapacitiesContractError:
+            # Deterministic for this payload and possibly source-specific, so
+            # REST re-reads it once; the breaker still counts the failure.
+            raise _RequeueClaim(stop=self._note_mcp_failure()) from None
+        except BaseException as exc:  # noqa: BLE001 - per-object error, like REST
+            if not isinstance(exc, Exception):
+                raise
+            self._note_mcp_failure()
+            raise
+        self._mcp_failures = 0
+        return value
+
+    def _note_mcp_failure(self, *, stop: bool = False) -> bool:
+        """Count one MCP failure; return True when the worker must stop."""
+        self._mcp_failures += 1
+        if not stop and self._mcp_failures < MCP_FAILURE_LIMIT:
+            return False
+        self._mcp_active = False
+        self.queue._mark_fell_back()
+        return True
 
     def prime(self, entries: Iterable[Any]) -> None:
         """Prime the current type batch's ordered ids (see :meth:`ContentCommitQueue.prime`)."""
         self.queue.prime(entries)
+        if self._mcp_active:
+            self.queue._ensure_worker(self._read_mcp, source="mcp")
 
-    def get_object(self, object_id: str) -> dict[str, Any]:
-        """Serve one content read: from the primed batch, else direct REST."""
+    def get_object(
+        self, object_id: str, *, for_completion: bool = False
+    ) -> dict[str, Any]:
+        """Serve one content read: from the primed batch, else direct REST.
+
+        ``for_completion=True`` is the adapter's optimistic-concurrency re-read
+        (KTD1): it always goes straight to REST on the calling thread, so the
+        guard has one source and one ordering and never races the queue.
+        """
+        if for_completion:
+            return self.queue._read_direct(object_id)
         return self.queue.get(object_id)
 
     def read_counts(self) -> dict[str, Any]:
@@ -524,8 +678,29 @@ class ReadSourceSplitter:
     # -- lifecycle -------------------------------------------------------
 
     def begin_run(self) -> None:
+        """Reset per-run state, then ask MCP to open once (R6, KTD7)."""
         self.queue.begin_run()
-        self.read_source = "rest"
+        self._mcp_active = False
+        self._mcp_failures = 0
+        if self.mcp is None:
+            return
+        try:
+            self.mcp.begin_run()
+        except capacities_adapter.CapacitiesReadSourceUnavailable:
+            # Custody absent, auth impossible: REST-only run, reported.
+            self.queue._mark_fell_back()
+            return
+        self._mcp_active = True
 
     def end_run(self) -> None:
+        """Join both workers, then close MCP (R10)."""
         self.queue.end_run()
+        self._mcp_active = False
+        if self.mcp is None:
+            return
+        end_run = getattr(self.mcp, "end_run", None)
+        if callable(end_run):
+            try:
+                end_run()
+            except Exception:  # noqa: BLE001 - MCP never fails a run (R6)
+                pass
