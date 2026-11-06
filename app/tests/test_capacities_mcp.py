@@ -697,7 +697,24 @@ def test_end_run_discards_the_session_and_a_new_run_reopens_it(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_no_fake_secret_reaches_the_logs(tmp_path, caplog):
+@pytest.fixture
+def sanitized_caplog(caplog):
+    """caplog with the production filter on its handler, for this test only.
+
+    Production never touches a foreign handler, so a harness handler that sees
+    the ``mcp`` tree would otherwise render what the library logged. Attaching
+    and detaching it here keeps the filter from leaking into other tests.
+    """
+    secret_free = cpm.SecretFreeLogFilter()
+    caplog.handler.addFilter(secret_free)
+    try:
+        yield caplog
+    finally:
+        caplog.handler.removeFilter(secret_free)
+
+
+def test_no_fake_secret_reaches_the_logs(tmp_path, sanitized_caplog):
+    caplog = sanitized_caplog
     caplog.set_level(logging.DEBUG)
     factory = FakeFactory(FakeSessionContext(FakeSession(result=structured(mcp_payload()))))
     provider = _provider(_storage(tmp_path), factory)
