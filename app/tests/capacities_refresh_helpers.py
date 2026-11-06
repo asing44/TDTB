@@ -10,12 +10,15 @@ deterministic provider, an injected monotonic clock and sleeper (no real
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
+import capacities_read_source as rs  # noqa: E402
+import capacities_refresh as rr  # noqa: E402
 
 
 SPACE = "space-1"
@@ -118,6 +121,11 @@ class FakeProvider:
         self.list_error = None
         self.get_error = None
         self.fail_gets: dict[str, Exception] = {}
+        #: Rate-limit observers the seam forwarded (names only, never used).
+        self.observers: list[object] = []
+
+    def set_rate_observer(self, observer) -> None:
+        self.observers.append(observer)
 
     def fetch_structures(self):
         self.fetch_calls += 1
@@ -173,3 +181,194 @@ def _paged_provider(*, objects, structures=None, pages=None):
         for object_id in ids:
             content[object_id] = _content(object_id, type_id)
     return FakeProvider(structures, page_map, content)
+
+
+# ---------------------------------------------------------------------------
+# MCP read plan U5 - split-source doubles
+# ---------------------------------------------------------------------------
+
+
+class FakeMcp:
+    """An ``McpProvider`` double over the same content the REST double serves.
+
+    ``behaviors`` is consumed one entry per MCP call, so a failure sequence is
+    deterministic in MCP call order whatever index each call claimed. Content
+    is already in the REST shape: the real provider normalizes it (KTD5), and
+    these tests are about pacing, failover, and parity rather than that
+    normalization.
+    """
+
+    def __init__(
+        self,
+        contents=None,
+        *,
+        begin_error: BaseException | None = None,
+        behaviors=None,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._contents = dict(contents or {})
+        self.behaviors: list[BaseException | None] = list(behaviors or [])
+        self.begin_error = begin_error
+        self.begin_calls = 0
+        self.end_calls = 0
+        self.calls: list[tuple[str, str | None]] = []
+        #: Fires after each MCP read, which is how a test gates the REST worker
+        #: behind the first MCP claim without a sleep.
+        self.on_get = None
+
+    def begin_run(self) -> None:
+        self.begin_calls += 1
+        if self.begin_error is not None:
+            raise self.begin_error
+
+    def end_run(self) -> None:
+        self.end_calls += 1
+
+    def get_object(self, object_id: str, *, structure_id: str | None = None) -> dict:
+        with self._lock:
+            self.calls.append((object_id, structure_id))
+            behavior = self.behaviors.pop(0) if self.behaviors else None
+        try:
+            if behavior is not None:
+                raise behavior
+            return self._contents[object_id]
+        finally:
+            if self.on_get is not None:
+                self.on_get(object_id)
+
+    @property
+    def ids(self) -> list[str]:
+        with self._lock:
+            return [object_id for object_id, _ in self.calls]
+
+
+class SplitProvider:
+    """The U6 provider wiring, built from the production pieces.
+
+    ``PacedProvider`` can only build the split provider's two paced callables
+    once the coordinator's pacer exists, so :meth:`bind` is the test's stand-in
+    for the builder: it constructs the real ``ReadSourceSplitter`` around the
+    REST double with :func:`capacities_refresh.paced_content_callables` and the
+    coordinator's own cancel event, exactly as U6 must. ``primed`` records what
+    the coordinator primed, in order.
+    """
+
+    #: The real splitter's declaration, mirrored so the seam skips content
+    #: pacing from construction time onwards (R4).
+    paces_content_reads = True
+
+    def __init__(self, rest, mcp=None) -> None:
+        self.rest = rest
+        self.mcp = mcp
+        self.splitter = None
+        self.primed: list[tuple[str, str | None]] = []
+        self._pacer = None
+        self._cancel_event = None
+
+    # -- wiring ---------------------------------------------------------
+
+    def bind(self, pacer, cancel_event=None) -> None:
+        """Build the real splitter from the coordinator's pacer and event."""
+        self._pacer = pacer
+        self._cancel_event = (
+            cancel_event if cancel_event is not None else self._cancel_event
+        )
+        content_reader, mcp_pace = rr.paced_content_callables(pacer, self.rest)
+        self.splitter = rs.ReadSourceSplitter(
+            self.rest,
+            mcp=self.mcp,
+            content_reader=content_reader,
+            mcp_pace=mcp_pace,
+            cancel_event=self._cancel_event,
+        )
+
+    def set_cancel_event(self, cancel_event) -> None:
+        """The U6 hook ``PacedProvider`` forwards to (see its docstring)."""
+        self._cancel_event = cancel_event
+        if self.splitter is not None:
+            self.splitter.cancel_event = cancel_event
+            self.splitter.queue.cancel_event = cancel_event
+
+    def _bound(self):
+        assert self.splitter is not None, "bind() the split provider first"
+        return self.splitter
+
+    # -- provider surface ----------------------------------------------
+
+    @property
+    def base_url(self):
+        return self.rest.base_url
+
+    @property
+    def supports_object_listing(self):
+        return self.rest.supports_object_listing
+
+    def set_rate_observer(self, observer) -> None:
+        self.rest.set_rate_observer(observer)
+
+    def fetch_structures(self):
+        return self.rest.fetch_structures()
+
+    def list_objects(self, structure_id, cursor=None):
+        return self.rest.list_objects(structure_id, cursor)
+
+    def patch_object(self, object_id, properties):
+        return self.rest.patch_object(object_id, properties)
+
+    def get_object(self, object_id, *, for_completion: bool = False):
+        return self._bound().get_object(object_id, for_completion=for_completion)
+
+    def prime(self, entries) -> None:
+        self.primed.extend(tuple(entry) for entry in entries)
+        self._bound().prime(entries)
+
+    def begin_run(self) -> None:
+        self._bound().begin_run()
+
+    def end_run(self) -> None:
+        self._bound().end_run()
+
+    @property
+    def read_source(self) -> str:
+        return self.splitter.read_source if self.splitter is not None else "rest"
+
+    def read_counts(self):
+        if self.splitter is None:
+            return {
+                "rest": 0,
+                "mcp": 0,
+                "fell_back": False,
+                "rest_elapsed": 0.0,
+                "mcp_elapsed": 0.0,
+            }
+        return self.splitter.read_counts()
+
+    def close(self) -> None:
+        if self.splitter is not None:
+            self.splitter.close()
+        else:
+            self.rest.close()
+
+
+def split_provider(*, objects, structures=None, behaviors=None, begin_error=None):
+    """A REST double plus an MCP double over the same objects, as one provider."""
+    rest = _paged_provider(objects=objects, structures=structures)
+    contents = {}
+    for type_id, ids in objects.items():
+        for object_id in ids:
+            contents[object_id] = _content(object_id, type_id)
+    mcp = FakeMcp(contents, behaviors=behaviors, begin_error=begin_error)
+    return SplitProvider(rest, mcp), rest, mcp
+
+
+def gate_rest_behind_mcp(rest, mcp) -> None:
+    """Hold the REST worker's first read until the MCP worker has read once.
+
+    Without this, a fast REST worker can drain a small primed batch before the
+    MCP thread ever claims, which would make "both sources served a read" a
+    race instead of a fact. The wait is bounded, so a run that never reaches
+    MCP still finishes.
+    """
+    first_mcp = threading.Event()
+    mcp.on_get = lambda object_id: first_mcp.set()
+    rest.on_get = lambda object_id: first_mcp.wait(2.0)

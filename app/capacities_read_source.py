@@ -203,6 +203,12 @@ class ContentCommitQueue:
         #: Whether MCP was abandoned this run (U4b sets it); reported, never
         #: inferred here, because only the MCP worker sees source loss.
         self._fell_back = False
+        #: Whether a source is off for the rest of this run (D1). Set with
+        #: ``_fell_back`` under this lock, cleared only by :meth:`begin_run`,
+        #: and re-checked under the lock by :meth:`_ensure_worker`, so a worker
+        #: that has just lost its source can never be started again by a
+        #: concurrent :meth:`prime`.
+        self._source_off = False
 
     # -- lifecycle ------------------------------------------------------
 
@@ -221,6 +227,7 @@ class ContentCommitQueue:
             self._reads = {"rest": 0, "mcp": 0}
             self._elapsed = {"rest": 0.0, "mcp": 0.0}
             self._fell_back = False
+            self._source_off = False
             self._workers = [entry for entry in self._workers if entry[0].is_alive()]
             self._cond.notify_all()
 
@@ -321,10 +328,27 @@ class ContentCommitQueue:
             self._cond.notify_all()
 
     def _mark_fell_back(self) -> None:
-        """Record that a source was lost this run (reported by :meth:`read_counts`)."""
+        """Record that a source was lost this run (reported by :meth:`read_counts`).
+
+        D1: this is also the one place that switches a source off, so "MCP is
+        off for the rest of the run" is an invariant held under this lock
+        rather than a separately-updated attribute. :meth:`begin_run` is the
+        only place that clears it.
+        """
         with self._cond:
             self._fell_back = True
+            self._source_off = True
             self._cond.notify_all()
+
+    def source_allowed(self, source: str) -> bool:
+        """Whether ``source`` may still claim in this run (D1).
+
+        Read under the same lock that sets the flag, so a caller deciding
+        whether to start a worker cannot race the failure that switched the
+        source off. The start itself is re-checked in :meth:`_ensure_worker`.
+        """
+        with self._cond:
+            return not (source == "mcp" and self._source_off)
 
     # -- workers --------------------------------------------------------
 
@@ -333,8 +357,14 @@ class ContentCommitQueue:
         self._ensure_worker(self._read_content, source="rest")
 
     def _ensure_worker(self, read_content: ReadContent, *, source: str) -> None:
-        """Start one worker for ``source`` unless one is already alive."""
+        """Start one worker for ``source`` unless one is already alive.
+
+        D1: an off source is refused here, under the lock, so a stale caller
+        decision can never revive a worker whose source was lost.
+        """
         with self._cond:
+            if source == "mcp" and self._source_off:
+                return
             alive = [entry for entry in self._workers if entry[0].is_alive()]
             self._workers = alive
             if any(name == source for _, name in alive):
@@ -383,6 +413,18 @@ class ContentCommitQueue:
                 stop = exc.stop
             except Exception as exc:  # noqa: BLE001 - stored for the consumer
                 error = exc
+            except BaseException:  # noqa: BLE001 - D2: never strand a claim
+                # A non-``Exception`` escape from a source read (``SystemExit``
+                # or ``KeyboardInterrupt`` raised inside this worker thread, or
+                # a ``BaseException`` a transport leaks) must not kill the
+                # worker with its claimed index still pending. The index goes
+                # back to the other worker and this worker stops. Nothing is
+                # swallowed on the caller's behalf: the slot stays empty, so a
+                # consumer waiting on this id waits for the requeued read, and
+                # the main thread's own interrupt semantics are untouched
+                # (signals are delivered to the main thread, never here).
+                requeued = True
+                stop = True
             elapsed = max(0.0, self._clock() - started)
             with self._cond:
                 if not requeued:
@@ -654,9 +696,15 @@ class ReadSourceSplitter:
         return True
 
     def prime(self, entries: Iterable[Any]) -> None:
-        """Prime the current type batch's ordered ids (see :meth:`ContentCommitQueue.prime`)."""
+        """Prime the current type batch's ordered ids (see :meth:`ContentCommitQueue.prime`).
+
+        D1: the decision to start the MCP worker is taken from this run's MCP
+        verdict *and* the queue's lock-guarded "source is off" flag, never from
+        the bare ``_mcp_active`` attribute, so a fallback recorded by the MCP
+        worker can never race this read into starting it again.
+        """
         self.queue.prime(entries)
-        if self._mcp_active:
+        if self._mcp_active and self.queue.source_allowed("mcp"):
             self.queue._ensure_worker(self._read_mcp, source="mcp")
 
     def get_object(
@@ -693,14 +741,19 @@ class ReadSourceSplitter:
         self._mcp_active = True
 
     def end_run(self) -> None:
-        """Join both workers, then close MCP (R10)."""
-        self.queue.end_run()
+        """Join both workers, then close MCP (R10).
+
+        I2: the join runs first and the MCP close runs in a ``finally``, so a
+        failing queue shutdown can never leave the MCP session open.
+        """
         self._mcp_active = False
-        if self.mcp is None:
-            return
-        end_run = getattr(self.mcp, "end_run", None)
-        if callable(end_run):
-            try:
-                end_run()
-            except Exception:  # noqa: BLE001 - MCP never fails a run (R6)
-                pass
+        try:
+            self.queue.end_run()
+        finally:
+            if self.mcp is not None:
+                end_run = getattr(self.mcp, "end_run", None)
+                if callable(end_run):
+                    try:
+                        end_run()
+                    except Exception:  # noqa: BLE001 - MCP never fails a run (R6)
+                        pass

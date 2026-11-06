@@ -983,3 +983,71 @@ def test_both_sources_are_used_and_the_release_matches_a_rest_only_run() -> None
     assert [(value["id"], value["structureId"]) for value in got] == [
         (value["id"], value["structureId"]) for value in expected
     ]
+
+
+def test_a_primed_batch_never_restarts_mcp_after_the_run_lost_it() -> None:
+    """D1: 'MCP is off for the run' is an invariant, not a racing flag."""
+    gate = threading.Event()
+    rest = GatedRest(gate)
+    mcp = FakeMcp(behaviors=[_unavailable()])
+    splitter = read_source.ReadSourceSplitter(rest, mcp=mcp)
+    splitter.begin_run()
+    splitter.prime([("a-1", "st-1"), ("a-2", "st-1")])
+    # REST is pinned inside a-1 while MCP claims and loses a-2.
+    assert _wait_for(lambda: mcp.call_count == 1)
+    assert _wait_for(lambda: splitter.read_counts()["fell_back"])
+    gate.set()
+    assert splitter.get_object("a-1")["id"] == "a-1"
+    assert splitter.get_object("a-2")["id"] == "a-2"
+    assert splitter.queue.source_allowed("mcp") is False
+
+    # A stale 'active' flag must not bring the worker back for the next batch.
+    splitter._mcp_active = True
+    splitter.prime([("b-1", "st-1"), ("b-2", "st-1")])
+    got = [splitter.get_object(object_id)["id"] for object_id in ("b-1", "b-2")]
+    splitter.end_run()
+
+    assert got == ["b-1", "b-2"]
+    assert mcp.call_count == 1
+    assert splitter.queue.live_worker_count == 0
+
+    # begin_run is the only place that re-enables the source.
+    splitter.begin_run()
+    assert splitter.queue.source_allowed("mcp") is True
+    splitter.end_run()
+
+
+def test_a_non_exception_escape_requeues_the_claim_instead_of_stranding_it() -> None:
+    """D2: a worker that dies between claim and fill must not hang the consumer."""
+    rest = FakeRest()
+    mcp = FakeMcp(behaviors=[KeyboardInterrupt()])
+    splitter = read_source.ReadSourceSplitter(rest, mcp=mcp)
+    splitter.begin_run()
+    splitter.prime([("a-1", "st-1"), ("a-2", "st-1")])
+    got: list[str] = []
+    consumer = _start(
+        lambda: got.extend(splitter.get_object(i)["id"] for i in ("a-1", "a-2"))
+    )
+    consumer.join(2.0)
+    hung = consumer.is_alive()
+    splitter.end_run()
+
+    assert not hung
+    assert got == ["a-1", "a-2"]
+    assert splitter.queue.live_worker_count == 0
+
+
+def test_end_run_closes_mcp_even_when_joining_the_workers_raises() -> None:
+    """I2: provider shutdown still happens when the queue's own end_run fails."""
+    rest = FakeRest()
+    mcp = FakeMcp()
+    splitter = read_source.ReadSourceSplitter(rest, mcp=mcp)
+    splitter.begin_run()
+
+    def broken() -> None:
+        raise RuntimeError("join failed")
+
+    splitter.queue.end_run = broken  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        splitter.end_run()
+    assert mcp.end_calls == 1

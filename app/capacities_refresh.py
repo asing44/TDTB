@@ -15,22 +15,29 @@ Contract (KTD1–KTD3):
 * **One machine-local single-flight job.** A process-local lock plus a POSIX
   advisory lock file serialize Refresh/Rescan across threads and processes.
   Status queries make no provider call and never spawn work.
-* **Endpoint-aware pacing.** Every response's rate-limit headers are parsed
-  into one budget per endpoint (``RateLimit``/``ratelimit-*`` forms, lowest
-  remaining wins), so pacing follows the API's own numbers while that budget
-  is current: a header above the documented 30 requests per 60 seconds raises
-  throughput, one below lowers it. When no usable header is present — or the
-  budget's reset passes unrefreshed — the documented 30 per 60 seconds governs
-  again. ``Retry-After`` keeps its 429 meaning (up to ``max_backoff``). A
-  rate-limited run waits and resumes by itself within a per-run wait budget;
-  an explicit ``max_retries`` keeps the older count bound. Errors stay truthful
-  and cancellation interrupts every backoff.
+* **Endpoint-aware pacing, one budget per source.** Every REST response's
+  rate-limit headers are parsed into one budget per REST endpoint
+  (``RateLimit``/``ratelimit-*`` forms, lowest remaining wins), so pacing
+  follows the API's own numbers while that budget is current: a header above
+  the documented 30 requests per 60 seconds raises throughput, one below
+  lowers it. When no usable header is present — or the budget's reset passes
+  unrefreshed — the documented 30 per 60 seconds governs again. Content reads
+  can also be served from a second, independent source (a split provider):
+  REST content stays on ``content`` at 30 per 60 seconds and MCP content gets
+  its own static ``mcp_content`` budget (:data:`MCP_CONTENT_LIMIT` per 60
+  seconds) with no header observer, so neither budget ever waits on or
+  consumes the other. ``Retry-After`` keeps its 429 meaning (up to
+  ``max_backoff``). A rate-limited run waits and resumes by itself within a
+  per-run wait budget; an explicit ``max_retries`` keeps the older count
+  bound. Errors stay truthful and cancellation interrupts every backoff.
 * **Measured runs.** A job document carries a ``progress.metrics`` block with
   the run's own read count, read timings, read rate per minute, elapsed time,
-  cold flag, 429 count, the last observed content limit, and whether any
-  response header this run even looked like a rate-limit header (by name, never
-  by value) — additive numbers, booleans, short header names, and nulls only,
-  never content or exception text.
+  cold flag, 429 count, the last observed content limit, whether any response
+  header this run even looked like a rate-limit header (by name, never by
+  value), and — when the provider splits content reads — which read sources
+  were used, how many reads each served, and whether one was lost mid-run.
+  Additive numbers, booleans, short header names, and nulls only, never
+  content or exception text.
 * **Read-through refresh TTL.** An explicit Refresh reuses cached object
   content younger than :data:`DEFAULT_CONTENT_TTL_SECONDS` (10 minutes) with
   zero provider reads, so a back-to-back Refresh stays cheap, and re-reads
@@ -60,7 +67,8 @@ Contract (KTD1–KTD3):
 * **No secret leakage.** Warnings are bounded fixed strings; exception text,
   tokens, header values, and filesystem paths never reach a warning or a job
   document. A per-object read diagnostic names the object id and the exception
-  CLASS NAME only.
+  CLASS NAME only. Losing the fast read source adds exactly one fixed warning
+  (:data:`MCP_FALLBACK_WARNING`) — no object id, path, or exception text.
 
 Machine-local only: the caller owns the state root (``app_config.state_dir()``)
 so raw object content never enters a synced folder.
@@ -98,6 +106,9 @@ logger = logging.getLogger("tdtb.capacities_refresh")
 ENDPOINT_STRUCTURES = "structures"
 ENDPOINT_LISTING = "listing"
 ENDPOINT_CONTENT = "content"
+#: The MCP content-read endpoint class. It is a pacing identity only: MCP has
+#: no transport this module observes, so nothing ever reports headers for it.
+ENDPOINT_MCP_CONTENT = "mcp_content"
 
 #: The fixed ``progress.waiting.reason`` value for a rate-limit wait.
 RATE_LIMIT_WAIT_REASON = "rateLimited"
@@ -175,6 +186,13 @@ INTERIM_RETAINED_WARNING = (
     "every object type was read, so the unchecked types keep their last "
     "published state until a complete refresh finishes."
 )
+#: The one bounded notice a run adds when it loses the fast (MCP) content
+#: source and finishes its reads through REST instead (KTD8, R6). Fixed text:
+#: no object id, path, token, or exception text, and at most once per run.
+MCP_FALLBACK_WARNING = (
+    "Capacities fast read was unavailable; this refresh read through the "
+    "standard API at the normal pace."
+)
 
 
 class RefreshError(Exception):
@@ -225,10 +243,22 @@ class EndpointPolicy:
 #: The live API allows 30 requests per minute and its listing carries no typed
 #: properties, so every property decision costs one content read. Listings are
 #: a separate endpoint with their own (equally conservative) ceiling.
+#:
+#: MCP content reads are a second, independent content budget (KTD6): the
+#: measured MCP ceiling is about 58-60 requests per 60 s, so this static policy
+#: sits at roughly 60% of it, leaving headroom for latency jitter and a retry
+#: burst. It is named so the live cold-run gate (U8) can retune it once from
+#: measured evidence without hunting for a literal.
+MCP_CONTENT_LIMIT = 35
+MCP_CONTENT_WINDOW_SECONDS = 60.0
+
 DEFAULT_POLICIES: dict[str, EndpointPolicy] = {
     ENDPOINT_CONTENT: EndpointPolicy(limit=30, window=60.0),
     ENDPOINT_LISTING: EndpointPolicy(limit=30, window=60.0),
     ENDPOINT_STRUCTURES: EndpointPolicy(limit=30, window=60.0),
+    ENDPOINT_MCP_CONTENT: EndpointPolicy(
+        limit=MCP_CONTENT_LIMIT, window=MCP_CONTENT_WINDOW_SECONDS
+    ),
 }
 
 
@@ -651,6 +681,16 @@ class ProviderPacer:
         self._budgets: dict[str, _HeaderBudget] = {}
         self.sleep_calls: list[float] = []
 
+    @property
+    def cancel_event(self) -> threading.Event | None:
+        """The run's cancel event, so a provider seam can share it (U5).
+
+        The coordinator owns this event and every pacing wait honours it; a
+        split provider's workers must honour the same event, so
+        :class:`PacedProvider` forwards it to them.
+        """
+        return self._cancel_event
+
     # -- policy / bookkeeping ------------------------------------------
 
     def _policy(self, endpoint: str) -> EndpointPolicy:
@@ -853,19 +893,53 @@ class ProviderPacer:
 
 
 class PacedProvider:
-    """The provider seam the adapter/coordinator see: paced and retried."""
+    """The provider seam the adapter/coordinator see: paced and retried.
+
+    A provider that serves content reads from more than one source (U4's
+    ``ReadSourceSplitter``) declares ``paces_content_reads = True``: its own
+    workers pace each read on that source's own endpoint (see
+    :func:`paced_content_callables`). This seam must then not pace a content
+    read a second time, because doing so would charge the REST ``content``
+    budget for an MCP read and make the two budgets depend on each other (R4).
+    A plain REST provider has no such attribute and behaves exactly as before.
+
+    The run lifecycle (``begin_run``/``end_run``) and the per-type batch prime
+    are duck-typed passthroughs: a provider that exposes them receives them, a
+    plain REST provider is untouched. The coordinator owns the run's cancel
+    event, so :meth:`set_cancel_event` hands it to a provider that owns worker
+    threads.
+    """
 
     def __init__(self, raw: Any, pacer: ProviderPacer) -> None:
         self.raw = raw
         self.pacer = pacer
+        #: Whether the wrapped provider paces its own content reads (R4).
+        self.paces_content_reads = (
+            getattr(raw, "paces_content_reads", False) is True
+        )
         #: The raw structures payload most recently fetched through this seam.
         self.structures_payload: Any = None
         setter = getattr(raw, "set_rate_observer", None)
         if callable(setter):
             setter(self.observe_headers)
+        self.set_cancel_event(self.pacer.cancel_event)
 
     def observe_headers(self, endpoint: str, headers: Any) -> None:
         self.pacer.observe(endpoint, headers)
+
+    def set_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        """Share this run's cancel event with a provider that owns workers.
+
+        The event forwarded is the same one this seam's pacer and the
+        coordinator's read loop check, so a cancellation reaches a split
+        provider's workers and their pacer waits at once (R10). The U6 wiring
+        gives ``ReadSourceSplitter`` a ``set_cancel_event`` that adopts the
+        event for both the splitter and its queue; a plain REST provider has
+        no workers, so the passthrough is a no-op.
+        """
+        setter = getattr(self.raw, "set_cancel_event", None)
+        if callable(setter):
+            setter(cancel_event)
 
     @property
     def base_url(self) -> str | None:
@@ -895,6 +969,10 @@ class PacedProvider:
         )
 
     def get_object(self, object_id: str):
+        if self.paces_content_reads:
+            # The split provider's own workers pace each read on its source's
+            # endpoint, so pacing here would double-charge the REST budget.
+            return self.raw.get_object(object_id)
         return self.pacer.call(
             ENDPOINT_CONTENT, lambda: self.raw.get_object(object_id)
         )
@@ -905,10 +983,99 @@ class PacedProvider:
             lambda: self.raw.patch_object(object_id, properties),
         )
 
+    def begin_run(self) -> None:
+        """Start the wrapped provider's run, when it has one (duck-typed)."""
+        starter = getattr(self.raw, "begin_run", None)
+        if callable(starter):
+            starter()
+
+    def end_run(self) -> None:
+        """End the wrapped provider's run, when it has one (duck-typed).
+
+        Best-effort: a provider shutdown must never turn a finished run into a
+        failure, and the coordinator calls this from its own ``finally`` so no
+        worker outlives a run (R6, R10).
+        """
+        ender = getattr(self.raw, "end_run", None)
+        if callable(ender):
+            try:
+                ender()
+            except Exception:  # noqa: BLE001 — shutdown is not an outcome
+                pass
+
+    def prime(self, entries: Any) -> None:
+        """Prime the wrapped provider's ordered batch, when it has one.
+
+        The coordinator primes immediately before it consumes one type's batch,
+        with the ids in exactly the order it will read them, so a split provider
+        can start its workers for that batch and release results in that order
+        (R11). A plain REST provider has no workers and no ``prime``.
+        """
+        primer = getattr(self.raw, "prime", None)
+        if callable(primer):
+            primer(entries)
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward the split provider's run reports, and only those.
+
+        ``read_counts`` and ``read_source`` exist on the wrapped provider only
+        when it serves reads from more than one source. Forwarding them
+        unconditionally would make a plain REST provider look split; raising
+        ``AttributeError`` otherwise keeps the coordinator's ``getattr`` probe
+        falling back to the REST-only defaults.
+        """
+        if name in ("read_counts", "read_source"):
+            return getattr(self.raw, name)
+        raise AttributeError(name)
+
     def close(self) -> None:
         close = getattr(self.raw, "close", None)
         if callable(close):
             close()
+
+
+def paced_content_callables(
+    pacer: ProviderPacer, rest: Any
+) -> tuple[Callable[[str], Any], Callable[[], None]]:
+    """Build the two paced content readables a split provider's workers use.
+
+    Returns ``(content_reader, mcp_pace)``:
+
+    - ``content_reader(object_id)`` performs one REST content read inside the
+      REST ``content`` budget: it takes a pacer slot, then calls
+      ``rest.get_object``. A split provider's REST worker uses it (as do its
+      out-of-batch direct reads), which is why the provider seam above must not
+      pace a content read again.
+    - ``mcp_pace()`` takes one slot in the independent ``mcp_content`` budget
+      and nothing else. The MCP read itself belongs to the MCP provider, and an
+      MCP failure is source loss the splitter handles, never a pacer retry
+      (KTD7). A cancellation during the wait returns here rather than raising,
+      because the splitter re-checks its cancel event immediately after pacing
+      and stops its worker there; raising would turn a cancel into a stored
+      per-object read error.
+
+    U6 constructs the splitter from exactly these two callables::
+
+        content_reader, mcp_pace = paced_content_callables(pacer, rest)
+        splitter = ReadSourceSplitter(
+            rest, mcp=mcp, content_reader=content_reader, mcp_pace=mcp_pace
+        )
+        provider = PacedProvider(splitter, pacer)  # no second content pacing
+
+    The splitter must honour the coordinator's cancel event; ``PacedProvider``
+    forwards it through ``set_cancel_event``.
+    """
+
+    def content_reader(object_id: str) -> Any:
+        return pacer.call(ENDPOINT_CONTENT, lambda: rest.get_object(object_id))
+
+    def mcp_pace() -> None:
+        try:
+            pacer.before_request(ENDPOINT_MCP_CONTENT)
+        except RefreshCancelled:
+            return
+
+    return content_reader, mcp_pace
 
 
 # ---------------------------------------------------------------------------
@@ -1468,6 +1635,7 @@ class RefreshCoordinator:
 
     def _run(self) -> None:
         self.pacer.begin_run()
+        self._begin_provider_run()
         self._read_started_at = None
         self._read_finished_at = None
         self._completed_types = []
@@ -1521,11 +1689,37 @@ class RefreshCoordinator:
                 [FAILURE_WARNING, *self._failure_detail(exc)],
             )
         finally:
+            self._end_provider_run()
             try:
                 self.store.note_run_finished(self.scope_key)
             except refresh_state.RefreshStateError:
                 pass
             self._release_locks()
+
+    def _begin_provider_run(self) -> None:
+        """Let a split provider start its run (duck-typed; U5, KTD4).
+
+        A plain REST provider exposes no ``begin_run``, and the passthrough on
+        :class:`PacedProvider` makes that a no-op, so today's REST-only path is
+        unchanged.
+        """
+        starter = getattr(self.provider, "begin_run", None)
+        if callable(starter):
+            starter()
+
+    def _end_provider_run(self) -> None:
+        """Stop and join a split provider's workers, always (R10).
+
+        Called from :meth:`_run`'s ``finally``, alongside the existing cleanup,
+        so no content worker outlives a run, a cancel, or a failure. Cleanup is
+        best-effort: it never changes the run's outcome.
+        """
+        ender = getattr(self.provider, "end_run", None)
+        if callable(ender):
+            try:
+                ender()
+            except Exception:  # noqa: BLE001 — cleanup is never an outcome
+                pass
 
     def _failure_detail(self, exc: BaseException) -> list[str]:
         """Bounded, content-free failure detail for the job and the log.
@@ -1598,6 +1792,61 @@ class RefreshCoordinator:
             # retried once and how many of those recovered. Counts only.
             "retried_reads": int(self._retried_reads),
             "retry_recovered": int(self._retry_recovered),
+            **self._read_source_metrics(reads),
+        }
+
+    def _provider_read_counts(self) -> dict[str, Any] | None:
+        """The provider's own per-source read counts, or ``None`` without one.
+
+        Duck-typed and never able to fail a run: a plain REST provider has no
+        ``read_counts``, and an unusable report degrades to the REST-only
+        defaults rather than raising out of the job's metrics block.
+        """
+        reader = getattr(self.provider, "read_counts", None)
+        if not callable(reader):
+            return None
+        try:
+            counts = reader()
+        except Exception:  # noqa: BLE001 — reporting is never an outcome
+            return None
+        return counts if isinstance(counts, dict) else None
+
+    def _read_source_fell_back(self) -> bool:
+        """Whether this run lost one of its content read sources (R6)."""
+        counts = self._provider_read_counts()
+        return counts is not None and counts.get("fell_back") is True
+
+    def _read_source_metrics(self, reads: int) -> dict[str, Any]:
+        """Per-source read accounting for the metrics block (R7, KTD8).
+
+        A provider that serves content reads from more than one source reports
+        its own ``read_source`` and ``read_counts()``. A plain REST provider
+        has neither, so the run reports the REST-only defaults: ``rest``,
+        every fresh read this run made was a REST read, no MCP read happened,
+        and no source was lost. The keys are always present and always the
+        same shape, so a reader never branches on which provider built the job,
+        and ``JOB_SCHEMA_VERSION`` stays 1.
+        """
+        counts = self._provider_read_counts()
+        source = getattr(self.provider, "read_source", None)
+        if not isinstance(source, str) or not source:
+            source = "rest"
+        if counts is None:
+            return {
+                "read_source": source,
+                "rest_reads": int(reads),
+                "mcp_reads": 0,
+                "read_source_fell_back": False,
+                "rest_read_seconds": None,
+                "mcp_read_seconds": None,
+            }
+        return {
+            "read_source": source,
+            "rest_reads": _progress_count(counts.get("rest")),
+            "mcp_reads": _progress_count(counts.get("mcp")),
+            "read_source_fell_back": counts.get("fell_back") is True,
+            "rest_read_seconds": _bounded_seconds(counts.get("rest_elapsed")),
+            "mcp_read_seconds": _bounded_seconds(counts.get("mcp_elapsed")),
         }
 
     def _note_unreadable_object(
@@ -1634,6 +1883,11 @@ class RefreshCoordinator:
         publication = self._publication_record(phase=phase)
         if publication["partial"] and INTERIM_RETAINED_WARNING not in warnings:
             warnings = [*warnings, INTERIM_RETAINED_WARNING]
+        # R6/KTD8: a run that lost the fast read source says so exactly once,
+        # through one fixed string that cannot carry an id, a path, or
+        # exception text.
+        if self._read_source_fell_back() and MCP_FALLBACK_WARNING not in warnings:
+            warnings = [*warnings, MCP_FALLBACK_WARNING]
         # The per-object read diagnostics ride the same bounded channel, so an
         # operator can tell which object failed and with which exception class.
         warnings = [*warnings, *self._unreadable_object_warnings()]
@@ -1903,6 +2157,9 @@ class RefreshCoordinator:
             type_rows: list[dict[str, Any]] = []
             fresh_reads = 0
             type_unreadable = 0
+            # Prime the split provider's batch for exactly the ids this loop is
+            # about to read, in this loop's order, before it consumes them.
+            self._prime_read_batch(type_key, rows_by_type[type_key], rescan=rescan)
             for row in rows_by_type[type_key]:
                 if self.cancel_event.is_set():
                     _raise_cancelled()
@@ -2205,6 +2462,32 @@ class RefreshCoordinator:
                 "Capacities refresh: the schema-change notice was not recorded"
             )
 
+    def _prime_read_batch(
+        self, type_key: str, rows: Iterable[Mapping[str, Any]], *, rescan: bool
+    ) -> None:
+        """Prime a split provider's ordered batch for one type (U5, R11).
+
+        The entries are the ``(object_id, structure_id)`` pairs this type's
+        read loop is about to visit, in exactly the order it visits them, and
+        only for the rows that actually need a provider read: a reused object
+        is never primed, so a batch can never cause a read the sequential path
+        would not have made. Priming is duck-typed, so a plain REST provider -
+        which reads each id on the calling thread - is untouched.
+        """
+        primer = getattr(self.provider, "prime", None)
+        if not callable(primer):
+            return
+        entries: list[tuple[str, str]] = []
+        for row in rows:
+            object_id = _text(row.get("id")) if isinstance(row, Mapping) else ""
+            if not object_id:
+                continue
+            if not self._needs_read(object_id, type_key, rescan=rescan):
+                continue
+            entries.append((object_id, type_key))
+        if entries:
+            primer(entries)
+
     def _needs_read(self, object_id: str, type_key: str, *, rescan: bool = False) -> bool:
         """Whether one listed object must be read from the provider.
 
@@ -2312,6 +2595,13 @@ def _progress_count(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     return max(0, int(value))
+
+
+def _bounded_seconds(value: Any) -> float | None:
+    """A non-negative elapsed-seconds value, or ``None`` when unusable."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(0.0, float(value))
 
 
 def _snapshot_summary(snapshot: refresh_state.CompleteSnapshot | None) -> dict[str, Any]:
