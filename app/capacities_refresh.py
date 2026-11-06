@@ -453,16 +453,107 @@ def _bounded_header_name(value: Any) -> str | None:
     return token
 
 
-def _unreadable_object_line(object_id: Any, exc: BaseException) -> str:
+def _unreadable_object_line(
+    object_id: Any, exc: BaseException, *, retries: int = 0
+) -> str:
     """One bounded diagnostic for an object this run could not read.
 
     The object id and the exception CLASS NAME only: the exception message,
     response headers, and object content never reach a warning or a job
-    document.
+    document. ``retries`` names how many retries were already spent on this
+    object, as a count rather than anything the exception said.
     """
     identifier = _bounded_identifier(object_id) or "unknown"
     name = _bounded_identifier(type(exc).__name__) or "Exception"
-    return f"Capacities object {identifier} could not be read ({name})"
+    spent = int(retries) if isinstance(retries, int) and retries > 0 else 0
+    suffix = f", after {spent} retr{'y' if spent == 1 else 'ies'}" if spent else ""
+    return f"Capacities object {identifier} could not be read ({name}{suffix})"
+
+
+#: Exception class names that mean "the transport failed this request", not
+#: "this object cannot be read": connection, timeout, and protocol failures
+#: from the live httpx transport and from the stdlib/urllib3 layers under it.
+#: Matched by name (see :func:`_is_transient_read_error`) so no transport
+#: package has to be imported at this seam.
+_TRANSIENT_READ_ERROR_NAMES = frozenset(
+    {
+        # httpx, the live transport's own hierarchy.
+        "TransportError",
+        "TimeoutException",
+        "Timeout",
+        "ConnectError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "ReadError",
+        "WriteError",
+        "CloseError",
+        "NetworkError",
+        "RemoteProtocolError",
+        "ProtocolError",
+        "LocalProtocolError",
+        # urllib3 / stdlib / socket equivalents.
+        "MaxRetryError",
+        "NewConnectionError",
+        "NameResolutionError",
+        "ConnectionError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "BrokenPipeError",
+        "RemoteDisconnected",
+        "TimeoutError",
+        "IncompleteRead",
+        "ChunkedEncodingError",
+    }
+)
+
+#: Read failures that end the RUN rather than one object's read: cancellation
+#: is the operator's intent, the pacer owns the rate-limit wait and re-raises
+#: after its own backoff, and a local store failure is not this object's fault.
+#: They are re-raised untouched — never absorbed into the per-object
+#: bookkeeping and never retried.
+_RUN_LEVEL_READ_FAILURES = (
+    RefreshCancelled,
+    refresh_state.RefreshStateStorageError,
+    capacities_adapter.CapacitiesRateLimited,
+)
+
+
+def _read_status_code(exc: BaseException) -> int | None:
+    """The HTTP status behind ``exc`` when it carries a response, else None.
+
+    Duck-typed on ``response.status_code`` so an httpx ``HTTPStatusError`` is
+    classified without this module importing the transport.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status
+
+
+def _is_transient_read_error(exc: BaseException) -> bool:
+    """Whether one object read failed for a reason a single retry may fix.
+
+    Transient means a transport/connection/timeout failure or an HTTP 5xx or
+    408. Everything else is deterministic here: a second attempt would either
+    repeat the same answer (malformed payload, contract violation, a deleted or
+    refused object) or wait for a fact the run already owns (rate limit,
+    cancellation, local store failure).
+    """
+    if isinstance(exc, _RUN_LEVEL_READ_FAILURES):
+        return False
+    if isinstance(
+        exc, (RefreshIncomplete, capacities_adapter.CapacitiesContractError)
+    ):
+        return False
+    status = _read_status_code(exc)
+    if status is not None:
+        return status == 408 or 500 <= status <= 599
+    return bool(
+        {klass.__name__ for klass in type(exc).__mro__} & _TRANSIENT_READ_ERROR_NAMES
+    )
 
 
 def _failure_cause_line(exc: BaseException) -> str:
@@ -1177,6 +1268,11 @@ class RefreshCoordinator:
         #: run; rendered through the job's warnings channel.
         self._unreadable_object_lines: list[str] = []
         self._unreadable_object_count = 0
+        #: This run's retry bookkeeping: how many failed object reads were
+        #: retried once, and how many of those recovered. Counts only, reset
+        #: per run, reported through the job's ``progress.metrics``.
+        self._retried_reads = 0
+        self._retry_recovered = 0
 
     # -- paths / persistence -------------------------------------------
 
@@ -1381,6 +1477,8 @@ class RefreshCoordinator:
         self._installed_at = None
         self._unreadable_object_lines = []
         self._unreadable_object_count = 0
+        self._retried_reads = 0
+        self._retry_recovered = 0
         try:
             self._acquire()
         except RefreshCancelled:
@@ -1496,19 +1594,26 @@ class RefreshCoordinator:
             "rate_limit_header_names": sorted(self.pacer.rate_limit_header_names)[
                 :RATE_LIMIT_HEADER_NAME_LIMIT
             ],
+            # This run's own retry bookkeeping: how many object reads were
+            # retried once and how many of those recovered. Counts only.
+            "retried_reads": int(self._retried_reads),
+            "retry_recovered": int(self._retry_recovered),
         }
 
-    def _note_unreadable_object(self, object_id: Any, exc: BaseException) -> None:
+    def _note_unreadable_object(
+        self, object_id: Any, exc: BaseException, *, retries: int = 0
+    ) -> None:
         """Record one bounded, content-free diagnostic for an unreadable object.
 
         The object id and the exception CLASS NAME only; the message, headers,
-        and content are never captured. Past the cap the run keeps a count so
-        the warnings can end in one ``+N more`` summary line.
+        and content are never captured. ``retries`` says how many retries were
+        already spent. Past the cap the run keeps a count so the warnings can
+        end in one ``+N more`` summary line.
         """
         self._unreadable_object_count += 1
         if len(self._unreadable_object_lines) < UNREADABLE_DIAGNOSTIC_LIMIT:
             self._unreadable_object_lines.append(
-                _unreadable_object_line(object_id, exc)
+                _unreadable_object_line(object_id, exc, retries=retries)
             )
 
     def _unreadable_object_warnings(self) -> list[str]:
@@ -1802,22 +1907,13 @@ class RefreshCoordinator:
                 if self.cancel_event.is_set():
                     _raise_cancelled()
                 object_id = _text(row.get("id"))
-                try:
-                    content, fresh = self._read_or_reuse(
-                        object_id, type_key, rescan=rescan
-                    )
-                except RefreshCancelled:
-                    raise
-                except refresh_state.RefreshStateStorageError:
-                    raise
-                except capacities_adapter.CapacitiesRateLimited:
-                    # A rate limit that outlived the per-run wait budget fails
-                    # the run truthfully (Cause/Where), not one object.
-                    raise
-                except Exception as exc:  # noqa: BLE001 — one unreadable object
+                read = self._read_object(object_id, type_key, rescan=rescan)
+                if read is None:
+                    # Unreadable even after its one retry; the bounded
+                    # diagnostic is already recorded (id and class name only).
                     type_unreadable += 1
-                    self._note_unreadable_object(object_id, exc)
                     continue
+                content, fresh = read
                 cached_type = _text(content.get("structureId"))
                 if cached_type and cached_type != type_key:
                     retargeted += 1
@@ -2146,6 +2242,47 @@ class RefreshCoordinator:
             object_id, type_key, content, content_read_at=self._wall_clock()
         )
         return content, True
+
+    def _read_object(self, object_id: str, type_key: str, *, rescan: bool):
+        """Read one object, retrying ONE transient failure through the pacer.
+
+        Returns ``(content, fresh)`` exactly like :meth:`_read_or_reuse`, or
+        ``None`` when this object could not be read at all — in which case its
+        bounded diagnostic has already been recorded.
+
+        A transient failure (see :func:`_is_transient_read_error`) is retried
+        once, immediately, by calling :meth:`_read_or_reuse` again: the retry
+        therefore takes its own turn in the rate budget like any other read and
+        is never a bypass. The live 2026-11-06 run lost thirteen minutes of
+        paced reads to one object that read cleanly on the next run, so one
+        transient failure earns exactly one chance; a deterministic failure is
+        recorded and fails the run as before, because a retry cannot change it.
+
+        Cancellation is still immediate: it is checked between the failure and
+        the retry, so a cancelled run issues no second read.
+        """
+        try:
+            content, fresh = self._read_or_reuse(object_id, type_key, rescan=rescan)
+        except _RUN_LEVEL_READ_FAILURES:
+            raise
+        except Exception as exc:  # noqa: BLE001 — one unreadable object
+            if not _is_transient_read_error(exc):
+                self._note_unreadable_object(object_id, exc)
+                return None
+            if self.cancel_event.is_set():
+                _raise_cancelled()
+            self._retried_reads += 1
+            try:
+                content, fresh = self._read_or_reuse(
+                    object_id, type_key, rescan=rescan
+                )
+            except _RUN_LEVEL_READ_FAILURES:
+                raise
+            except Exception as retry_exc:  # noqa: BLE001 — the retry failed too
+                self._note_unreadable_object(object_id, retry_exc, retries=1)
+                return None
+            self._retry_recovered += 1
+        return content, fresh
 
     def _remember_tag_titles(
         self, titles: dict[str, str], complete: bool

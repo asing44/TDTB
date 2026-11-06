@@ -15,6 +15,7 @@ import threading
 from datetime import date
 from pathlib import Path
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -1807,6 +1808,9 @@ METRIC_KEYS = {
     "observed_limit",
     "rate_limit_header_seen",
     "rate_limit_header_names",
+    # Live-run 2026-11-06: the one bounded retry's own counts.
+    "retried_reads",
+    "retry_recovered",
 }
 
 
@@ -1825,6 +1829,8 @@ def _assert_metrics_shape(metrics):
         "read_rate_per_minute",
         "elapsed_seconds",
         "rate_limited",
+        "retried_reads",
+        "retry_recovered",
     ):
         value = metrics[key]
         assert value is None or type(value) in (int, float), key
@@ -2668,3 +2674,280 @@ def test_a_non_mapping_response_body_records_no_header_visibility():
 
     assert pacer.rate_limit_header_seen is False
     assert pacer.rate_limit_header_names == []
+
+
+# ---------------------------------------------------------------------------
+# Live-run 2026-11-06 — one bounded retry for a transiently failed read
+#
+# One object ("Capacities Prune") failed a paced read and read cleanly on the
+# next run, so the failure was transient. The run still lost thirteen minutes
+# of paced reads because a single unreadable object fails the whole run. These
+# tests pin that one transient failure earns exactly ONE retry — through the
+# same pacer — while a deterministic failure still fails the run as before.
+# ---------------------------------------------------------------------------
+
+def _status_error(status: int, message: str = "response status") -> Exception:
+    """An httpx-shaped status failure: a response carrying a status code."""
+    request = httpx.Request("GET", "https://api.capacities.io/object/x")
+    response = httpx.Response(status, request=request)
+    return httpx.HTTPStatusError(message, request=request, response=response)
+
+
+def _fail_once(provider, object_id: str, exc: Exception) -> None:
+    """Make exactly the next read of ``object_id`` raise ``exc``.
+
+    ``FakeProvider`` records the attempt before the hook runs, so the retry
+    count is visible in ``provider.get_calls``.
+    """
+    spent: list[str] = []
+
+    def hook(seen):
+        if seen == object_id and not spent:
+            spent.append(seen)
+            raise exc
+
+    provider.on_get = hook
+
+
+def test_a_transient_read_failure_is_retried_once_and_the_run_completes(tmp_path):
+    """One transport failure on one object must not cost the whole paced run."""
+    provider, coordinator, store = _five_type_run(tmp_path)
+    _fail_once(provider, "o3", httpx.ReadTimeout("the server took too long"))
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert status["outcome"] == "published", status
+    # Exactly one retry reached the provider — two attempts, not a read loop.
+    assert provider.get_calls.count("o3") == 2
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 1
+    assert metrics["retry_recovered"] == 1
+    # A recovered object is an ordinary fresh read: the run read all five.
+    assert metrics["reads"] == len(FIVE_TYPES)
+    assert status["job"]["progress"]["read"] == len(FIVE_TYPES)
+    assert status["warnings"] == []
+    final = store.load_snapshot("all")
+    assert final is not None
+    assert final.partial is False
+    assert {(m.object_id, m.type_key) for m in final.members} == {
+        (f"o{index}", type_id) for index, type_id in enumerate(FIVE_TYPES, 1)
+    }
+
+
+def test_a_transient_read_failure_that_repeats_fails_after_exactly_one_retry(
+    tmp_path,
+):
+    """The second failure is recorded like today's first one, plus the retry."""
+    provider, coordinator, store = _five_type_run(
+        tmp_path,
+        fail_gets={"o3": httpx.RemoteProtocolError("peer closed the connection")},
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "noCapacities", status
+    assert provider.get_calls.count("o3") == 2
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 1
+    assert metrics["retry_recovered"] == 0
+    # The line names the class and the one retry — never the message.
+    line = (
+        "Capacities object o3 could not be read "
+        "(RemoteProtocolError, after 1 retry)"
+    )
+    assert line in status["warnings"]
+    assert all("peer closed" not in warning for warning in status["warnings"])
+    assert INCOMPLETE_READ_WARNING in status["warnings"]
+    # Everything else about a failed read is unchanged: T3 is not a checked
+    # type, and no complete generation was installed.
+    publication = status["progress"]["publication"]
+    assert publication["completed_types"] == [PRIMARY, "T2", "T4", "T5"]
+    assert publication["unchecked_types"] == ["T3"]
+    assert store.load_snapshot("all").partial is True
+
+
+#: Deterministic read failures: a second attempt cannot change the answer, so
+#: spending rate budget on one would only delay the truthful failure.
+NON_TRANSIENT_READ_FAILURES = (
+    pytest.param(
+        lambda provider: provider.fail_gets.update({"o3": _status_error(404)}),
+        "HTTPStatusError",
+        id="http-404-deleted-object",
+    ),
+    pytest.param(
+        # A payload without ``properties`` is malformed, not transient.
+        lambda provider: provider._objects.__setitem__(
+            "o3", {"id": "o3", "structureId": "T3"}
+        ),
+        "RefreshIncomplete",
+        id="malformed-payload",
+    ),
+    pytest.param(
+        lambda provider: provider.fail_gets.update(
+            {"o3": ca.CapacitiesContractError("unsafe payload")}
+        ),
+        "CapacitiesContractError",
+        id="contract-error",
+    ),
+)
+
+
+@pytest.mark.parametrize("install,class_name", NON_TRANSIENT_READ_FAILURES)
+def test_a_deterministic_read_failure_is_never_retried(
+    tmp_path, install, class_name
+):
+    """No second read is spent on a failure a retry cannot fix."""
+    provider, coordinator, store = _five_type_run(tmp_path)
+    install(provider)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "noCapacities", status
+    # One attempt only: the deterministic classes cost no extra rate budget.
+    assert provider.get_calls.count("o3") == 1
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 0
+    assert metrics["retry_recovered"] == 0
+    # The unchanged diagnostic line, carrying no retry suffix.
+    line = f"Capacities object o3 could not be read ({class_name})"
+    assert line in status["warnings"]
+    assert INCOMPLETE_READ_WARNING in status["warnings"]
+    assert store.load_snapshot("all").partial is True
+
+
+@pytest.mark.parametrize("status_code", [500, 503, 408])
+def test_a_retryable_http_status_is_retried_once(tmp_path, status_code):
+    """HTTP 5xx and 408 are transient; the object reads on the second attempt."""
+    provider, coordinator, store = _five_type_run(tmp_path)
+    _fail_once(provider, "o3", _status_error(status_code))
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert provider.get_calls.count("o3") == 2
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 1
+    assert metrics["retry_recovered"] == 1
+    assert store.load_snapshot("all").partial is False
+
+
+def test_cancellation_between_the_failure_and_the_retry_prevents_the_read(
+    tmp_path,
+):
+    """Cancellation still interrupts immediately: no second read is issued."""
+    provider, coordinator, _ = _five_type_run(tmp_path)
+
+    def fail_then_cancel(object_id):
+        if object_id == "o3":
+            coordinator.cancel()
+            raise httpx.ReadTimeout("the server took too long")
+
+    provider.on_get = fail_then_cancel
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "cancelled", status
+    assert status["outcome"] == "cancelled"
+    # The retry never reached the provider, and no retry is claimed.
+    assert provider.get_calls.count("o3") == 1
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 0
+    assert metrics["retry_recovered"] == 0
+
+
+def test_the_retry_takes_its_own_turn_in_the_pacer(tmp_path):
+    """The retry is paced like any other read, never a free extra read."""
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b", "c"], "T2": []})
+    coordinator, _, _, _ = _coordinator(
+        tmp_path, provider, clock=clock, sleeper=sleeper
+    )
+    # Every content request after the first must wait 10s for its turn.
+    coordinator.pacer.policies[rr.ENDPOINT_CONTENT] = rr.EndpointPolicy(
+        limit=100, window=60.0, min_interval=10.0
+    )
+    _fail_once(provider, "b", httpx.ConnectError("connection reset by peer"))
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    # Four content requests: three objects plus the one retry, in order.
+    assert provider.get_calls == ["a", "b", "b", "c"]
+    # Three waits for four requests: the retry waited its turn (an unpaced
+    # retry would show two waits for four requests).
+    assert sleeper.calls == [pytest.approx(10.0)] * 3
+
+
+def test_a_retried_failure_never_leaks_the_exception_message(tmp_path):
+    """The retry suffix is added to the bounded line, not to its content."""
+    provider, coordinator, _ = _five_type_run(
+        tmp_path, fail_gets={"o3": httpx.ReadTimeout("Bearer super-secret-token")}
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    line = "Capacities object o3 could not be read (ReadTimeout, after 1 retry)"
+    assert line in status["warnings"]
+    assert all("super-secret-token" not in w for w in status["warnings"])
+    document = json.loads(coordinator._job_path().read_text(encoding="utf-8"))
+    assert line in document["job"]["warnings"]
+    assert "super-secret-token" not in json.dumps(document)
+
+
+def test_a_clean_run_attempts_no_retries(tmp_path):
+    """The all-clean control: the retry bookkeeping stays at zero."""
+    provider, coordinator, _ = _five_type_run(tmp_path)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    # One read per object, exactly as before the retry existed.
+    assert sorted(provider.get_calls) == ["o1", "o2", "o3", "o4", "o5"]
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == 0
+    assert metrics["retry_recovered"] == 0
+    assert status["warnings"] == []
+
+
+def test_many_failing_objects_cost_exactly_one_extra_read_each(tmp_path):
+    """One retry per object, never a loop: the extra reads stay bounded."""
+    failing = ["u1", "u2", "u3"]
+    provider, coordinator, _ = _five_type_run(
+        tmp_path,
+        fail_ids={PRIMARY: failing},
+        fail_gets={object_id: httpx.ReadTimeout("slow") for object_id in failing},
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    # Three failing objects, two attempts each — never a per-object retry loop.
+    assert [provider.get_calls.count(object_id) for object_id in failing] == [2, 2, 2]
+    assert provider.get_calls.count("o2") == 1
+    metrics = status["progress"]["metrics"]
+    _assert_metrics_shape(metrics)
+    assert metrics["retried_reads"] == len(failing)
+    assert metrics["retry_recovered"] == 0
+    lines = [w for w in status["warnings"] if w.startswith("Capacities object ")]
+    assert [line.split()[2] for line in lines] == failing
+    assert all("(ReadTimeout, after 1 retry)" in line for line in lines)
