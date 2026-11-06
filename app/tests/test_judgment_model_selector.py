@@ -62,10 +62,12 @@ class TestCanonicalSelector:
             line for line in raw.splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
-        assert remaining == [model], "only the model line may be active"
-        # No parameter line is active in the shipped canonical file.
+        assert remaining == [model, "reasoning_effort: low"], (
+            "only the model line and the reasoning cap may be active"
+        )
+        # Only the reasoning cap is active in the shipped canonical file.
         _model, params = j._parse_judgment_selector(raw, path)
-        assert params == {}
+        assert params == {"reasoning_effort": "low"}
 
     def test_default_path_is_module_relative_not_home_literal(self):
         # Portable per worktree: derived from judgment.py's own location, so a

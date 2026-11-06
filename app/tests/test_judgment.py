@@ -714,6 +714,7 @@ class TestOpenRouterProvider:
 
     def test_m3_payload_explicitly_disables_reasoning(self, monkeypatch):
         import asyncio
+        monkeypatch.setattr(j, "JUDGMENT_PARAMS", {})  # isolate from the shipped selector
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
         monkeypatch.setattr(j, "OPENROUTER_MODEL", "minimax/minimax-m3")
         cap = self._fake_client(
@@ -727,6 +728,7 @@ class TestOpenRouterProvider:
 
     def test_non_m3_payload_does_not_request_reasoning_controls(self, monkeypatch):
         import asyncio
+        monkeypatch.setattr(j, "JUDGMENT_PARAMS", {})  # isolate from the shipped selector
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
         monkeypatch.setattr(j, "OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
         cap = self._fake_client(

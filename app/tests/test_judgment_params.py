@@ -99,11 +99,13 @@ class TestSelectorFormat:
             "max_tokens": 2048
         }
 
-    def test_canonical_selector_ships_no_active_params(self):
+    def test_canonical_selector_ships_only_the_reasoning_cap(self):
+        # 2026-11-06: sequencing took 114-210 s on glm-5.3-flash because
+        # reasoning was unbounded; the shipped selector caps it and nothing else.
         path = Path(j.__file__).resolve().parents[1] / SELECTOR_NAME
         model, params = j._parse_judgment_selector(path.read_text(), path)
         assert j._MODEL_ID_RE.fullmatch(model)
-        assert params == {}
+        assert params == {"reasoning_effort": "low"}
 
 
 # ---------------------------------------------------------------------------

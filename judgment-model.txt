@@ -4,7 +4,7 @@ z-ai/glm-5.3-flash
 # They follow the ACTIVE model above (including a TDTB_JUDGMENT_MODEL env
 # override) and are read once at startup — a change needs tdtb-restart.
 # Unset keys mean no change from today's built-in payload.
-# reasoning_effort: low
+reasoning_effort: low
 # max_tokens: 8192
 # temperature: 0.2
 # top_p: 1
