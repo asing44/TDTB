@@ -30,6 +30,7 @@ import type {
   CapacitiesIntakeSkipped,
   CapacitiesIntakeState,
   CapacitiesLimit,
+  CapacitiesReadSource,
   CapacitiesRefreshCoverage,
   CapacitiesRefreshJob,
   CapacitiesRefreshMode,
@@ -409,14 +410,23 @@ function projectTypeDeclaration(
 }
 
 /** Project the additive ``migrated_from`` marker: absent means the stored file
-    is already schema version 2 (projected as null), and the only value a schema
-    version 2 client can act on is the documented ``1``. */
-function projectMigratedFrom(raw: unknown): number | null {
+    is already the current schema version (projected as null), and the values a
+    current client can act on are the documented ``1`` and ``2``. */
+function projectMigratedFrom(raw: unknown): 1 | 2 | null {
   if (raw === undefined) return null;
-  if (typeof raw !== "number" || raw !== 1) {
+  if (raw !== 1 && raw !== 2) {
     throw capacitiesSettingsError("migrated_from is unsupported");
   }
   return raw;
+}
+
+/** Project the additive ``read_source`` gate. Only the two documented values
+    name a read route; anything else — including the key an older backend
+    omits — falls back to ``rest``, the conservative fail-closed default. This
+    is read-side advisory data: the save body never sends it, so the backend's
+    stored value survives a policy save unchanged. */
+function projectReadSource(raw: unknown): CapacitiesReadSource {
+  return raw === "auto" || raw === "rest" ? raw : "rest";
 }
 
 /** Project the strict local settings response. The backend is fail-closed;
@@ -429,7 +439,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
   if (typeof wire.persisted !== "boolean") {
     throw capacitiesSettingsError("persisted must be a boolean");
   }
-  if (raw.version !== 2) {
+  if (raw.version !== 3) {
     throw capacitiesSettingsError("version is unsupported");
   }
   if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
@@ -510,6 +520,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     availableStructures,
     structureTitles,
     declarationDiagnostics,
+    readSource: projectReadSource(raw.read_source),
     migratedFrom: projectMigratedFrom(wire.migrated_from),
   };
 }

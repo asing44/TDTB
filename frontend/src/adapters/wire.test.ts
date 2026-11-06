@@ -1815,11 +1815,12 @@ describe("duration-memory wire projection (MVP)", () => {
 
 describe("capacities settings schema v2 projection", () => {
   const baseSettings = () => ({
-    version: 2,
+    version: 3,
     revision: 0,
     statuses: { open: ["active"], completed: ["Completed"] },
     types: {},
     native: { deadline_horizon_days: 2 },
+    read_source: "rest",
     excluded: {},
   });
 
@@ -1842,7 +1843,7 @@ describe("capacities settings schema v2 projection", () => {
       },
     });
     expect(projected).toEqual({
-      version: 2,
+      version: 3,
       revision: 4,
       persisted: true,
       statuses: { open: ["In Progress", "active"], completed: ["Completed", "Dropped"] },
@@ -1855,15 +1856,18 @@ describe("capacities settings schema v2 projection", () => {
       availableStructures: [],
       structureTitles: {},
       declarationDiagnostics: [],
-      // An absent `migrated_from` means the stored file is already v2.
+      // An absent `read_source` falls back to the fail-closed REST route.
+      readSource: "rest",
+      // An absent `migrated_from` means the stored file is already current.
       migratedFrom: null,
     });
   });
 
   it("rejects any settings version it cannot interpret", () => {
-    // A stored v1 file is translated in memory and reports `migrated_from: 1`,
-    // so a document that still says version 1 is a contract break, not data.
-    for (const version of [1, 3, "2", null]) {
+    // A stored v1 or v2 file is translated in memory and reports
+    // `migrated_from: 1` or `2`, so a document that still says version 1 or 2
+    // is a contract break, not data.
+    for (const version of [1, 2, 4, "3", null]) {
       expect(() =>
         projectCapacitiesSettings({ persisted: false, settings: { ...baseSettings(), version } }),
       ).toThrow(/version is unsupported/);
@@ -2027,17 +2031,19 @@ describe("capacities settings schema v2 projection", () => {
     expect(projected.migratedFrom).toBeNull();
   });
 
-  it("projects the one migrated_from value a v2 client can act on", () => {
-    const projected = projectCapacitiesSettings({
-      persisted: false,
-      migrated_from: 1,
-      settings: baseSettings(),
-    });
-    expect(projected.migratedFrom).toBe(1);
+  it("projects the migrated_from values a current client can act on", () => {
+    for (const stored of [1, 2] as const) {
+      const projected = projectCapacitiesSettings({
+        persisted: false,
+        migrated_from: stored,
+        settings: baseSettings(),
+      });
+      expect(projected.migratedFrom).toBe(stored);
+    }
   });
 
-  it("throws on any migrated_from value a v2 client cannot act on", () => {
-    for (const bad of [2, 0, "1", null, true]) {
+  it("throws on any migrated_from value a current client cannot act on", () => {
+    for (const bad of [3, 0, "1", null, true]) {
       expect(() =>
         projectCapacitiesSettings({
           persisted: false,
@@ -2047,15 +2053,37 @@ describe("capacities settings schema v2 projection", () => {
       ).toThrow(/migrated_from/);
     }
   });
+
+  it("projects the schema-v3 read_source gate", () => {
+    for (const source of ["auto", "rest"] as const) {
+      const projected = projectCapacitiesSettings({
+        persisted: false,
+        settings: { ...baseSettings(), read_source: source },
+      });
+      expect(projected.readSource).toBe(source);
+    }
+  });
+
+  it("falls back to rest for any read_source value it does not recognize", () => {
+    // `read_source` is read-side advisory data, so an unusable value degrades to
+    // the conservative REST route instead of failing the whole settings read.
+    for (const bad of [undefined, null, "mcp", "AUTO", "", 1, true, {}, []]) {
+      const settings: Record<string, unknown> = { ...baseSettings() };
+      if (bad === undefined) delete settings.read_source;
+      else settings.read_source = bad;
+      expect(projectCapacitiesSettings({ persisted: false, settings }).readSource).toBe("rest");
+    }
+  });
 });
 
 describe("capacities settings type declarations (schema v2)", () => {
   const baseSettings = () => ({
-    version: 2,
+    version: 3,
     revision: 0,
     statuses: { open: ["active"], completed: ["Completed"] },
     types: {},
     native: { deadline_horizon_days: 2 },
+    read_source: "rest",
     excluded: {},
   });
 
@@ -2147,11 +2175,12 @@ describe("capacities settings type declarations (schema v2)", () => {
 
 describe("capacities settings advisory metadata (read-only projections)", () => {
   const baseSettings = () => ({
-    version: 2,
+    version: 3,
     revision: 0,
     statuses: { open: ["active"], completed: ["Completed"] },
     types: {},
     native: { deadline_horizon_days: 2 },
+    read_source: "rest",
     excluded: {},
   });
 
@@ -2422,11 +2451,12 @@ describe("capacities settings schema v2 save body", () => {
     const projected = projectCapacitiesSettings({
       persisted: true,
       settings: {
-        version: 2,
+        version: 3,
         revision: 1,
         statuses: wire.statuses,
         types: wire.types,
         native: wire.native,
+        read_source: "rest",
         excluded: wire.excluded,
       },
     });
@@ -2506,11 +2536,12 @@ describe("capacities settings schema v2 save body", () => {
       persisted: true,
       available_structures: ["Task", "custom-project"],
       settings: {
-        version: 2,
+        version: 3,
         revision: 1,
         statuses: wire.statuses,
         types: wire.types,
         native: wire.native,
+        read_source: "rest",
         excluded: wire.excluded,
       },
     });

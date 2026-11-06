@@ -116,12 +116,23 @@ export interface CapacitiesSettings {
       consumers never handle an absent value, exactly like
       `availableStructures`. */
   declarationDiagnostics: CapacitiesDeclarationDiagnostic[];
-  /** Additive: `1` only when the STORED file is still a schema version 1
+  /** Additive: `1` or `2` only when the STORED file is still an older schema
       document, translated in memory for this read. The next save rewrites it
-      (keeping a `.bak-v1-` sibling), so the panel can say so once. Absent on
-      the wire means the stored file is already v2, which projects as null. */
-  migratedFrom: number | null;
+      (keeping a `.bak-v<stored version>-` sibling), so the panel can say so
+      once. Absent on the wire means the stored file is already current, which
+      projects as null. */
+  migratedFrom: 1 | 2 | null;
+  /** Additive schema-v3 `read_source` gate: `auto` lets the backend pick the
+      Capacities read route, `rest` pins the plain REST provider. The projection
+      always fills it (an unknown or absent value falls back to `rest`); it is
+      optional in the model only so non-wire fixtures need not state it. Never
+      sent on save — the backend preserves the stored value when it is omitted. */
+  readSource?: CapacitiesReadSource;
 }
+
+/** The two documented `read_source` values: automatic route selection, or the
+    plain REST provider. */
+export type CapacitiesReadSource = "auto" | "rest";
 
 /** Full replacement body for the settings save route: the complete editable
     schema-v2 policy. `version` and the new `revision` are server-owned. */

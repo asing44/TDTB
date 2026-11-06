@@ -5,21 +5,34 @@ writes: ``<app home>/state/capacities-settings.json``
 (``app_config.state_dir()``, Capacities-first S1); the state dir is the only
 location.
 
-Schema version 2 — one declaration per structure
-------------------------------------------------
+Schema version 3 — one declaration per structure, plus the read-source gate
+----------------------------------------------------------------------------
 The policy is a single ``types`` document: one entry per Capacities structure
 id, each declaring exactly ONE admission mode, so a structure can no longer
 carry two contradictory declarations.
 
 ::
 
-    { "version": 2, "revision": <int>,
+    { "version": 3, "revision": <int>,
       "statuses": { "open": ["In Progress"], "completed": ["Completed", "Dropped"] },
       "types": { "<structure_id>": { "mode": "off|active|assigned|assignedOn|native",
                                     "property": "<raw property id>" | null,
                                     "statuses": ["<name>"] | null } },
       "native": { "deadline_horizon_days": 14 },
+      "read_source": "auto|rest",
       "excluded": { "<identity>": true } }
+
+``read_source`` is the ONLY enablement gate for the MCP read path (R12/KTD10)
+and is deliberately part of this strict document rather than a separate file:
+
+- ``rest`` (the default, and the value every migrated document gets) is the
+  kill switch. The builder constructs the existing sequential REST-only
+  coordinator: no splitter, no MCP import at read time. A missing document, a
+  migrated document, and an unset key all mean ``rest``.
+- ``auto`` enables the MCP splitter only when a valid machine-local custody
+  file also exists (U6b). The custody file alone never enables MCP, and a
+  missing, invalid, or loosely permissioned custody file still builds
+  REST-only.
 
 Mode semantics (evaluated by :mod:`capacities_assignment`, never here):
 
@@ -71,16 +84,19 @@ Contract
   ``expected_revision`` no longer matches the stored revision raises
   :class:`SettingsConflictError` and leaves the bytes untouched.
 
-Version 1 migration (lazy on read, rewrite on save)
----------------------------------------------------
+Version 1 and version 2 migration (lazy on read, rewrite on save)
+-----------------------------------------------------------------
 Version 1 was extended ADDITIVELY five times (``active_structures``,
 ``native_task_structures``, ``active_statuses``, ``assigned_structures``,
 ``assigned_on_structures``) without a version bump, precisely so an already
-saved file never became unsupported. Version 2 is the first real shape change,
-and it keeps that precedent's promise: an existing version-1 file is NOT
-rejected. :func:`_decode` accepts version 1, translates it in memory to the
-version-2 shape (``revision`` carried verbatim), and the next
-:func:`save_settings` rewrites the file as version 2.
+saved file never became unsupported. Version 2 was the first real shape change
+and version 3 adds the ``read_source`` gate; both keep that precedent's
+promise: an existing version-1 or version-2 file is NOT rejected.
+:func:`_decode` accepts either, translates it in memory to the version-3 shape
+(``revision`` and every stored policy field carried verbatim, ``read_source``
+defaulting to ``rest``), and the next :func:`save_settings` rewrites the file
+as version 3 with a ``.bak-v<stored version>-<timestamp>`` sibling backup of
+the previous bytes.
 
 Translation is generic over the version-1 fields — ``native_task_structures``,
 ``active_structures``, ``assigned_structures``, ``assigned_on_structures``,
@@ -143,14 +159,23 @@ from capacities_assignment import (
 
 STATE_FILENAME = "capacities-settings.json"
 STATE_LOCK_FILENAME = "capacities-settings.lock"
-SCHEMA_VERSION = 2
-#: The previous on-disk shape. Read-only support: accepted by :func:`_decode`
+SCHEMA_VERSION = 3
+#: The previous on-disk shapes. Read-only support: accepted by :func:`_decode`
 #: and translated in memory; never written again.
+SCHEMA_VERSION_V2 = 2
 SCHEMA_VERSION_V1 = 1
 
-#: Sibling backup written before a version-1 file is replaced. The infix keeps
-#: the backup out of every settings reader (only ``STATE_FILENAME`` is read).
+#: The two ``read_source`` modes (R12/KTD10). ``rest`` is the default and the
+#: kill switch: the sequential REST-only read path, no splitter, no MCP import.
+#: ``auto`` enables the MCP splitter only when a valid custody file exists.
+READ_SOURCE_MODES = frozenset({"auto", "rest"})
+DEFAULT_READ_SOURCE = "rest"
+
+#: Sibling backup written before a superseded file is replaced. The infix
+#: names the stored version and keeps the backup out of every settings reader
+#: (only ``STATE_FILENAME`` is read).
 BACKUP_INFIX = ".bak-v1-"
+BACKUP_INFIX_V2 = ".bak-v2-"
 
 #: The five admission modes. ``off`` is the default for an undeclared
 #: structure, so the settings document stays sparse.
@@ -172,6 +197,7 @@ DEFAULT_COMPLETED_STATUSES = frozenset({"Completed", "Dropped"})
 _V2_TOP_KEYS = frozenset(
     {"version", "revision", "statuses", "types", "native", "excluded"}
 )
+_V3_TOP_KEYS = _V2_TOP_KEYS | {"read_source"}
 _V2_STATUS_KEYS = frozenset({"open", "completed"})
 _V2_NATIVE_KEYS = frozenset({"deadline_horizon_days"})
 _V2_TYPE_KEYS = frozenset({"mode", "property", "statuses"})
@@ -335,6 +361,21 @@ def canonical_assignment_declarations(
             raise ValueError(f"{key} has an invalid structure id") from exc
         result[canonical_id] = canonical_property_id(property_id, canonical_id)
     return result
+
+
+def canonical_read_source(value: Any) -> str:
+    """Validate and return a ``read_source`` mode (``"auto"`` or ``"rest"``).
+
+    Strict: only the two documented strings are accepted. Booleans, ``None``,
+    numbers, sequences, and any other string are rejected, so a hand-edited or
+    client-supplied document can never invent a third mode.
+    """
+    if not isinstance(value, str) or value not in READ_SOURCE_MODES:
+        raise ValueError(
+            f"read_source must be one of {sorted(READ_SOURCE_MODES)}, "
+            f"not {value!r}"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -578,7 +619,7 @@ def canonical_type_declarations(value: Any = None) -> dict[str, TypeDeclaration]
 
 @dataclass(frozen=True)
 class CapacitiesSettings:
-    """The full persisted Capacities admission policy (schema version 2).
+    """The full persisted Capacities admission policy (schema version 3).
 
     ``revision`` is server-owned and monotonic; ``excluded`` holds canonical
     stable Capacities identities. Construction is strict: an invalid
@@ -595,6 +636,11 @@ class CapacitiesSettings:
     types: dict[str, TypeDeclaration] = field(default_factory=dict)
     #: The native adaptive window (deadline horizon in days).
     native: NativePolicy = field(default_factory=NativePolicy)
+    #: The MCP enablement gate (``"auto"`` or ``"rest"``). ``"rest"`` is the
+    #: default and the kill switch: the sequential REST-only read path with no
+    #: splitter. ``"auto"`` lets the builder construct the MCP splitter, which
+    #: is still used only when a valid custody file exists (U6b).
+    read_source: str = DEFAULT_READ_SOURCE
     #: Canonical stable identities explicitly excluded from the plan.
     excluded: frozenset[str] = frozenset()
 
@@ -605,6 +651,9 @@ class CapacitiesSettings:
             raise ValueError("statuses must be a StatusVocabulary")
         if not isinstance(self.native, NativePolicy):
             raise ValueError("native must be a NativePolicy")
+        object.__setattr__(
+            self, "read_source", canonical_read_source(self.read_source)
+        )
         object.__setattr__(self, "types", canonical_type_declarations(self.types))
         object.__setattr__(
             self,
@@ -663,6 +712,7 @@ class CapacitiesSettings:
                 for structure_id, declaration in sorted(self.types.items())
             },
             "native": self.native.as_dict(),
+            "read_source": self.read_source,
             "excluded": {identity: True for identity in sorted(self.excluded)},
         }
 
@@ -674,8 +724,8 @@ class SettingsRead:
     settings: CapacitiesSettings
     persisted: bool
     #: The on-disk schema version that produced ``settings`` (``None`` when no
-    #: file existed). ``1`` means the document was translated in memory and
-    #: will be rewritten as version 2 by the next save.
+    #: file existed). ``1`` or ``2`` means the document was translated in
+    #: memory and will be rewritten as version 3 by the next save.
     source_version: int | None = None
 
 
@@ -694,7 +744,7 @@ def lock_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Version 1 -> version 2 translation
+# Version 1 -> version 3 translation
 # ---------------------------------------------------------------------------
 
 
@@ -709,7 +759,7 @@ def migrate_v1_policy(
     assigned_on_structures: Any = None,
     deadline_horizon_days: int = DEFAULT_DEADLINE_HORIZON_DAYS,
 ) -> CapacitiesSettings:
-    """Translate decoded version-1 fields into the version-2 document.
+    """Translate decoded version-1 fields into the version-3 document.
 
     Precedence per structure id, widest evidence last: a declared ``assigned``
     boolean wins (the narrowest explicit gate), then a declared ``assignedOn``
@@ -791,10 +841,11 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _decode(data: Any) -> CapacitiesSettings:
     """Decode a parsed JSON document into strict settings or raise.
 
-    Accepts schema version 2 natively and schema version 1 by translating it
-    in memory. Raises :class:`SettingsFormatError` for any unknown/missing
-    key, strict type violation, unsupported version, unknown admission mode,
-    mode/property contradiction, or invalid exclusion identity.
+    Accepts schema version 3 natively, and versions 2 and 1 by translating
+    them in memory. Raises :class:`SettingsFormatError` for any unknown/
+    missing key, strict type violation, unsupported version, unknown admission
+    mode or ``read_source``, mode/property contradiction, or invalid exclusion
+    identity.
     """
     if not isinstance(data, dict):
         raise SettingsFormatError("capacities settings must be a JSON object")
@@ -805,11 +856,13 @@ def _decode(data: Any) -> CapacitiesSettings:
         )
     if version == SCHEMA_VERSION_V1:
         return _decode_v1(data)
+    if version == SCHEMA_VERSION_V2:
+        return _decode_v2(data)
     if version != SCHEMA_VERSION:
         raise SettingsFormatError(
             f"capacities settings version {version!r} is unsupported"
         )
-    return _decode_v2(data)
+    return _decode_v3(data)
 
 
 def _decode_revision(data: dict[str, Any]) -> int:
@@ -947,28 +1000,65 @@ def _decode_types(data: dict[str, Any]) -> dict[str, TypeDeclaration]:
     return types
 
 
-def _decode_v2(data: dict[str, Any]) -> CapacitiesSettings:
-    """Strict decode of a version-2 document."""
-    if set(data) != _V2_TOP_KEYS:
+def _decode_read_source(data: dict[str, Any]) -> str:
+    """Strict decode of the ``read_source`` gate (``"auto"`` or ``"rest"``)."""
+    value = data["read_source"]
+    if not isinstance(value, str) or value not in READ_SOURCE_MODES:
         raise SettingsFormatError(
-            "capacities settings has unknown or missing top-level keys"
+            f"capacities settings read_source {value!r} is unsupported; "
+            f"expected one of {sorted(READ_SOURCE_MODES)}"
         )
+    return value
+
+
+def _decode_policy(
+    data: dict[str, Any], *, read_source: str
+) -> CapacitiesSettings:
+    """Build the strict model from already top-key-checked policy fields."""
     return CapacitiesSettings(
         revision=_decode_revision(data),
         statuses=_decode_statuses(data),
         types=_decode_types(data),
         native=_decode_native(data),
+        read_source=read_source,
         excluded=_decode_excluded(data),
     )
 
 
+def _decode_v3(data: dict[str, Any]) -> CapacitiesSettings:
+    """Strict decode of a version-3 document."""
+    if set(data) != _V3_TOP_KEYS:
+        raise SettingsFormatError(
+            "capacities settings has unknown or missing top-level keys"
+        )
+    return _decode_policy(data, read_source=_decode_read_source(data))
+
+
+def _decode_v2(data: dict[str, Any]) -> CapacitiesSettings:
+    """Strict decode of a version-2 document, translated to version 3.
+
+    Version-2 strictness is unchanged: unknown or missing keys, strict types,
+    malformed declarations, and invalid exclusion identities all still fail
+    closed. A version-2 document has no ``read_source`` key, so the
+    translation supplies the default ``rest`` — a migrated document stays on
+    the sequential REST-only path until an operator explicitly chooses
+    ``auto``. Every other field is carried verbatim.
+    """
+    if set(data) != _V2_TOP_KEYS:
+        raise SettingsFormatError(
+            "capacities settings has unknown or missing top-level keys"
+        )
+    return _decode_policy(data, read_source=DEFAULT_READ_SOURCE)
+
+
 def _decode_v1(data: dict[str, Any]) -> CapacitiesSettings:
-    """Strict decode of a version-1 document, translated to version 2.
+    """Strict decode of a version-1 document, translated to version 3.
 
     Version-1 strictness is unchanged: unknown or missing keys, strict types,
     malformed declarations, and invalid exclusion identities all still fail
     closed. The native toggles are validated and then collapse into the single
-    ``native`` mode (see :func:`migrate_v1_policy`)."""
+    ``native`` mode (see :func:`migrate_v1_policy`), and ``read_source``
+    defaults to ``rest``."""
     if set(data) - _V1_TOP_KEYS or not _V1_REQUIRED_TOP_KEYS <= set(data):
         raise SettingsFormatError(
             "capacities settings has unknown or missing top-level keys"
@@ -1136,10 +1226,11 @@ def read_settings() -> SettingsRead:
     """Read the app-owned Capacities settings.
 
     A missing file returns the default policy with ``persisted=False`` and
-    creates nothing. A version-1 file is translated in memory to the
-    version-2 shape (``source_version`` reports ``1``); nothing is written by
-    a read. Malformed/unsupported storage raises
-    :class:`SettingsFormatError`; an unreadable file raises
+    creates nothing — including ``read_source="rest"``, the kill switch. A
+    version-1 or version-2 file is translated in memory to the version-3 shape
+    (``source_version`` reports the stored version, ``read_source`` is
+    ``"rest"``); nothing is written by a read. Malformed/unsupported storage
+    raises :class:`SettingsFormatError`; an unreadable file raises
     :class:`SettingsStoreError`.
 
     The state-dir file is the only location.
@@ -1231,21 +1322,27 @@ def _backup_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
-def backup_path(stamp: str | None = None) -> Path:
-    """The sibling backup path for a version-1 migration save."""
+def backup_path(stamp: str | None = None, version: int = SCHEMA_VERSION_V1) -> Path:
+    """The sibling backup path for a superseded-document migration save.
+
+    ``version`` is the STORED version being replaced, so the name records what
+    the bytes were: ``.bak-v1-`` for a version-1 document, ``.bak-v2-`` for a
+    version-2 one."""
     target = settings_path()
+    infix = BACKUP_INFIX if version == SCHEMA_VERSION_V1 else BACKUP_INFIX_V2
     return target.with_name(
-        f"{STATE_FILENAME}{BACKUP_INFIX}{stamp or _backup_stamp()}"
+        f"{STATE_FILENAME}{infix}{stamp or _backup_stamp()}"
     )
 
 
-def _write_v1_backup(raw: bytes) -> Path:
-    """Write and fsync a byte-for-byte backup of the version-1 document.
+def _write_backup(raw: bytes, version: int) -> Path:
+    """Write and fsync a byte-for-byte backup of a superseded document.
 
     Called under the store lock, BEFORE the atomic replace, so the previous
     bytes survive the migration. A failure raises and aborts the save with the
-    original file still in place."""
-    base = backup_path()
+    original file still in place. ``version`` names the stored shape (``1`` →
+    ``.bak-v1-``, ``2`` → ``.bak-v2-``)."""
+    base = backup_path(version=version)
     target = base
     attempt = 0
     while True:
@@ -1271,6 +1368,15 @@ def _write_v1_backup(raw: bytes) -> Path:
     return target
 
 
+def _write_v1_backup(raw: bytes) -> Path:
+    """Byte-for-byte backup of a superseded version-1 document.
+
+    A thin named entry point so the version-1 migration path (and the test
+    that forces a backup failure) keeps addressing it directly.
+    """
+    return _write_backup(raw, SCHEMA_VERSION_V1)
+
+
 def save_settings(
     *,
     expected_revision: int,
@@ -1278,8 +1384,9 @@ def save_settings(
     types: Any = None,
     native: Any = None,
     excluded: Any = (),
+    read_source: Any = None,
 ) -> CapacitiesSettings:
-    """Explicitly replace the whole Capacities admission policy as version 2.
+    """Explicitly replace the whole Capacities admission policy as version 3.
 
     The full editable policy is supplied (full replacement), while ``version``
     and ``revision`` stay server-owned: the saved revision is the stored
@@ -1300,10 +1407,18 @@ def save_settings(
     raises :class:`SettingsFormatError`; both preserve the original bytes. Lock
     and write failures raise and likewise leave the bytes untouched.
 
-    When the file being replaced is a version-1 document, a sibling
-    ``capacities-settings.json.bak-v1-<timestamp>`` backup of the previous
-    bytes is written and fsynced before the replace. A backup failure aborts
-    the save with the original file intact.
+    ``read_source`` is the MCP enablement gate (``"auto"``/``"rest"``).
+    ``None`` — the default — PRESERVES the stored mode (``"rest"`` when no
+    document exists or the stored document predates the key), deliberately
+    unlike the other full-replacement inputs: no current caller expresses the
+    gate, so an unrelated save (an exclusion edit, an undo) must never silently
+    flip a document out of ``auto``. Any other value is validated before file
+    access; an unknown mode raises ``ValueError``.
+
+    When the file being replaced is a superseded document (schema version 1
+    or 2), a sibling ``capacities-settings.json.bak-v<version>-<timestamp>``
+    backup of the previous bytes is written and fsynced before the replace. A
+    backup failure aborts the save with the original file intact.
     """
     if type(expected_revision) is not int or expected_revision < 0:
         raise ValueError("expected_revision must be a nonnegative integer")
@@ -1311,6 +1426,9 @@ def save_settings(
     native_policy = to_native_policy(native)
     declarations = canonical_type_declarations(types)
     identities = frozenset(canonical_exclusion_identity(value) for value in excluded)
+    requested_read_source = (
+        None if read_source is None else canonical_read_source(read_source)
+    )
 
     with _store_lock():
         fh = _acquire_lock_file()
@@ -1323,15 +1441,25 @@ def save_settings(
                     f"(stored revision {stored_revision}, expected "
                     f"{expected_revision})"
                 )
+            if requested_read_source is not None:
+                effective_read_source = requested_read_source
+            elif current is not None:
+                effective_read_source = current.settings.read_source
+            else:
+                effective_read_source = DEFAULT_READ_SOURCE
             saved = CapacitiesSettings(
                 revision=stored_revision + 1,
                 statuses=vocabulary,
                 types=declarations,
                 native=native_policy,
+                read_source=effective_read_source,
                 excluded=identities,
             )
-            if current is not None and current.version == SCHEMA_VERSION_V1:
-                _write_v1_backup(current.raw)
+            if current is not None and current.version < SCHEMA_VERSION:
+                if current.version == SCHEMA_VERSION_V1:
+                    _write_v1_backup(current.raw)
+                else:
+                    _write_backup(current.raw, current.version)
             _atomic_write_json(settings_path(), saved.as_dict())
         finally:
             _release_lock_file(fh)

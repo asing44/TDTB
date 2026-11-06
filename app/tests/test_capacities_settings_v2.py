@@ -110,7 +110,7 @@ class TestLiveVersionOneMigration:
         assert result.persisted is True
         assert result.source_version == 1
         assert result.settings.revision == 44
-        assert result.settings.as_dict()["version"] == 2
+        assert result.settings.as_dict()["version"] == 3
         # The read never writes and the version-1 bytes stay untouched.
         assert _bytes() == before
         assert _backups() == []
@@ -189,10 +189,10 @@ class TestLiveVersionOneMigration:
             excluded=migrated.excluded,
         )
 
-        assert saved.version == 2
+        assert saved.version == 3
         assert saved.revision == 45
         stored = json.loads(_bytes().decode("utf-8"))
-        assert stored["version"] == 2
+        assert stored["version"] == 3
         assert stored["revision"] == 45
         assert stored["types"][ROOT_TASK] == {
             "mode": "native",
@@ -225,9 +225,9 @@ class TestLiveVersionOneMigration:
 
         assert second.as_dict() == dict(first.as_dict(), revision=second.revision)
         reread = cs.read_settings()
-        assert reread.source_version == 2
+        assert reread.source_version == 3
         assert reread.settings == second
-        # Only the revision moved between the two version-2 documents.
+        # Only the revision moved between the two version-3 documents.
         stored = json.loads(_bytes())
         assert dict(stored, revision=0) == dict(json.loads(first_bytes), revision=0)
         assert stored["revision"] == second.revision
@@ -245,7 +245,7 @@ class TestGenericVersionOneTranslation:
         settings = cs.read_settings().settings
 
         assert settings.as_dict() == {
-            "version": 2,
+            "version": 3,
             "revision": 0,
             "statuses": {
                 "open": ["active"],
@@ -255,6 +255,7 @@ class TestGenericVersionOneTranslation:
                 ROOT_TASK: {"mode": "native", "property": None, "statuses": []}
             },
             "native": {"deadline_horizon_days": 2},
+            "read_source": "rest",
             "excluded": {},
         }
 
@@ -676,7 +677,7 @@ class TestRoundTripStability:
         assert json.loads(first_bytes) == saved.as_dict()
 
         reread = cs.read_settings()
-        assert reread.source_version == 2
+        assert reread.source_version == 3
         resaved = cs.save_settings(
             expected_revision=reread.settings.revision,
             statuses=reread.settings.statuses,
