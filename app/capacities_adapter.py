@@ -30,6 +30,7 @@ from typing import Any, Callable, Protocol, Sequence
 import uuid
 
 from capacities_assignment import (
+    MODE_ACTIVE,
     MODE_ASSIGNED,
     MODE_ASSIGNED_ON,
     AssignmentCandidate,
@@ -1213,19 +1214,29 @@ def drop_tally_warning(label: str, counts: Mapping[str, int]) -> str:
     )
 
 
-def review_tally_warning(label: str, counts: Mapping[str, int]) -> str:
+def review_tally_warning(
+    label: str, counts: Mapping[str, int], *, dropped: bool = False
+) -> str:
     """One aggregated, bounded, content-free line for one type's review rows.
 
     Shares the drop tally's machinery (``_ordered_reason_counts`` /
-    ``_reason_listing``) but states the opposite outcome: these objects were
-    KEPT as unassigned review candidates, never dropped. The empty string
-    means nothing was counted. Counts and closed reason codes only — never a
-    title, an id, or a property value.
+    ``_reason_listing``) but states the review outcome rather than the drop
+    reason: these objects were KEPT as unassigned review candidates, never
+    dropped. ``dropped`` states the other review outcome — an undecidable row
+    a status-only type could not admit at all, so it was dropped from the
+    candidate pool while the same reason code still reaches the operator. The
+    empty string means nothing was counted. Counts and closed reason codes
+    only — never a title, an id, or a property value.
     """
     total = sum(count for _, count in _ordered_reason_counts(counts))
     if total < 1:
         return ""
     noun = "object" if total == 1 else "objects"
+    if dropped:
+        return (
+            f"Capacities type {label!r}: {total} {noun} not admitted — "
+            f"{_reason_listing(counts)}; set the source status to admit it"
+        )
     return (
         f"Capacities type {label!r}: {total} {noun} kept as unassigned review "
         f"candidate(s) — {_reason_listing(counts)}"
@@ -1756,11 +1767,16 @@ class CapacitiesAdapter:
         #: enumeration gate skipped before any listing.
         self._drop_counts: dict[str, dict[str, int]] = {}
         self._structures_not_read: dict[str, str] = {}
-        #: Per-read REVIEW accounting: objects KEPT as unassigned review
-        #: candidates because a mapped status could not be decided. Reset by
-        #: every projection entry point, so a type reports its undecidable
-        #: vocabulary once per read instead of once per row.
+        #: Per-read REVIEW accounting: objects needing operator review because
+        #: a mapped status could not be decided. Reset by every projection
+        #: entry point, so a type reports its undecidable vocabulary once per
+        #: read instead of once per row.
         self._review_counts: dict[str, dict[str, int]] = {}
+        #: Structures whose review note came from a row DROPPED because a
+        #: status-only type could not decide its status, so the same tally is
+        #: reported as "not admitted" instead of "kept as unassigned review
+        #: candidate". Reset with ``_review_counts``.
+        self._review_dropped: set[str] = set()
         #: Per-read resolved status vocabularies (structure id -> vocabulary),
         #: reset by every projection entry point. The live label set and the
         #: requested open names cannot change inside one read.
@@ -2391,6 +2407,21 @@ class CapacitiesAdapter:
         # is kept as an unassigned review candidate.
         vocabulary = self._vocabulary(mapping) if mapping.open_status_property else None
         declared_mode = self.config.assignment_settings.mode_of(mapping.structure_id)
+        # A status-only (``active``) type has exactly one admission signal: the
+        # configured status names, resolved against the live label set. When
+        # that vocabulary RESOLVES, a row that carries no decidable option can
+        # never be admitted by this type, so it is not an unassigned candidate
+        # either — it is dropped and reported for review (``status_unknown``).
+        # The resolution needs the version-2 settings document, which is the
+        # per-type declaration; the legacy mapping carrier keeps its shipped
+        # review-candidate behaviour unchanged.
+        status_only_undecidable = (
+            declared_mode == MODE_ACTIVE
+            and source_assigned is not True
+            and vocabulary is not None
+            and vocabulary.resolvable
+            and callable(getattr(self.config.settings, "open_statuses_for", None))
+        )
         closed_status_names = (
             _completed_status_names(self.config.settings)
             if declared_mode in _ASSIGNED_STATUS_MODES
@@ -2698,6 +2729,21 @@ class CapacitiesAdapter:
                 # unassigned either way.
                 if decision.provenance.exclusion_matched:
                     self._note_drop(mapping.structure_id, DROP_REASON_EXCLUDED)
+                    return None
+                if status_only_undecidable:
+                    # A status-only type with a resolved vocabulary cannot
+                    # admit this row, so keeping it would put an undecidable
+                    # object on the unassigned pool that an "Okay to plan all"
+                    # confirm promotes into the day's plan. It leaves the
+                    # candidate surface under the evaluator's own drop reason
+                    # and stays on the review surface as ``status_unknown`` so
+                    # the operator can give it a status.
+                    self._note_review_dropped(
+                        mapping.structure_id, REVIEW_REASON_STATUS_UNKNOWN
+                    )
+                    self._note_drop(
+                        mapping.structure_id, _decision_drop_reason(decision)
+                    )
                     return None
                 assigned = False
             elif not decision.eligible:
@@ -3032,6 +3078,7 @@ class CapacitiesAdapter:
         self._assigned_on_matched = set()
         self._drop_counts = {}
         self._review_counts = {}
+        self._review_dropped = set()
         self._vocabularies = {}
         self._structures_not_read = {}
         items, warnings, evaluated, malformed, skipped = self._project_objects(
@@ -3172,11 +3219,23 @@ class CapacitiesAdapter:
         return vocabulary
 
     def _note_review(self, structure_id: str, reason: str) -> None:
-        """Count one row KEPT as an unassigned review candidate."""
+        """Count one row needing operator review under its reason code.
+
+        A row reaches this tally either because it was KEPT as an unassigned
+        review candidate (an unresolvable type vocabulary) or because a
+        status-only type could not decide it and therefore dropped it from the
+        candidate pool; ``_note_review_dropped`` marks the second outcome.
+        """
         if not structure_id:
             return
         bucket = self._review_counts.setdefault(structure_id, {})
         bucket[reason] = bucket.get(reason, 0) + 1
+
+    def _note_review_dropped(self, structure_id: str, reason: str) -> None:
+        """Count one row reviewed AND dropped by a status-only type."""
+        self._note_review(structure_id, reason)
+        if structure_id:
+            self._review_dropped.add(structure_id)
 
     def _review_tally(self) -> dict[str, dict[str, int]]:
         """Deterministic snapshot of this read's per-structure review counts."""
@@ -3194,6 +3253,7 @@ class CapacitiesAdapter:
             review_tally_warning(
                 structure_label(self._structure_defs, structure_id),
                 self._review_counts[structure_id],
+                dropped=structure_id in self._review_dropped,
             )
             for structure_id in sorted(self._review_counts)
         ]
@@ -3290,6 +3350,7 @@ class CapacitiesAdapter:
         self._assigned_on_matched = set()
         self._drop_counts = {}
         self._review_counts = {}
+        self._review_dropped = set()
         self._vocabularies = {}
         self._structures_not_read = {}
         all_items: list[dict[str, Any]] = []
