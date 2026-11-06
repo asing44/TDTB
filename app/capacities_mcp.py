@@ -204,12 +204,6 @@ def install_secret_free_logging() -> None:
     if not any(isinstance(item, _SecretFreeHandler) for item in mcp_logger.handlers):
         mcp_logger.addHandler(_SecretFreeHandler())
     mcp_logger.propagate = False
-    for name in ("mcp", "mcp.client.auth"):
-        for handler in logging.getLogger(name).handlers:
-            if not any(
-                isinstance(item, SecretFreeLogFilter) for item in handler.filters
-            ):
-                handler.addFilter(secret_free)
     for name in ("httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
 

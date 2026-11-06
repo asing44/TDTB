@@ -461,7 +461,19 @@ def test_no_tools_listed_fails_verification(tmp_path):
 # Log hygiene (KTD9)
 # ---------------------------------------------------------------------------
 
-def test_library_oauth_errors_never_reach_the_output(caplog):
+@pytest.fixture
+def sanitized_caplog(caplog):
+    """caplog with the production filter on its handler, for this test only."""
+    secret_free = cmz.SecretFreeLogFilter()
+    caplog.handler.addFilter(secret_free)
+    try:
+        yield caplog
+    finally:
+        caplog.handler.removeFilter(secret_free)
+
+
+def test_library_oauth_errors_never_reach_the_output(sanitized_caplog):
+    caplog = sanitized_caplog
     cmz.install_secret_free_logging()
     logger = logging.getLogger("mcp.client.auth.oauth2")
     handler = next(
@@ -523,10 +535,16 @@ def test_logging_installation_is_quiet_and_filtered():
         assert logger.level == logging.WARNING
         assert any(isinstance(item, cmz.SecretFreeLogFilter) for item in logger.filters)
     handlers = logging.getLogger("mcp").handlers
-    assert handlers
-    assert all(
-        any(isinstance(item, cmz.SecretFreeLogFilter) for item in handler.filters)
-        for handler in handlers
+    ours = [item for item in handlers if isinstance(item, cmz._SecretFreeHandler)]
+    assert len(ours) == 1
+    assert any(isinstance(item, cmz.SecretFreeLogFilter) for item in ours[0].filters)
+    # A foreign handler (a host process, a test harness) is never modified: a
+    # filter on a handler it shares with other loggers would rewrite their output.
+    foreign = [item for item in handlers if item not in ours]
+    assert not any(
+        isinstance(flt, cmz.SecretFreeLogFilter)
+        for item in foreign
+        for flt in item.filters
     )
     # Installing twice does not stack a second handler.
     cmz.install_secret_free_logging()

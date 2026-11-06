@@ -195,15 +195,6 @@ def install_secret_free_logging() -> None:
     if not any(isinstance(item, _SecretFreeHandler) for item in mcp_logger.handlers):
         mcp_logger.addHandler(_SecretFreeHandler())
     mcp_logger.propagate = False
-    # Anything else already attached to these loggers (a host process, a test
-    # harness) also gets the filter, so no handler can render a traceback or a
-    # token-shaped message for a record this module owns the sanitation of.
-    for name in ("mcp", "mcp.client.auth"):
-        for handler in logging.getLogger(name).handlers:
-            if not any(
-                isinstance(item, SecretFreeLogFilter) for item in handler.filters
-            ):
-                handler.addFilter(secret_free)
     for name in ("httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
