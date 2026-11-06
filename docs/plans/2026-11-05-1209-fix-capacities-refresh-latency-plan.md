@@ -109,12 +109,12 @@ This plan covers Capacities refresh latency only. The wider "additional improvem
 
 ### Dependencies / Assumptions
 
-- The real Capacities rate limit is per token, per endpoint, per time window, and the API publishes it in a single `RateLimit` header of the form `limit=5, remaining=4, reset=58`. The app parses none of that today; it reads `Retry-After`, `x-ratelimit-remaining`, and `x-ratelimit-reset` instead, so on current evidence the real per-endpoint budget is unknown and the 30-per-60-seconds ceiling is an assumption.
-- Unverified: whether the content endpoint's quota is high enough that pacing alone reaches 5 minutes. The operator believes it is 30 per minute, in which case it is not. R4 measures it.
+- The Capacities rate limit is per token, per endpoint, per time window. `GET /object` is documented at 30 requests per 60 seconds; the API also sends `RateLimit` and `RateLimit-Policy` headers, whose values the app's parser does not yet read. Because the documented quota equals the fallback ceiling, reading them changes nothing today.
+- A separate endpoint, `GET /object/markdown`, has its own 30-per-60-seconds bucket and returns an object's properties as YAML frontmatter. Reading through it in parallel would double throughput, but it would need a second property parser and puts R5 at risk, so it is out of scope here.
 
 ### Outstanding Questions
 
-- Deferred to Planning: what the content endpoint's actual per-endpoint quota is. The operator believes it is the current 30 reads per minute, which matches the observed rate of about 32 per minute. If so, pacing alone cannot reach 5 minutes: a cold run of 390 reads needs about 13 minutes, and 5 minutes covers about 150 reads. R1 still records the observed limit at runtime and falls back to the current ceiling, so one pacer works at either quota, but R6 to R9 would then be the expected path, not a contingency.
+- Resolved: the content endpoint's quota is 30 requests per 60 seconds, documented in the API's OpenAPI specification (`GET /object`) and matched by a live cold run at 31.6 reads per minute with no 429. Pacing alone cannot bring a 390-read run under 5 minutes, so per-type publishing (R6 to R9) is the path that delivers the target.
 - Deferred to Planning: the priority order in which types are read and published (KTD7). The operator preps every type, so the default is smallest first and the order is adjustable. At the believed 30 reads per minute, 5 minutes freshens about 150 objects (the four smallest types, 97 objects, and part of the fifth); the largest type finishes only when the whole run does, at about 13 minutes.
 - Deferred to Planning: R2 is guaranteed only while responses carry a usable rate-limit header; with none, the fallback ceiling can still meet a lower unknown quota, and any 429 then is handled as today.
 - Deferred to Planning: R6 reverses the current "complete scope or nothing" install contract, so the module contract, store invariants, and the failure wording are rewritten in U5 and U6.
