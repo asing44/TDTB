@@ -87,6 +87,26 @@ class CapacitiesRateLimited(RuntimeError):
         self.retry_after = retry_after
 
 
+class CapacitiesReadSourceUnavailable(RuntimeError):
+    """An optional content-read source is unusable for the rest of this run.
+
+    Modelled separately from :class:`CapacitiesRateLimited` because it is
+    **source loss, not a read outcome**: the read is requeued to the remaining
+    source, no object is marked unreadable, no transient retry is consumed, and
+    the run continues (R6/R13). The message is empty or a fixed code-authored
+    literal: a credential, a response body, or library exception text could
+    otherwise reach a log, a job document, or a warning (R8).
+
+    ``retry_after`` carries the transport's ``Retry-After`` value when the
+    provider supplied one on a throttle; it is pacing metadata only, and it is
+    ``None`` for every other cause.
+    """
+
+    def __init__(self, message: str = "", *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class CapacitiesProvider(Protocol):
     """Small provider seam used by both the REST client and deterministic fakes."""
 
