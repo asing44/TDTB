@@ -530,6 +530,12 @@ async def open_mcp_session(
         yield session
 
 
+def discard_previous_custody(storage: capacities_mcp_auth.FileTokenStorage) -> None:
+    """Remove a previous custody document so consent starts from a clean slate."""
+    with contextlib.suppress(AttributeError, FileNotFoundError):
+        storage.path.unlink()
+
+
 async def run_consent(
     storage: capacities_mcp_auth.FileTokenStorage,
     callback: LoopbackConsentServer,
@@ -693,6 +699,9 @@ def main(
     custody = storage if storage is not None else capacities_mcp_auth.FileTokenStorage(
         args.custody
     )
+    # A re-consent registers a fresh client: stored client_info pins the old
+    # ephemeral redirect URI, which the authorization server would reject.
+    discard_previous_custody(custody)
     callback = LoopbackConsentServer(timeout=args.callback_timeout, out=stream)
     try:
         callback.start()

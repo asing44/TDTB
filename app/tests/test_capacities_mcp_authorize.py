@@ -578,3 +578,14 @@ def test_importing_the_server_never_loads_the_authorize_cli(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
     assert completed.stdout.strip().splitlines()[-1] == "False"
+
+
+def test_reconsent_discards_previous_custody(tmp_path):
+    path = tmp_path / "custody" / "oauth.json"
+    path.parent.mkdir(mode=0o700)
+    path.write_text("{}")
+    path.chmod(0o600)
+    storage = cmz.capacities_mcp_auth.FileTokenStorage(path)
+    cmz.discard_previous_custody(storage)
+    assert not path.exists()
+    cmz.discard_previous_custody(storage)  # already gone: no error
