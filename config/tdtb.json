@@ -446,13 +446,6 @@
       "Active": true
     },
     {
-      "ID": "ma04",
-      "Idea": "Cook or eat something you've never tried",
-      "Category": "novelty",
-      "Effort": "med",
-      "Active": true
-    },
-    {
       "ID": "ma05",
       "Idea": "Strike up a conversation with a stranger",
       "Category": "courage",
@@ -461,7 +454,7 @@
     },
     {
       "ID": "ma06",
-      "Idea": "Sit outside, no phone, for 15 minutes",
+      "Idea": "Sit outside, no phone, for 5 minutes",
       "Category": "stillness",
       "Effort": "low",
       "Active": true
@@ -477,20 +470,6 @@
       "ID": "ma08",
       "Idea": "Sketch or photograph something ordinary",
       "Category": "creative",
-      "Effort": "low",
-      "Active": true
-    },
-    {
-      "ID": "ma11",
-      "Idea": "Write a handwritten note to someone and send it",
-      "Category": "social",
-      "Effort": "low",
-      "Active": true
-    },
-    {
-      "ID": "ma12",
-      "Idea": "Practice one new skill move for 15 minutes",
-      "Category": "growth",
       "Effort": "low",
       "Active": true
     },
