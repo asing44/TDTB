@@ -111,9 +111,10 @@ METADATA_TIMEOUT = 15.0
 ENTITY_REFERENCE_KEYS = ("entity", "entities")
 
 #: Top-level MCP keys that survive normalization because the adapter reads
-#: them. ``title`` is the title-property fallback; ``tags``/``blocks`` are
-#: REST-only in the measured payloads, so they are never present here and stay
-#: unlisted rather than fabricated.
+#: them. ``title`` is the title-property fallback. In the measured U0 payloads
+#: REST carries ``blocks`` (a skipped-object hint only) and no flat ``tags``,
+#: while MCP carries a flat ``tags`` name list REST never sends; dropping it
+#: keeps the adapter's tag handling identical to a REST read.
 PASSTHROUGH_KEYS = ("title",)
 
 _REDACTED = "<redacted>"
@@ -575,6 +576,9 @@ class McpProvider:
         the portal is started lazily, after this check.
         """
         self._discard_everything()
+        # One transient failure to fetch the OAuth metadata must cost one run,
+        # not every later run until the server restarts.
+        self._metadata_error = None
         install_secret_free_logging()
         self._require_custody()
 
