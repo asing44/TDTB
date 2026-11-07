@@ -520,6 +520,36 @@ def test_metadata_unavailable_is_source_loss_and_is_not_refetched(tmp_path):
     assert factory.opens == 0
 
 
+def test_a_metadata_failure_costs_one_run_not_the_whole_process(tmp_path):
+    """Review finding: the next run's begin_run fetches the metadata afresh."""
+    calls = {"count": 0}
+
+    def loader():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise httpx.ConnectError("unreachable")
+        return METADATA
+
+    factory = FakeFactory(
+        FakeSessionContext(FakeSession(result=structured(mcp_payload()))),
+    )
+    provider = cpm.McpProvider(
+        SPACE_ID, _storage(tmp_path), session_factory=factory, metadata_loader=loader
+    )
+    try:
+        provider.begin_run()
+        with pytest.raises(adapter.CapacitiesReadSourceUnavailable):
+            provider.get_object("obj-1", structure_id="Project")
+        provider.end_run()
+
+        provider.begin_run()
+        value = provider.get_object("obj-1", structure_id="Project")
+    finally:
+        provider.close()
+    assert value["id"] == "obj-1"
+    assert calls["count"] == 2
+
+
 def test_missing_client_info_refuses_before_any_request(tmp_path):
     storage = _storage(tmp_path, client_info=False)
     factory = FakeFactory()

@@ -1587,9 +1587,13 @@ def _mcp_splitter_factory(
     No network happens at build: ``McpProvider`` opens nothing until
     ``begin_run``, and the custody read is one local file.
     """
-    import capacities_mcp
-    import capacities_mcp_auth
-    import capacities_read_source
+    try:
+        import capacities_mcp
+        import capacities_mcp_auth
+        import capacities_read_source
+    except ImportError:
+        # The MCP client library is missing: REST-only, never a build failure.
+        return None
 
     storage = capacities_mcp_auth.FileTokenStorage(cfg.mcp_token_path)
     if not storage.is_configured() and not os.path.lexists(storage.path):

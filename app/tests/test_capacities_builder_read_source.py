@@ -414,3 +414,19 @@ def test_auto_publishes_the_same_rows_as_rest_through_a_cold_refresh(tmp_path):
     ]
     _no_secret(rest_status)
     _no_secret(auto_status)
+
+
+def test_a_missing_mcp_library_builds_rest_only(monkeypatch, tmp_path):
+    """Review finding: an import failure never raises out of the build."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "capacities_mcp":
+            raise ImportError("simulated missing mcp library")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    cfg = cb.CapacitiesBuilderConfig(mcp_token_path=tmp_path / "custody" / "oauth.json")
+    assert cb._mcp_splitter_factory(object(), cfg, object()) is None
