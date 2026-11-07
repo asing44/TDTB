@@ -249,7 +249,9 @@ class EndpointPolicy:
 #: sits at roughly 60% of it, leaving headroom for latency jitter and a retry
 #: burst. It is named so the live cold-run gate (U8) can retune it once from
 #: measured evidence without hunting for a literal.
-MCP_CONTENT_LIMIT = 35
+# Measured ceiling is ~58-60 per 60 s (U0). The first live Rescan at 35 read
+# 204 objects over MCP in 315 s with no throttle; 48 keeps ~20% headroom.
+MCP_CONTENT_LIMIT = 48
 MCP_CONTENT_WINDOW_SECONDS = 60.0
 
 DEFAULT_POLICIES: dict[str, EndpointPolicy] = {

@@ -3014,12 +3014,13 @@ def test_ae5_the_mcp_budget_never_touches_the_rest_content_budget():
     rest = _paged_provider(objects={PRIMARY: ["a"]})
     content_reader, mcp_pace = rr.paced_content_callables(pacer, rest)
 
-    for _ in range(40):
+    reads = rr.MCP_CONTENT_LIMIT + 5
+    for _ in range(reads):
         mcp_pace()
 
-    # 40 MCP reads fit five 35-per-60 s windows: one wait at the 36th read.
+    # One read past the window budget: a single wait, then the overflow reads.
     assert sleeper.calls == [rr.MCP_CONTENT_WINDOW_SECONDS]
-    assert len(pacer._times[rr.ENDPOINT_MCP_CONTENT]) == 40 - rr.MCP_CONTENT_LIMIT
+    assert len(pacer._times[rr.ENDPOINT_MCP_CONTENT]) == reads - rr.MCP_CONTENT_LIMIT
     assert not pacer._times.get(rr.ENDPOINT_CONTENT)
     assert rest.get_calls == []
 
