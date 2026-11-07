@@ -478,3 +478,17 @@ Automated tests use injected `Clock`/`Sleeper`, `tmp_path`, and a fake `session_
   - triggering the U8 Rescan, the REST-only comparison run, and the fallback Refresh;
   - renaming the custody file for the fallback check.
 - **Agents may do:** draft U0 scratch scripts outside the repo, run U1-U7 build dispatches (U4a then U4b) in a TDTB worktree under `./.worktrees`, and read U8 job documents.
+
+## U8 live results (2026-11-06, operator-attended)
+
+| Run | read_source | mcp_content budget | Read phase | REST / MCP reads | rate_limited | Fell back |
+|---|---|---|---|---|---|---|
+| Baseline (REST only, 2026-11-05) | rest | n/a | 790 s | 390 / 0 | 0 | n/a |
+| Gen 85, Rescan | split | 35/min | 369 s | 186 / 204 | 0 | no |
+| Gen 92, Rescan | split | 48/min | 371 s | 198 / 192 | 0 | no |
+
+- Throughput is flat at about 63 reads/min in both split runs, so raising the MCP budget from 35 to 48 changed nothing: the budget was not the binding constraint. Per-type rates vary (RootTask about 56/min, Purchase about 89/min), so MCP latency or payload size, not pacing, sets the pace on heavier types.
+- The ~4.4 min estimate assumed MCP sustaining its measured ceiling (~58/min) throughout; observed MCP is about 31/min on average. Result: 6.2 min, 53% faster than REST-only, short of the 4-5 min target.
+- Parity so far: gen 92 has the same 390 member ids as gen 85 and identical per-type drop tallies. A REST-only diff has not been run.
+- Remaining levers: bounded MCP concurrency (two in-flight MCP reads; needs a decision, earlier declined) or investigating per-read MCP latency under load.
+- Still open: 24 h idle and post-reboot refresh survival (`s1_headless.py --idle-check`).
