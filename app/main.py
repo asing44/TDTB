@@ -5862,6 +5862,23 @@ def create_app() -> FastAPI:
         for row in digest["assigned"]:
             duration_memory.apply_remembered_overlay(row, remembered)
 
+        # A1 untimed lane, read-side parity (A3): stamp the SAME verdict
+        # ``_canonicalize_route_assigned`` applies on /sequence, so the cockpit
+        # can say ``Auto all-day`` before the row is ever sequenced. Display
+        # metadata ONLY — ``blocks`` is deliberately left alone here (the
+        # server re-applies the rule on /sequence and owns the effective
+        # all-day state), and the client strips these keys on every POST
+        # (frontend ``withoutUntimedAnnotations``). Runs after the duration
+        # resolution above so the classifier reads the same blocks/minutes
+        # values the persisted digest index carries. A row the classifier
+        # calls timed gets neither key.
+        for row in digest["assigned"]:
+            verdict = untimed_lane.classify(row, config)
+            if not verdict["untimed"]:
+                continue
+            row["untimed_auto"] = True
+            row["untimed_reason"] = verdict["reason"]
+
         # micro_adventure side-load (Locked #7 / build_commit_body parity):
         # today's exact-date run-state selection merges into config so a
         # selected Live micro-adventure reaches the /commit Live→Todoist

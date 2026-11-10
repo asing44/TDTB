@@ -1854,6 +1854,119 @@ class TestUntimedLaneCanonicalization:
         assert row["untimed_auto"] is True
 
 
+# ---------------------------------------------------------------------------
+# A1 untimed lane, read side (A3): GET /plan-inputs stamps the SAME verdict
+# ``_canonicalize_route_assigned`` applies on /sequence, so the cockpit can
+# say "Auto all-day" before any sequencing call. Display-only: the read side
+# leaves ``blocks`` alone (the server re-applies the rule on /sequence) and a
+# row the classifier calls timed keeps neither key.
+# ---------------------------------------------------------------------------
+
+_PI_UNTIMED_CONFIG = """\
+---
+description: test config
+last_updated: 2026-07-01
+---
+
+# TDTB Bridger Config
+
+## Defaults
+
+| Key | Value    |
+| --- | -------- |
+| eod | 11:45 PM |
+"""
+
+#: The operator's off switch, set flat-dotted exactly as the config note
+#: carries it (``_expand_dot_notation`` mirrors it into the nested view too).
+_PI_UNTIMED_OFF_CONFIG = _PI_UNTIMED_CONFIG.replace(
+    "| eod | 11:45 PM |",
+    "| eod | 11:45 PM |\n| untimed_lane.enabled | false |",
+)
+
+UNTIMED_CHECKIN = "Meegy couch inspo texts"
+UNTIMED_TIMED = "Standup with the team"
+UNTIMED_LONG = "Write the quarterly report"
+
+
+class _UntimedTodoist:
+    """Read-only Todoist stand-in: three assigned rows differing only in the
+    two axes the untimed lane reads — due time and native duration."""
+
+    def get_filter_tasks(self, query, limit=None):
+        import external_sources as ext
+
+        if query != ext.ASSIGNED_QUERY_FALLBACK:
+            return []
+        return [
+            # A date-only due with a 10-minute native duration: a check-in.
+            {"id": "u-check", "content": UNTIMED_CHECKIN, "priority": 2,
+             "labels": [], "due": {"date": "2026-11-09"},
+             "duration": {"unit": "minute", "amount": 10}},
+            # A due TIME is an explicit placement: stays timed.
+            {"id": "u-timed", "content": UNTIMED_TIMED, "priority": 2,
+             "labels": [], "due": {"date": "2026-11-09T09:00:00"},
+             "duration": {"unit": "minute", "amount": 10}},
+            # Date-only but a real hour of work: stays timed.
+            {"id": "u-long", "content": UNTIMED_LONG, "priority": 2,
+             "labels": [], "due": {"date": "2026-11-09"},
+             "duration": {"unit": "minute", "amount": 60}},
+        ]
+
+    def close(self):
+        pass
+
+
+def _seed_untimed(client, config_markdown: str = _PI_UNTIMED_CONFIG) -> None:
+    """Live source mode with the three fixture rows served through the read
+    seam, so /plan-inputs assembles a real digest."""
+    install_config_markdown(config_markdown)
+    path = app_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
+                    encoding="utf-8")
+    client.app.state.build_read_clients = lambda cfg: (
+        _UntimedTodoist(), _DmStore(),
+    )
+
+
+class TestPlanInputsUntimedAnnotation:
+    """GET /plan-inputs carries the A1 annotation the cockpit reads."""
+
+    def _rows(self, client) -> dict[str, dict]:
+        body = client.get("/plan-inputs").json()
+        return {i["name"]: i for i in body["digest"]["assigned"]}
+
+    def test_date_only_check_in_is_annotated(self, client):
+        _seed_untimed(client)
+        row = self._rows(client)[UNTIMED_CHECKIN]
+        assert row["untimed_auto"] is True
+        assert row["untimed_reason"]
+        # Display-only: the read side never rewrites the row's duration.
+        assert row["blocks"] != 0
+
+    def test_row_with_a_due_time_is_not_annotated(self, client):
+        _seed_untimed(client)
+        row = self._rows(client)[UNTIMED_TIMED]
+        assert "untimed_auto" not in row
+        assert "untimed_reason" not in row
+
+    def test_long_non_check_in_row_is_not_annotated(self, client):
+        _seed_untimed(client)
+        row = self._rows(client)[UNTIMED_LONG]
+        assert "untimed_auto" not in row
+        assert "untimed_reason" not in row
+
+    def test_disabled_config_annotates_nothing(self, client):
+        _seed_untimed(client, _PI_UNTIMED_OFF_CONFIG)
+        rows = self._rows(client)
+        # The check-in row would be annotated with the lane on (the sibling
+        # test above), so its silence proves the config reached the classifier.
+        assert rows[UNTIMED_CHECKIN]["blocks"] != 0
+        assert "untimed_auto" not in rows[UNTIMED_CHECKIN]
+        assert "untimed_reason" not in rows[UNTIMED_CHECKIN]
+
+
 class TestCommitNativeProtection:
     def _seed_recurring_todoist(self, today):
         rs.write_digest_index(today, [{
