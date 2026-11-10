@@ -5865,9 +5865,9 @@ def create_app() -> FastAPI:
         # A1 untimed lane, read-side parity (A3): stamp the SAME verdict
         # ``_canonicalize_route_assigned`` applies on /sequence, so the cockpit
         # can say ``Auto all-day`` before the row is ever sequenced. Display
-        # metadata ONLY — ``blocks`` is deliberately left alone here (the
-        # server re-applies the rule on /sequence and owns the effective
-        # all-day state), and the client strips these keys on every POST
+        # Rows start at ``blocks = 0`` (native value kept) so the cockpit shows
+        # the all-day state; setting a duration is the override. The server
+        # re-applies the rule on /sequence, and the client strips these keys on every POST
         # (frontend ``withoutUntimedAnnotations``). Runs after the duration
         # resolution above so the classifier reads the same blocks/minutes
         # values the persisted digest index carries. A row the classifier
@@ -5876,6 +5876,9 @@ def create_app() -> FastAPI:
             verdict = untimed_lane.classify(row, config)
             if not verdict["untimed"]:
                 continue
+            if row.get("blocks") is not None and "native_blocks" not in row:
+                row["native_blocks"] = row["blocks"]
+            row["blocks"] = 0
             row["untimed_auto"] = True
             row["untimed_reason"] = verdict["reason"]
 

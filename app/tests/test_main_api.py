@@ -1942,8 +1942,9 @@ class TestPlanInputsUntimedAnnotation:
         row = self._rows(client)[UNTIMED_CHECKIN]
         assert row["untimed_auto"] is True
         assert row["untimed_reason"]
-        # Display-only: the read side never rewrites the row's duration.
-        assert row["blocks"] != 0
+        # Starts all-day so the cockpit shows "Auto all-day"; native kept.
+        assert row["blocks"] == 0
+        assert row["native_blocks"] > 0
 
     def test_row_with_a_due_time_is_not_annotated(self, client):
         _seed_untimed(client)

@@ -366,7 +366,8 @@ def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(live_sources_mode)
     traps = rows["Check traps"]
     # Exact blocks, like the remembered overlay (FT-05 F1): a 10min label is
     # 1/3 block, so the readout, editor, and steppers all say 10min.
-    assert traps["blocks"] == pytest.approx(10 / 30)
+    # A 10min row is untimed (blocks 0); its exact duration rides native_blocks.
+    assert traps["native_blocks"] == pytest.approx(10 / 30)
     assert traps["duration_minutes"] == 10  # the exact-minutes provenance
     assert traps["duration_source"] == "tag:🚀 10min"
     laundry = rows["Laundry"]            # Half-hour is 1 block either way;
