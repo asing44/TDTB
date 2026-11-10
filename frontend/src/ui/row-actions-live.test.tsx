@@ -128,14 +128,14 @@ function spyHarness() {
 }
 
 describe("collapsed row: direct verbs", () => {
-  it("offers the Mint toggle plus Complete, Unassign in Todoist… and Expand — never source removal or Delete", () => {
+  it("offers the Mint toggle plus Complete, Unassign in Todoist…, Expand and the Source menu — never a direct Delete", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     // The permanent May-overlap-Mint toggle leads the cluster (it applies at
     // once); the three row verbs follow in their frozen order.
     const direct = Array.from(
-      press.querySelectorAll<HTMLElement>(".trow__acts > button"),
+      press.querySelectorAll<HTMLElement>(".trow__acts > button, .trow__acts > .source-menu > .source-menu__trigger"),
     ).map((b) => b.getAttribute("aria-label"));
     expect(direct).toEqual([
       "May overlap Mint: Press",
@@ -143,17 +143,21 @@ describe("collapsed row: direct verbs", () => {
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
       "Hide Press from view",
+      "Source actions",
     ]);
     // Source removal and Delete are not direct controls, and the transitional
     // More menu that used to hold them is gone.
     expect(press.querySelector('button[aria-label*="Remove from planning"]')).toBeNull();
     expect(press.querySelector('button[aria-label*="Delete"]')).toBeNull();
-    expect(press.querySelector('button[aria-haspopup="menu"]')).toBeNull();
-    // …the collapsed row therefore has no menu at all; the Source menu lives
-    // on the expanded row.
+    // The only menu trigger is the Source menu kebab, on the collapsed row and
+    // shut: Hide always and Delete open from it without expanding the card.
+    const menus = Array.from(press.querySelectorAll('button[aria-haspopup="menu"]'));
+    expect(menus.map((b) => b.getAttribute("aria-label"))).toEqual(["Source actions"]);
     expect(press.querySelector('[role="menu"]')).toBeNull();
-    const expanded = expand(container, "Press");
-    expect(expanded.querySelector(".source-menu__trigger")).not.toBeNull();
+    expect(press.classList.contains("trow--open")).toBe(false);
+    fireEvent.click(menus[0]);
+    expect(press.querySelector('[role="menu"]')).not.toBeNull();
+    expect(rowFor(container, "Press").classList.contains("trow--open")).toBe(false);
   });
 
   it("keeps DOM/focus order: Mint, Complete, Unassign in Todoist…, Expand", () => {
@@ -169,6 +173,7 @@ describe("collapsed row: direct verbs", () => {
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
       "Hide Press from view",
+      "Source actions",
     ]);
   });
 });
@@ -225,17 +230,94 @@ describe("collapsed row: dispatch mapping is unchanged", () => {
     const h = spyHarness();
     const { container } = h.ui(<Queue />);
 
-    const row = expand(container, "Press");
+    // The kebab is on the collapsed row: no expand step before Delete.
+    const row = rowFor(container, "Press");
     const menu = openSource(row);
     fireEvent.click(buttonNamed(menu, "Delete in Todoist…"));
-    // Delete arms to a confirm before it fires — permanent means permanent.
+    // Delete arms to an in-row confirm before it fires — permanent means permanent.
     expect(h.calls).toEqual([]);
     expect(h.batched).toEqual([]);
-    fireEvent.click(buttonWithText(rowFor(container, "Press"), "Yes, delete permanently"));
+    const confirm = container.querySelector<HTMLElement>(".qrow > .source-confirm")!;
+    expect(confirm).not.toBeNull();
+    // The confirm replaces the row's content in place.
+    expect(confirm.parentElement!.querySelector(".qrow__name")).toBeNull();
+    fireEvent.click(buttonWithText(confirm, "Delete"));
     await waitFor(() =>
       expect(h.calls).toEqual([{ verb: "delete", target: "Press" }]),
     );
     expect(h.batched).toEqual([]);
+  });
+});
+
+describe("collapsed row: inline delete confirm", () => {
+  function armDelete() {
+    const h = spyHarness();
+    const { container } = h.ui(<Queue />);
+    const row = rowFor(container, "Press");
+    // The kebab sits in the collapsed row's own control cluster.
+    const kebab = row.querySelector<HTMLButtonElement>(".trow__acts > .source-menu > .source-menu__trigger")!;
+    expect(kebab).not.toBeNull();
+    fireEvent.click(kebab);
+    fireEvent.click(buttonNamed(row, "Delete in Todoist…"));
+    const confirm = container.querySelector<HTMLElement>(".qrow > .source-confirm")!;
+    expect(confirm).not.toBeNull();
+    return { h, container, confirm };
+  }
+
+  it("renders in the row, floats nothing, and focuses Cancel", () => {
+    const { h, container, confirm } = armDelete();
+    expect(container.querySelector(".source-menu__popover")).toBeNull();
+    expect(confirm.textContent).toContain("Delete “Press” from Todoist?");
+    expect(confirm.textContent).toContain("permanently deletes");
+    expect(document.activeElement).toBe(buttonWithText(confirm, "Cancel"));
+    expect(h.calls).toEqual([]);
+  });
+
+  it("Cancel makes no call and returns focus to the kebab", () => {
+    const { h, container, confirm } = armDelete();
+    fireEvent.click(buttonWithText(confirm, "Cancel"));
+    expect(container.querySelector(".source-confirm")).toBeNull();
+    expect(document.activeElement).toBe(rowFor(container, "Press").querySelector(".source-menu__trigger"));
+    expect(h.calls).toEqual([]);
+    expect(h.batched).toEqual([]);
+  });
+
+  it("Escape makes no call and returns focus to the kebab", () => {
+    const { h, container, confirm } = armDelete();
+    fireEvent.keyDown(buttonWithText(confirm, "Cancel"), { key: "Escape" });
+    expect(container.querySelector(".source-confirm")).toBeNull();
+    expect(document.activeElement).toBe(rowFor(container, "Press").querySelector(".source-menu__trigger"));
+    expect(h.calls).toEqual([]);
+    expect(h.batched).toEqual([]);
+  });
+});
+
+describe("expanded editor row: layout contract", () => {
+  const LAYOUT_CSS = readFileSync(resolve(process.cwd(), "src/ui/row-editor-layout.css"), "utf8");
+
+  it("keeps Start, its value and Set time in one wrapping group beside the other controls", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const row = expand(container, "Press");
+    const l1 = row.querySelector<HTMLElement>(".trow__panel > .trow__l1")!;
+    const start = l1.querySelector<HTMLElement>(":scope > .trow__start")!;
+    expect(start).not.toBeNull();
+    expect(start.getAttribute("aria-label")).toBe("Start");
+    // Set time is inside the Start unit, so a wrap moves them together.
+    expect(start.textContent).toContain("Start");
+    expect(Array.from(start.querySelectorAll("button")).some((b) => b.textContent?.trim() === "Set time")).toBe(true);
+    // Exact field, All-day and Remember live in the sibling Duration group.
+    const grp = l1.querySelector<HTMLElement>(":scope > .trow__grp")!;
+    expect(grp.querySelector('input[aria-label="Exact minutes"]')).not.toBeNull();
+    expect(buttonWithText(grp, "All-day")).toBeTruthy();
+    expect(start.parentElement).toBe(l1);
+  });
+
+  it("the layout sheet wraps l1 and keeps the Start unit unbroken, with tokens/px only", () => {
+    expect(LAYOUT_CSS).toMatch(/\.trow__l1\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(LAYOUT_CSS).toMatch(/\.trow__start\s*\{[^}]*flex-wrap:\s*nowrap/);
+    expect(LAYOUT_CSS).toMatch(/\.trow__start\s*\{[^}]*white-space:\s*nowrap/);
+    expect(LAYOUT_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });
 

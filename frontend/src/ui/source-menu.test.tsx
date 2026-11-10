@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
-import { SourceMenu } from "./SourceMenu";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { SourceDeleteConfirm, SourceMenu } from "./SourceMenu";
 import { useAppState } from "./context";
 import { makeHarness } from "./test-harness";
 import type { AssignedItem } from "../model/types";
@@ -33,12 +34,25 @@ function setup(opts: { source?: "todoist" | "capacities" | "calendar"; recurring
   function View() {
     const s = useAppState();
     const item = s.inputs!.assigned.find((r) => r.id === "Press") as AssignedItem;
-    return <SourceMenu item={item} s={s} />;
+    // Mirrors TaskRow: Delete swaps the content for the inline confirm and
+    // backing out refocuses the kebab.
+    const [deleting, setDeleting] = useState(false);
+    const kebab = useRef<HTMLButtonElement | null>(null);
+    const refocus = useRef(false);
+    useEffect(() => {
+      if (deleting || !refocus.current) return;
+      refocus.current = false;
+      kebab.current?.focus();
+    }, [deleting]);
+    if (deleting) {
+      return <div class="qrow trow"><SourceDeleteConfirm item={item} s={s}
+        onClose={(r) => { refocus.current = r; setDeleting(false); }} /></div>;
+    }
+    return <div class="qrow trow"><SourceMenu item={item} s={s} triggerRef={kebab} onRequestDelete={() => setDeleting(true)} /></div>;
   }
   const ui = h.ui(<View />);
-  const trigger = ui.getByRole("button", { name: "Source actions" });
-  const open = () => fireEvent.click(trigger);
-  return { ...h, ...ui, trigger, open, batch, verb, rowBatch, staging, policy, capPolicy };
+  const open = () => fireEvent.click(ui.getByRole("button", { name: "Source actions" }));
+  return { ...h, ...ui, get trigger() { return ui.getByRole("button", { name: "Source actions" }); }, open, batch, verb, rowBatch, staging, policy, capPolicy };
 }
 
 describe("SourceMenu (unmounted component slice)", () => {
@@ -93,6 +107,7 @@ describe("SourceMenu (unmounted component slice)", () => {
     fireEvent.click(cancel);
     expect(h.queryByRole("group")).toBeNull();
     expect(document.activeElement).toBe(h.trigger);
+    expect(h.staging).not.toHaveBeenCalled();
     expect(h.verb).not.toHaveBeenCalled();
     expect(h.batch).not.toHaveBeenCalled();
   });
@@ -102,7 +117,7 @@ describe("SourceMenu (unmounted component slice)", () => {
     h.verb.mockRejectedValueOnce(new Error("fixture deletion refused"));
     h.open();
     fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
-    fireEvent.click(h.getByRole("button", { name: "Yes, delete permanently" }));
+    fireEvent.click(h.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(h.store.getState().runtimeError).toBe("fixture deletion refused"));
     expect(h.staging).toHaveBeenCalledWith("delete", "Press");
     expect(h.verb).toHaveBeenCalledWith("delete", "Press", {});
@@ -226,7 +241,7 @@ describe("SourceMenu presentation and interaction", () => {
     expect(document.activeElement).toBe(h.trigger);
   });
 
-  it("outside click closes the menu and the confirm without acting", () => {
+  it("outside click closes the menu without acting; the inline confirm stays until answered", () => {
     const h = setup();
     h.open();
     fireEvent.click(document.body);
@@ -235,31 +250,33 @@ describe("SourceMenu presentation and interaction", () => {
     fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
     expect(h.getByRole("group")).toBeTruthy();
     fireEvent.mouseDown(document.body);
-    expect(h.queryByRole("group")).toBeNull();
+    expect(h.getByRole("group")).toBeTruthy();
     expect(h.staging).not.toHaveBeenCalled();
     expect(h.verb).not.toHaveBeenCalled();
   });
 
-  it("the delete confirm renders inside the popover, replacing the items, with zero calls until the final confirm", async () => {
+  it("the delete confirm renders in the row, not a popover, with zero calls until Delete", async () => {
     const h = setup();
     h.open();
     fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
-    const popover = h.container.querySelector(".source-menu__popover")!;
-    expect(popover.contains(h.getByRole("group"))).toBe(true);
+    expect(h.container.querySelector(".source-menu__popover")).toBeNull();
+    expect(h.container.querySelector(".qrow > .source-confirm")).toBe(h.getByRole("group"));
     expect(h.queryByRole("menu")).toBeNull();
+    expect(h.queryByRole("button", { name: "Source actions" })).toBeNull();
     expect(h.getByRole("button", { name: "Cancel" })).toBeTruthy();
     expect(h.staging).not.toHaveBeenCalled();
     expect(h.verb).not.toHaveBeenCalled();
     expect(h.batch).not.toHaveBeenCalled();
     // Tab swaps between the two confirm buttons instead of leaving the panel.
     const cancel = h.getByRole("button", { name: "Cancel" });
-    const yes = h.getByRole("button", { name: "Yes, delete permanently" });
+    const yes = h.getByRole("button", { name: "Delete" });
     expect(document.activeElement).toBe(cancel);
     fireEvent.keyDown(cancel, { key: "Tab" });
     expect(document.activeElement).toBe(yes);
     fireEvent.keyDown(yes, { key: "Tab" });
     expect(document.activeElement).toBe(cancel);
     expect(h.verb).not.toHaveBeenCalled();
+    expect(h.staging).not.toHaveBeenCalled();
     fireEvent.click(yes);
     await waitFor(() => expect(h.verb).toHaveBeenCalledWith("delete", "Press", {}));
     expect(h.staging).toHaveBeenCalledTimes(1);

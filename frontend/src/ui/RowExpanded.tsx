@@ -25,10 +25,10 @@ import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import { display12h } from "../model/time";
 import { minutesToBlocks, parseDuration } from "../model/parseDuration";
 import type { AssignedItem } from "../model/types";
-import { SourceMenu } from "./SourceMenu";
 import { TimeEditor } from "./TimeEditor";
 import { DurationRemember } from "./DurationRemember";
 import { rowId } from "./TaskRow";
+import "./row-editor-layout.css";
 
 const TYPE_DEBOUNCE_MS = 400;
 
@@ -248,9 +248,6 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
           }}
         />
       )}
-      <div class="trow__l2">
-        <SourceMenu item={item} s={s} />
-      </div>
     </div>
   );
 }

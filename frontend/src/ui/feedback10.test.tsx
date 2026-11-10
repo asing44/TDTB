@@ -241,7 +241,11 @@ describe("FEEDBACK-10 secondary actions left the row (A13, rewritten for F7)", (
     expect(
       buttons.some((b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror"),
     ).toBe(false);
-    expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    // The only menu trigger on a row is the Source menu kebab, and it is shut.
+    const triggers = Array.from(container.querySelectorAll('button[aria-haspopup="menu"]'));
+    expect(triggers.length).toBeGreaterThan(0);
+    expect(triggers.every((b) => b.classList.contains("source-menu__trigger"))).toBe(true);
+    expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(container.querySelector(".row-more")).toBeNull();
   });
 

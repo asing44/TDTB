@@ -1,12 +1,17 @@
-/* F4c1: independently testable source actions; deliberately not mounted yet.
-   Assignment changes belong to the per-row assign toggle (KTD4), so this menu
-   is exactly Hide always (a journaled batch-of-one with the shared results and
-   undo surface) and Delete (individual-only through stagingAction, behind an
-   inline two-step confirm rendered inside the popover). The trigger is a 32px
-   kebab icon button; the popover is position:fixed and placed by
-   popoverPlacement so it can never clip off the viewport. This component never infers source success or edits exclusion
-   policies. */
+/* Source actions on the collapsed task row. Assignment changes belong to the
+   per-row assign toggle (KTD4), so the menu is exactly Hide always (a
+   journaled batch-of-one with the shared results and undo surface) and Delete
+   (individual-only through stagingAction). The trigger is a 32px kebab icon
+   button in the row's control cluster; the menu popover is position:fixed and
+   placed by popoverPlacement so it can never clip off the viewport.
+
+   Delete's second step is NOT a popover: choosing it asks the row
+   (onRequestDelete) to swap its content for SourceDeleteConfirm, a row-height
+   panel with the question, the consequence, Cancel and a destructive button.
+   Nothing floats, so nothing is clipped or covers a neighbouring row. This
+   module never infers source success or edits exclusion policies. */
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { Ref } from "preact";
 import { useApp } from "./context";
 import { itemIdentity, isCanonicalCapacitiesIdentity } from "../adapters/wire";
 import { taskActionDisabledReason, type AppState } from "../store/store";
@@ -14,7 +19,7 @@ import type { AssignedItem } from "../model/types";
 import { computePopoverPlacement } from "./popoverPlacement";
 import "./source-menu.css";
 
-function disabledReason(s: AppState, item: AssignedItem): string | null {
+export function disabledReason(s: AppState, item: AssignedItem): string | null {
   if (s.runtimeBusy || s.batch.phase === "applying") {
     return "Source action in progress";
   }
@@ -54,25 +59,32 @@ function ItemIcon({ kind }: { kind: "hideAlways" | "delete" }) {
   </svg>;
 }
 
-export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
+function sourceName(item: AssignedItem): string {
+  return item.source === "todoist" ? "Todoist" : item.source === "capacities" ? "Capacities" : "Calendar";
+}
+
+export function SourceMenu({ item, s, onRequestDelete, triggerRef }: {
+  item: AssignedItem;
+  s: AppState;
+  /** Delete was chosen: the row swaps in SourceDeleteConfirm. Nothing is sent. */
+  onRequestDelete: () => void;
+  /** Lets the row put focus back on the trigger when the confirm closes. */
+  triggerRef?: Ref<HTMLButtonElement>;
+}) {
   const { controller, store } = useApp();
   const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
   const locked = useRef(false);
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
-  const cancel = useRef<HTMLButtonElement>(null);
   const edge = useRef<"first" | "last">("first");
   const base = `source-menu-${useId()}`;
-  const source = item.source === "todoist" ? "Todoist" : item.source === "capacities" ? "Capacities" : "Calendar";
+  const source = sourceName(item);
   const reason = pending ? "Source action in progress" : disabledReason(s, item);
-  const shown = open || confirming;
 
   function close(refocus = true) {
     setOpen(false);
-    setConfirming(false);
     if (refocus) trigger.current?.focus();
   }
 
@@ -102,7 +114,7 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
   }
 
   useLayoutEffect(() => {
-    if (!shown) return;
+    if (!open) return;
     place();
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
@@ -110,15 +122,14 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [shown, confirming, reason]);
+  }, [open, reason]);
 
   useEffect(() => {
-    if (confirming) cancel.current?.focus();
-    else if (open) focusEdge();
-  }, [open, confirming]);
+    if (open) focusEdge();
+  }, [open]);
 
   useEffect(() => {
-    if (!shown) return;
+    if (!open) return;
     const outside = (e: Event) => {
       // composedPath is fixed at dispatch: the clicked menu item may already be
       // unmounted (re-render between listeners), so target.contains() would
@@ -134,28 +145,14 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
       document.removeEventListener("touchstart", outside);
       document.removeEventListener("click", outside);
     };
-  }, [shown]);
+  }, [open]);
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape" && shown) {
+    if (e.key === "Escape" && open) {
       e.preventDefault();
       e.stopPropagation();
-      // Confirmation is its own inline state, never an ancestor's Escape.
+      // The menu closes before any ancestor sees Escape.
       close();
-      return;
-    }
-    if (confirming) {
-      if (e.key === "Tab") {
-        // Two-button trap: Tab/Shift+Tab swaps Cancel and the destructive
-        // button; Escape is the way out.
-        const btns = Array.from(popover.current?.querySelectorAll<HTMLButtonElement>(".source-menu__confirm-actions button") ?? [])
-          .filter((b) => !b.disabled);
-        if (btns.length > 1) {
-          e.preventDefault();
-          const i = btns.indexOf(document.activeElement as HTMLButtonElement);
-          btns[(i + (e.shiftKey ? -1 : 1) + btns.length) % btns.length].focus();
-        }
-      }
       return;
     }
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
@@ -177,17 +174,15 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
     }
   }
 
-  async function apply(action: "hideAlways" | "delete") {
+  async function hideAlways() {
     const live = store.getState();
     const current = live.inputs?.assigned.find((row) => row.id === item.id);
     if (locked.current || !current || disabledReason(live, current)) return;
-    if (action === "delete" && !confirming) return;
     locked.current = true;
     setPending(true);
     close();
     try {
-      if (action === "delete") await controller.stagingAction("delete", item.id);
-      else await controller.runRowBatch(item.id, action);
+      await controller.runRowBatch(item.id, "hideAlways");
     } finally {
       locked.current = false;
       setPending(false);
@@ -202,8 +197,8 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
       disabled={!!reason}
       onClick={() => {
         if (reason) return;
-        if (action === "delete") { setOpen(false); setConfirming(true); }
-        else void apply(action);
+        if (action === "delete") { setOpen(false); onRequestDelete(); }
+        else void hideAlways();
       }}>
       <ItemIcon kind={action} />
       <span class="source-menu__text">
@@ -214,31 +209,90 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
   }
 
   return <div class="source-menu" ref={wrap} onKeyDown={onKeyDown}>
-    <button type="button" class="source-menu__trigger" ref={trigger}
+    <button type="button" class="source-menu__trigger"
+      ref={(el) => {
+        trigger.current = el;
+        if (typeof triggerRef === "function") triggerRef(el);
+        else if (triggerRef) (triggerRef as { current: HTMLButtonElement | null }).current = el;
+      }}
       aria-label="Source actions" title="Source actions"
-      aria-haspopup="menu" aria-expanded={shown} aria-controls={`${base}-popover`}
+      aria-haspopup="menu" aria-expanded={open} aria-controls={`${base}-popover`}
       onClick={() => {
-        if (shown) close();
+        if (open) close();
         else { edge.current = "first"; setOpen(true); }
       }}><KebabIcon /></button>
-    {shown && <div id={`${base}-popover`} class="source-menu__popover" ref={popover}>
-      {open && <div class="source-menu__menu" role="menu" aria-label={`Source actions for ${item.name}`}>
+    {open && <div id={`${base}-popover`} class="source-menu__popover" ref={popover}>
+      <div class="source-menu__menu" role="menu" aria-label={`Source actions for ${item.name}`}>
         {menuItem("Hide always", "Hidden from planning every day", "hideAlways")}
         <hr class="source-menu__separator" role="separator" />
         {menuItem(`Delete in ${source}…`, `Permanently deletes it in ${source}`, "delete")}
         {reason && <p class="source-menu__reason" id={`${base}-reason`}>{reason}</p>}
-      </div>}
-      {confirming && <div class="source-menu__confirm" role="group" aria-labelledby={`${base}-question`}>
-        <span class="source-menu__question" id={`${base}-question`}>Delete “{item.name}” from {source}?</span>
-        <p class="source-menu__detail">This permanently deletes the source item. It cannot be undone from here.</p>
-        <div class="source-menu__confirm-actions">
-          <button type="button" class="source-menu__cancel" ref={cancel} onClick={() => close()}>Cancel</button>
-          <button type="button" class="source-menu__delete" disabled={!!reason}
-            aria-describedby={reason ? `${base}-confirm-reason` : undefined}
-            onClick={() => void apply("delete")}>Yes, delete permanently</button>
-        </div>
-        {reason && <p class="source-menu__reason" id={`${base}-confirm-reason`}>{reason}</p>}
-      </div>}
+      </div>
     </div>}
+  </div>;
+}
+
+/** Delete's confirm step, rendered by the row in place of its content. Opening
+    sends nothing; only the destructive button calls the existing
+    controller.stagingAction("delete", id). Focus lands on Cancel, Tab swaps
+    between the two buttons, and Escape or Cancel closes with no call (the row
+    refocuses the kebab). Keys never reach the row's own shortcuts. */
+export function SourceDeleteConfirm({ item, s, onClose }: {
+  item: AssignedItem;
+  s: AppState;
+  /** `refocus` is true when the operator backed out and the kebab should regain focus. */
+  onClose: (refocus: boolean) => void;
+}) {
+  const { controller, store } = useApp();
+  const locked = useRef(false);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const base = `source-confirm-${useId()}`;
+  const source = sourceName(item);
+  const reason = disabledReason(s, item);
+
+  useEffect(() => { cancel.current?.focus(); }, []);
+
+  function onKeyDown(e: KeyboardEvent) {
+    // Confirmation is its own inline state: nothing here is an ancestor's key.
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose(true);
+    } else if (e.key === "Tab") {
+      // Two-button trap: Tab/Shift+Tab swaps Cancel and the destructive
+      // button; Escape is the way out.
+      const btns = Array.from(panel.current?.querySelectorAll<HTMLButtonElement>(".source-confirm__actions button") ?? [])
+        .filter((b) => !b.disabled);
+      if (btns.length > 1) {
+        e.preventDefault();
+        const i = btns.indexOf(document.activeElement as HTMLButtonElement);
+        btns[(i + (e.shiftKey ? -1 : 1) + btns.length) % btns.length].focus();
+      }
+    }
+  }
+
+  async function confirmDelete() {
+    const live = store.getState();
+    const current = live.inputs?.assigned.find((row) => row.id === item.id);
+    if (locked.current || !current || disabledReason(live, current)) return;
+    locked.current = true;
+    onClose(false);
+    await controller.stagingAction("delete", item.id);
+  }
+
+  return <div class="source-confirm" ref={panel} role="group" aria-labelledby={`${base}-question`}
+    onKeyDown={onKeyDown}>
+    <div class="source-confirm__text">
+      <span class="source-confirm__question" id={`${base}-question`}>Delete “{item.name}” from {source}?</span>
+      <p class="source-confirm__detail">This permanently deletes the source item. It cannot be undone from here.</p>
+      {reason && <p class="source-confirm__reason" id={`${base}-reason`}>{reason}</p>}
+    </div>
+    <div class="source-confirm__actions">
+      <button type="button" class="source-confirm__cancel" ref={cancel} onClick={() => onClose(true)}>Cancel</button>
+      <button type="button" class="source-confirm__delete" disabled={!!reason}
+        aria-describedby={reason ? `${base}-reason` : undefined}
+        onClick={() => void confirmDelete()}>Delete</button>
+    </div>
   </div>;
 }

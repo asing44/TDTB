@@ -4,9 +4,13 @@
    duration in mono, the plan-membership switch, and three labelled buttons: Complete,
    Unassign in Todoist (Todoist rows only, double-confirmed source write), a permanent
    May-overlap-Mint toggle, and Expand/Collapse. Selection never depends on expansion; one row is expanded
-   at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
+   at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b).
+   The Source menu (kebab) closes the cluster, so it opens without expanding the
+   row; its Delete swaps the row's content for an inline confirm (SourceMenu.tsx). */
 
+import { useEffect, useRef, useState } from "preact/hooks";
 import { HideFromViewButton } from "./HideFromView";
+import { SourceDeleteConfirm, SourceMenu } from "./SourceMenu";
 import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
@@ -258,6 +262,16 @@ export function TaskRow({
   onKeyDown?: (e: KeyboardEvent) => void;
 }) {
   const { controller } = useApp();
+  // Delete's inline confirm replaces the row's content in place; backing out
+  // returns focus to the kebab once the row has rendered it again.
+  const [deleting, setDeleting] = useState(false);
+  const kebab = useRef<HTMLButtonElement | null>(null);
+  const refocusKebab = useRef(false);
+  useEffect(() => {
+    if (deleting || !refocusKebab.current) return;
+    refocusKebab.current = false;
+    kebab.current?.focus();
+  }, [deleting]);
   const state = queueState(s, item.id);
   const chip = sourceChip(item);
   const origin = originChipSpec(item, structureTitles);
@@ -323,12 +337,22 @@ export function TaskRow({
 
   return (
     <div
-      class={`qrow trow trow--dslider ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}${due?.tone === "overdue" ? " trow--overdue" : ""}`}
+      class={`qrow trow trow--dslider${deleting ? " trow--confirming" : ""} ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}${due?.tone === "overdue" ? " trow--overdue" : ""}`}
       data-hierarchy-depth={hierarchy?.depth ?? 0}
       data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}
       onKeyDown={(e) => onKeyDown?.(e as unknown as KeyboardEvent)}
     >
+      {deleting ? (
+        <SourceDeleteConfirm
+          item={item}
+          s={s}
+          onClose={(refocus) => {
+            refocusKebab.current = refocus;
+            setDeleting(false);
+          }}
+        />
+      ) : (<>
       <input
         type="checkbox"
         class="trow__check"
@@ -500,6 +524,7 @@ export function TaskRow({
           <ChevronIcon up={expanded} />
         </button>
         <HideFromViewButton id={item.id} name={item.name} />
+        <SourceMenu item={item} s={s} triggerRef={kebab} onRequestDelete={() => setDeleting(true)} />
       </div>
       {expanded && (
         <div
@@ -512,6 +537,7 @@ export function TaskRow({
           <RowExpanded item={item} s={s} />
         </div>
       )}
+      </>)}
     </div>
   );
 }

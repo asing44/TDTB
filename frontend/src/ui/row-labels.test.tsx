@@ -237,7 +237,11 @@ describe("rendered rows carry the clearer labels", () => {
     expect(row().querySelector(".qrow__time-adjustment")).toBeNull();
     expect(row().querySelector(".qrow__time-adjustment-note")).toBeNull();
     expect(row().textContent).not.toContain("Allow move");
-    expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    // The only menu is the Source menu kebab, closed.
+    for (const b of Array.from(container.querySelectorAll('button[aria-haspopup="menu"]'))) {
+      expect(b.getAttribute("aria-label")).toBe("Source actions");
+    }
+    expect(container.querySelector('[role="menu"]')).toBeNull();
     // The permission is the expanded row's time-editor checkbox; Apply
     // commits it at once (there is no Save step).
     fireEvent.click(row().querySelector('button[aria-label="Expand"]')!);

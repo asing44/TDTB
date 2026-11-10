@@ -1,8 +1,9 @@
-/* Source menu (SourceMenu.tsx): 32px kebab trigger, a fixed-position popover
-   placed by popoverPlacement.ts, 40px+ item rows with a leading icon, and an
-   inline destructive confirm inside the popover. Product tokens only (--t-*
-   flip with the theme), so light and dark both follow. Selectors are doubled
-   under `.source-menu` to outrank the older F4c1 rules in app.css. */
+/* Source menu (SourceMenu.tsx): 32px kebab trigger in the collapsed row's
+   control cluster, a fixed-position popover placed by popoverPlacement.ts, and
+   40px+ item rows with a leading icon. Delete's confirm is `.source-confirm`,
+   an in-row panel that replaces the row's content (no popover). Product tokens
+   only (--t-* flip with the theme), so light and dark both follow. Selectors
+   are doubled under `.source-menu` to outrank the older F4c1 rules in app.css. */
 
 .source-menu .source-menu__trigger {
   display: inline-flex;
@@ -26,8 +27,8 @@
 }
 .source-menu .source-menu__trigger:focus-visible,
 .source-menu .source-menu__item:focus-visible,
-.source-menu .source-menu__cancel:focus-visible,
-.source-menu .source-menu__delete:focus-visible {
+.source-confirm__cancel:focus-visible,
+.source-confirm__delete:focus-visible {
   outline: 2px solid var(--c-selected, #3b82f6);
   outline-offset: 2px;
 }
@@ -93,21 +94,59 @@
 }
 .source-menu .source-menu__reason { margin: 4px 10px 6px; font-size: 12px; color: var(--t-text); }
 
-.source-menu .source-menu__confirm {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 10px;
-  border: 0;
-  background: transparent;
+/* Row cluster: the kebab is the seventh slot of a plan row's controls (Mint,
+   switch, Complete, source slot, Expand, Hide, Source menu). The rules sit here,
+   with higher specificity than app.css's cluster rules, so the cluster and its
+   column widen together: 52 + 44 + 5 x 32 + 6 x 10 = 316px. Plan rows only
+   (`.trow--dslider`); the drawer rows keep their six-slot cluster. */
+@media (min-width: 641px) {
+  .queue .qrow.trow.trow--dslider {
+    grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 316px;
+  }
+  .queue .qrow.trow.trow--dslider > .trow__acts {
+    min-width: 316px;
+    grid-template-columns: 52px 44px repeat(5, 32px);
+    gap: 10px;
+  }
+}
+.qrow.trow.trow--dslider > .trow__acts > .source-menu {
+  justify-self: center;
+  margin-left: 0;
+}
+/* Narrow rows: the cluster wraps to its own full-width line and flexes with it. */
+@media (max-width: 640px) {
+  .qrow.trow.trow--dslider > .trow__acts {
+    min-width: 0;
+    grid-template-columns: 52px 44px repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+}
+
+/* Delete confirm: swaps in for the row's content (TaskRow renders it as the
+   row's only child), so it is exactly row height, spans every column, and
+   cannot be clipped or cover a neighbour. Destructive tint reuses the
+   unassign confirm's derivation from --c-overflow. */
+.qrow.trow > .source-confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+  color: var(--t-text);
   overflow-wrap: anywhere;
 }
-.source-menu__question { font-weight: 600; }
-.source-menu .source-menu__confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.source-menu .source-menu__cancel,
-.source-menu .source-menu__delete {
-  min-height: 40px;
-  padding: 6px 12px;
+.source-confirm__text { display: grid; gap: 2px; flex: 1 1 260px; min-width: 0; }
+.source-confirm__question { font-weight: 600; }
+.source-confirm__detail,
+.source-confirm__reason { margin: 0; font-size: 12px; line-height: 1.3; color: var(--t-muted); }
+.source-confirm__reason { color: var(--t-text); }
+.source-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-confirm__cancel,
+.source-confirm__delete {
+  min-height: 36px;
+  padding: 6px 16px;
   border: 1px solid var(--t-border, #d9d7cd);
   border-radius: var(--radius-sm, 5px);
   background: var(--t-surface, #fdfcf9);
@@ -115,13 +154,17 @@
   font: inherit;
   cursor: pointer;
 }
-.source-menu .source-menu__delete {
+.source-confirm__cancel:hover { border-color: var(--t-muted); }
+.source-confirm__delete {
   border-color: color-mix(in srgb, var(--c-overflow) 60%, var(--t-border));
   background: color-mix(in srgb, var(--c-overflow) 10%, var(--t-surface));
   color: color-mix(in srgb, var(--c-overflow) 75%, var(--t-text));
   font-weight: 600;
 }
-.source-menu .source-menu__delete:disabled {
+.source-confirm__delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-overflow) 18%, var(--t-surface));
+}
+.source-confirm__delete:disabled {
   border-color: var(--t-border);
   background: var(--t-surface-2, #f1efe8);
   color: var(--t-muted);

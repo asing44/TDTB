@@ -3,7 +3,7 @@
    the slices together, in the operator's order:
 
    - the collapsed row's three controls and the expanded row's two-line panel
-     (line 1 shapes the row, line 2 = Save/Discard left + Source menu right),
+     (line 1 shapes the row; the Source menu lives in the collapsed row's cluster),
      with the retired per-row More menu absent everywhere;
    - selection stays local and only then does the batch bar appear;
    - a single Source-menu verb (Hide always / Unassign) reports through the
@@ -128,7 +128,7 @@ function stageServerRead(
 }
 
 describe("F7 integration: the row and its expanded panel", () => {
-  it("expands into the two-line panel with line 2 holding the Source menu, and never a More menu", () => {
+  it("keeps the Source menu on the collapsed row, never in the expanded panel, and never a More menu", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
 
@@ -136,7 +136,7 @@ describe("F7 integration: the row and its expanded panel", () => {
     // menu of any kind.
     const press = rowFor(container, "Press");
     expect(
-      Array.from(press.querySelectorAll<HTMLElement>(".trow__acts > button")).map((b) =>
+      Array.from(press.querySelectorAll<HTMLElement>(".trow__acts > button, .trow__acts > .source-menu > .source-menu__trigger")).map((b) =>
         b.getAttribute("aria-label"),
       ),
     ).toEqual([
@@ -145,8 +145,11 @@ describe("F7 integration: the row and its expanded panel", () => {
       UNASSIGN_TRIGGER_LABEL,
       "Expand",
       "Hide Press from view",
+      "Source actions",
     ]);
-    expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    // The kebab is the cluster's last control and its menu is shut until used.
+    expect(press.querySelector(".trow__acts")!.lastElementChild?.classList.contains("source-menu")).toBe(true);
+    expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(container.querySelector(".row-more")).toBeNull();
     expect(container.querySelector('button[aria-label^="Adjust time for"]')).toBeNull();
 
@@ -154,9 +157,10 @@ describe("F7 integration: the row and its expanded panel", () => {
     const panel = row.querySelector<HTMLElement>(".trow__panel")!;
     expect(panel).not.toBeNull();
     const line1 = panel.querySelector<HTMLElement>(".trow__l1")!;
-    const line2 = panel.querySelector<HTMLElement>(".trow__l2")!;
     expect(line1).not.toBeNull();
-    expect(line2).not.toBeNull();
+    // The old second line (which held the Source menu) is gone.
+    expect(panel.querySelector(".trow__l2")).toBeNull();
+    expect(panel.querySelector(".source-menu")).toBeNull();
     // Line 1 shapes the row at once: an exact-minutes field, the All-day
     // toggle and Start. The duration slider stays in the collapsed row, and
     // May overlap Mint lives there too.
@@ -165,17 +169,14 @@ describe("F7 integration: the row and its expanded panel", () => {
     expect(line1.textContent).toContain("Start");
     expect(line1.querySelector('[role="radiogroup"][aria-label="Duration"]')).toBeNull();
     expect(line1.textContent).not.toContain("May overlap Mint");
-    expect(line2.querySelector(".source-menu__trigger")).not.toBeNull();
-    expect(line2.lastElementChild?.classList.contains("source-menu")).toBe(true);
+    expect(row.querySelector(".source-menu__trigger")).not.toBeNull();
   });
 
-  it("keeps line 2 to the Source menu, because edits apply at once", () => {
+  it("has no Save/Discard line, because edits apply at once", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
-    let line2 = row.querySelector<HTMLElement>(".trow__l2")!;
-    expect(Array.from(line2.querySelectorAll("button")).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()))
-      .toEqual(["Source actions"]);
+    expect(row.querySelector(".trow__l2")).toBeNull();
 
     fireEvent.input(
       row.querySelector<HTMLInputElement>('input[aria-label="Exact minutes"]')!,
@@ -186,12 +187,9 @@ describe("F7 integration: the row and its expanded panel", () => {
       { key: "Enter" },
     );
     row = rowFor(container, "Press");
-    line2 = row.querySelector<HTMLElement>(".trow__l2")!;
     // No Save/Discard appears: the edit already landed, and the row carries a
     // single-step Undo instead.
-    expect(Array.from(line2.querySelectorAll("button")).map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim())).toEqual([
-      "Source actions",
-    ]);
+    expect(row.querySelector(".trow__l2")).toBeNull();
     expect(h.store.getState().overrides["Press"]?.blocks).toBe(4);
     expect(row.querySelector(".trow__state")?.textContent).not.toContain("Staged");
     expect(row.querySelector('button[aria-label="Undo last change to Press"]')).not.toBeNull();

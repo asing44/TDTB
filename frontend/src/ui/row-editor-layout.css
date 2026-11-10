@@ -1,0 +1,37 @@
+/* Expanded row editor (RowExpanded.tsx): one level line of controls (exact
+   field, All-day, Remember, Start) with one gap, wrapping cleanly. The Start
+   group stays one unbroken unit (label, value, button) and wraps as a whole,
+   so "Auto" can never run into "Set time". Tokens and existing sizes only;
+   selectors outrank the older rules in app.css. */
+.trow__panel .trow__l1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.trow__panel .trow__l1 .trow__grp {
+  gap: 8px;
+}
+.trow__panel .trow__l1 :is(.trow__btn, .trow__tog, .dux-mem, .dux-exact) {
+  box-sizing: border-box;
+  min-height: 32px;
+}
+.trow__panel .trow__l1 :is(.trow__btn, .trow__tog, .dux-mem) {
+  padding: 2px 12px;
+}
+.trow__panel .trow__l1 .trow__start {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.trow__panel .trow__l1 .trow__start > * {
+  flex: none;
+}
+@media (max-width: 640px) {
+  .trow__panel .trow__l1 :is(.trow__btn, .trow__tog, .dux-mem, .dux-exact) {
+    min-height: 34px;
+  }
+}
