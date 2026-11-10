@@ -52,6 +52,7 @@ import {
 } from "../model/drawerGroups";
 import { dueLabel } from "../model/urgency";
 import { kindLabel } from "./TaskRow";
+import { SourceDeleteConfirm, SourceMenu, useRowDelete } from "./SourceMenu";
 import { OriginChip, SourceMark, chipSpecFor, originChipSpec, type OriginChipSpec } from "./sourceChip";
 import {
   assignmentRows,
@@ -136,6 +137,7 @@ function LocalRow({
 }) {
   const { controller } = useApp();
   const s = useAppState();
+  const { deleting, setDeleting, kebab, closeConfirm } = useRowDelete();
   const due = dueLabel(facts.deadline, s.inputs?.validDate ?? "");
   const expanded = item ? s.ui.expandedId === item.id : false;
   const nameId = item ? rowId(item, "name") : undefined;
@@ -148,9 +150,12 @@ function LocalRow({
     rowFacts && isProtectedNative(rowFacts) ? EXCLUSION_REASONS.protectedAllDay : null;
   return (
     <li
-      class={`qrow trow trow--skipped trow--unassigned${item ? " trow--dslider" : ""}${expanded ? " trow--open" : ""}`}
+      class={`qrow trow trow--skipped trow--unassigned${item ? " trow--dslider" : ""}${deleting ? " trow--confirming" : ""}${expanded ? " trow--open" : ""}`}
       data-identity={row.identity}
     >
+      {deleting && item ? (
+        <SourceDeleteConfirm item={item} s={s} onClose={closeConfirm} />
+      ) : (<>
       <div class="qrow__body">
         <span class="qrow__nameline">
           <span class="qrow__name" id={nameId}>{row.name}</span>
@@ -213,6 +218,9 @@ function LocalRow({
             <ChevronIcon up={expanded} />
           </button>
         )}
+        {item && (
+          <SourceMenu item={item} s={s} triggerRef={kebab} onRequestDelete={() => setDeleting(true)} />
+        )}
       </div>
       {item && expanded && (
         <div
@@ -225,6 +233,7 @@ function LocalRow({
           <RowExpanded item={item} s={s} />
         </div>
       )}
+      </>)}
     </li>
   );
 }

@@ -63,6 +63,25 @@ function sourceName(item: AssignedItem): string {
   return item.source === "todoist" ? "Todoist" : item.source === "capacities" ? "Capacities" : "Calendar";
 }
 
+/** Row-side state for Delete's inline confirm: the row swaps its content while
+    `deleting`, and backing out returns focus to the kebab once it has rendered
+    again. Shared by the plan row and the Not in plan drawer row. */
+export function useRowDelete() {
+  const [deleting, setDeleting] = useState(false);
+  const kebab = useRef<HTMLButtonElement | null>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (deleting || !refocus.current) return;
+    refocus.current = false;
+    kebab.current?.focus();
+  }, [deleting]);
+  const closeConfirm = (back: boolean) => {
+    refocus.current = back;
+    setDeleting(false);
+  };
+  return { deleting, setDeleting, kebab, closeConfirm };
+}
+
 export function SourceMenu({ item, s, onRequestDelete, triggerRef }: {
   item: AssignedItem;
   s: AppState;

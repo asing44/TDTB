@@ -69,6 +69,31 @@ const expandBtn = (row: Element) =>
   row.querySelector<HTMLButtonElement>('button[aria-label="Expand"]')!;
 
 describe("a not-in-plan row carries the plan row's adjustments", () => {
+  it("ends its control cluster with the Source menu kebab, and Delete confirms in place", async () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    await removeFromPlan(h, container, ROW);
+    const row = drawerRow(container, ROW);
+
+    const kebab = row.querySelector<HTMLButtonElement>(
+      ".trow__acts > .source-menu > .source-menu__trigger",
+    )!;
+    expect(kebab).not.toBeNull();
+    // After the chevron: the kebab is the last slot, and opening it does not expand the row.
+    expect(row.querySelector(".trow__acts")!.lastElementChild).toBe(kebab.parentElement);
+    fireEvent.click(kebab);
+    expect(kebab.getAttribute("aria-expanded")).toBe("true");
+    expect(row.classList.contains("trow--open")).toBe(false);
+    fireEvent.click(row.querySelector<HTMLButtonElement>('[role="menuitem"].source-menu__item--danger')!);
+    expect(row.querySelector(".source-confirm")).not.toBeNull();
+    expect(row.querySelector(".trow__acts")).toBeNull();
+    fireEvent.click(row.querySelector<HTMLButtonElement>(".source-confirm__cancel")!);
+    expect(row.querySelector(".source-confirm")).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(row.querySelector(".source-menu__trigger")),
+    );
+  });
+
   it("renders the duration slider, the Mint toggle and the chevron", async () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);

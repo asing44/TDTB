@@ -98,24 +98,26 @@
    switch, Complete, source slot, Expand, Hide, Source menu). The rules sit here,
    with higher specificity than app.css's cluster rules, so the cluster and its
    column widen together: 52 + 44 + 5 x 32 + 6 x 10 = 316px. Plan rows only
-   (`.trow--dslider`); the drawer rows keep their six-slot cluster. */
+   (`.trow--plan`); the Not in plan drawer rows keep their content-sized flex
+   cluster, which simply gains the fixed 32px kebab slot. */
 @media (min-width: 641px) {
-  .queue .qrow.trow.trow--dslider {
+  .queue .qrow.trow.trow--dslider.trow--plan {
     grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 316px;
   }
-  .queue .qrow.trow.trow--dslider > .trow__acts {
+  .queue .qrow.trow.trow--dslider.trow--plan > .trow__acts {
     min-width: 316px;
     grid-template-columns: 52px 44px repeat(5, 32px);
     gap: 10px;
   }
 }
-.qrow.trow.trow--dslider > .trow__acts > .source-menu {
+.qrow.trow > .trow__acts > .source-menu {
   justify-self: center;
+  flex: none;
   margin-left: 0;
 }
 /* Narrow rows: the cluster wraps to its own full-width line and flexes with it. */
 @media (max-width: 640px) {
-  .qrow.trow.trow--dslider > .trow__acts {
+  .qrow.trow.trow--dslider.trow--plan > .trow__acts {
     min-width: 0;
     grid-template-columns: 52px 44px repeat(5, minmax(0, 1fr));
     gap: 6px;

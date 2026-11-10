@@ -33,3 +33,17 @@
     grid-column: auto !important;
   }
 }
+
+/* A local (adjustable) drawer row at phone width: title | duration on the first
+   line, the control cluster (Mint, Add to plan, hide, chevron, Source menu) on
+   its own full-width line. The older three-column phone frame left the
+   duration cell and the cluster fighting over the title column. */
+@media (max-width: 640px) {
+  .skipped-today__list > .qrow.trow.trow--unassigned.trow--dslider {
+    grid-template-columns: minmax(0, 1fr) var(--trow-dur-w);
+  }
+  .skipped-today__list > .qrow.trow.trow--unassigned.trow--dslider > .trow__acts {
+    grid-column: 1 / -1 !important;
+    justify-content: space-between;
+  }
+}
