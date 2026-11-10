@@ -1455,3 +1455,40 @@ class TestNonCapacitiesManifestUnchanged:
         assert all(not e.capacities_mirror for e in entries)
         assert [e.name for e in entries if e.step == "C"] == []
         assert [e.name for e in entries if e.system == "calendar"] == []
+
+
+class TestUntimedZeroBlockCommitIntent:
+    """A2 (2026-11-09): an untimed-lane row (``blocks == 0``) commits a
+    date-only Todoist due even when a stray timed sequence row for it survives
+    in the client layout. The manifest is the only write surface, so the
+    all-day intent is asserted end to end through plan_writes."""
+
+    ITEM = {
+        "name": "fu Sam", "path": "todoist://t7", "source": "todoist",
+        "todoist_id": "t7", "blocks": 0, "untimed_auto": True,
+    }
+    STRAY = {"sequence": [{"id": "fu Sam", "start": "09:00", "end": "09:30",
+                           "zone": "any"}]}
+
+    def test_stray_sequence_row_yields_one_date_only_update(self):
+        manifest = shadow.build_plan_manifest(
+            {"assigned": [dict(self.ITEM)]}, self.STRAY, {})
+        assert [m.action for m in manifest if m.name == "fu Sam"] == [
+            "schedule-all-day"]
+
+        diff = shadow.diff_against_live(manifest, {
+            "todoist_tasks": [{
+                "id": "t7", "content": "fu Sam",
+                "due": {"date": "2026-10-10T09:00:00"},
+            }],
+            "calendar_events": [],
+        })
+        [intent] = [i for i in commit.plan_writes(
+            diff, {"⬜ Blocks": "cal-blocks"}, {}, date(2026, 10, 10))
+            if i.surface == "todoist"]
+        assert intent.op == "update" and intent.task_id == "t7"
+        assert intent.due_all_day_today is True
+        assert intent.due_time is None and intent.due_datetime is None
+        assert [i for i in commit.plan_writes(
+            diff, {"⬜ Blocks": "cal-blocks"}, {}, date(2026, 10, 10))
+            if i.surface == "calendar"] == []

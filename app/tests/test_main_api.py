@@ -1536,7 +1536,8 @@ class TestNativeTimedRouteEnforcement:
             server_rows=server,
         )
         assert r.status_code == 200, r.text
-        row = next(item for item in captured["assigned"] if item["id"] == "ERRAND")
+        # blocks 0 is untimed: partitioned out of the judgment payload (A2).
+        row = next(item for item in r.json()["untimed"] if item["id"] == "ERRAND")
         assert row["source"] == "todoist"
         assert row["scheduled_start"] == "14:00"
         assert row["is_recurring"] is False
@@ -1822,8 +1823,11 @@ class TestUntimedLaneCanonicalization:
             "anchored_blocks": [],
         }, headers=_auth(client))
         assert r.status_code == 200, r.text
+        assert all(
+            i["name"] != "Meegy couch inspo texts" for i in captured["assigned"]
+        )
         row = next(
-            i for i in captured["assigned"]
+            i for i in r.json()["untimed"]
             if i["name"] == "Meegy couch inspo texts"
         )
         assert row["blocks"] == 0
@@ -2143,7 +2147,7 @@ class TestEffectiveBlocksOverlay:
             server_rows=[self.LOCAL],
         )
         assert r.status_code == 200, r.text
-        row = next(item for item in captured["assigned"] if item["id"] == "LOCAL")
+        row = next(item for item in r.json()["untimed"] if item["id"] == "LOCAL")
         assert row["blocks"] == 0
 
     def test_absent_blocks_falls_back_to_server_blocks(

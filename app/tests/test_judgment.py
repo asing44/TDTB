@@ -336,6 +336,15 @@ class TestProposeSequence:
         out = j.propose_sequence([], {}, [{"Block": "Night Routine"}])
         assert out["sequence"][0]["end"] == "23:59"
 
+    def test_prompt_reserves_untimed_rows_from_never_bump(self):
+        # A2 (2026-11-09): blocks-0 rows are untimed and never reach the model,
+        # so the never-bump demand must not read as covering them.
+        p = j.SEQUENCE_SYSTEM_PROMPT
+        assert (
+            "Items with blocks 0 are untimed and are not passed to you; "
+            "never-bump covers only the items you receive."
+        ) in p
+
     def test_prompt_grants_task_task_overlap_and_bundling(self):
         # T29: the prompt must invite reasoned task-task overlap (errand
         # ride-alongs) and bundling into named context blocks, not only

@@ -49,6 +49,7 @@ class PreparedSequence:
     zone_rows: list[dict[str, Any]] = field(default_factory=list)
     block_notes: list[str] = field(default_factory=list)
     optional_ids: set[str] = field(default_factory=set)
+    untimed: list[dict[str, Any]] = field(default_factory=list)
     qt_contents: list[str] = field(default_factory=list)
     fixed_schedulable_rows: list[dict[str, Any]] = field(default_factory=list)
     snapshot: dict[str, Any] = field(default_factory=dict)
@@ -66,6 +67,29 @@ class PlanningOutcome:
 
 def _id(item: dict[str, Any]) -> str:
     return str(item.get("id") or item.get("name") or "")
+
+
+def _is_untimed(item: dict[str, Any]) -> bool:
+    """Whether an assigned row is untimed all-day work (``blocks == 0``).
+
+    Zero blocks is TDTB's existing all-day state: ``sequence.timed_auto_pins``
+    emits no pin for it, ``sequence._assigned_duration_minutes`` gives it no
+    placement duration, and ``shadow.build_plan_manifest`` writes it as a
+    date-only due. ``untimed_lane`` (2026-11-09) sets it for date-only quick
+    check-ins, and a matched source's explicit zero already meant a background
+    row. Such a row has no representable timed placement, so it never enters
+    the judgment payload, the capacity count, or the never-bump assigned set.
+
+    Deferring to ``timed_auto_pins`` keeps this consistent with the pin rule:
+    any row that still yields a timeline pin stays timed. An explicit
+    ``blocks == 0`` override yields no pin, so such a row is untimed.
+    """
+    blocks = item.get("blocks")
+    if isinstance(blocks, bool) or not isinstance(blocks, (int, float)):
+        return False
+    if blocks != 0:
+        return False
+    return not sequence.timed_auto_pins([item])
 
 
 def _time_frame_identity(
@@ -266,11 +290,25 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
     if mode not in {"proposal", "revalidation"}:
         raise ValueError(f"unknown sequence planning mode: {mode!r}")
     data = copy.deepcopy(inputs)
-    assigned_input = list(data.get("assigned") or [])
+    assigned_input: list[dict[str, Any]] = []
+    untimed: list[dict[str, Any]] = []
     config = dict(data.get("config") or {})
     anchored = list(data.get("anchored_blocks") or [])
     pins = list(data.get("pinned_rows") or [])
     effective_pins = pins
+
+    # An explicit pin is authority over the all-day reading: a client-pinned
+    # row keeps its timed placement instead of becoming untimed.
+    pinned_ids = {str(pin.get("id") or "") for pin in pins} - {""}
+    for item in list(data.get("assigned") or []):
+        if (
+            isinstance(item, dict)
+            and _id(item) not in pinned_ids
+            and _is_untimed(item)
+        ):
+            untimed.append(item)
+        else:
+            assigned_input.append(item)
 
     pin_errors = sequence.validate_pinned_rows(pins, assigned_input)
     if pin_errors:
@@ -340,7 +378,14 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
         all_assigned = unabsorbed
         fixed_rows = []
         absorbed = {_id(item) for item in assigned_input} - {_id(item) for item in unabsorbed}
-        optional_ids = absorbed | {_id(block) for block in blocks}
+        # Untimed rows are not demandable rows: a client layout that still
+        # carries the old timed placement of a row that has since become
+        # untimed is tolerated, never demanded and never an "extra".
+        optional_ids = (
+            absorbed
+            | {_id(block) for block in blocks}
+            | {_id(item) for item in untimed}
+        )
         # No pin filtering: all client rows remain visible to the validator.
         movable = list(unabsorbed)
 
@@ -363,6 +408,7 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
         zone_rows=zone_rows,
         block_notes=block_notes,
         optional_ids=optional_ids,
+        untimed=copy.deepcopy(untimed),
         qt_contents=qt_contents,
         fixed_schedulable_rows=fixed_rows,
         snapshot=snapshot,
@@ -526,6 +572,7 @@ def run_proposal(
     proposal["sequence"] = list(proposal.get("sequence") or []) + copy.deepcopy(prepared.zone_rows)
     if prepared.qt_contents:
         proposal["qt_contents"] = prepared.qt_contents
+    proposal["untimed"] = copy.deepcopy(prepared.untimed)
     proposal["pinned_rows"] = copy.deepcopy(prepared.effective_pins)
     return PlanningOutcome(result=proposal, validation=validation, snapshot=snapshot)
 

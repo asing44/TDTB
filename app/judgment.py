@@ -1585,7 +1585,9 @@ Output ONLY a single JSON object (no prose, no markdown fence) with this exact s
 }
 
 Times are 24-hour "HH:MM" strings. Every assigned item and anchored_block passed to you MUST \
-appear exactly once in sequence, in chronological start-time order. Never invent an item id."""
+appear exactly once in sequence, in chronological start-time order. Never invent an item id. \
+Items with blocks 0 are untimed and are not passed to you; never-bump covers only the items you \
+receive."""
 
 
 def _validate_sequence_proposal(

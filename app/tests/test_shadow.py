@@ -54,6 +54,28 @@ class TestBuildPlanManifest:
         assert row.action == "schedule-all-day"
         assert row.id_or_path == "todoist://t42"
 
+    def test_zero_block_todoist_item_stays_all_day_despite_a_stray_sequence_row(self):
+        # A2 (2026-11-09): blocks == 0 is the all-day state, so a stray timed row
+        # for an untimed-lane item must not also produce a timed write.
+        digest = {"assigned": [{
+            "name": "fu Sam",
+            "path": "todoist://t7",
+            "source": "todoist",
+            "blocks": 0,
+            "untimed_auto": True,
+            "untimed_reason": "check-in name: ^fu\\b",
+        }]}
+        sequence = {"sequence": [
+            {"id": "fu Sam", "start": "09:00", "end": "09:30", "zone": "any"},
+        ]}
+        manifest = shadow.build_plan_manifest(digest, sequence, {})
+
+        [row] = [m for m in manifest if m.name == "fu Sam"]
+        assert row.action == "schedule-all-day"
+        assert row.time is None and row.duration_min == 0
+        assert row.id_or_path == "todoist://t7"
+        assert [m for m in manifest if m.action == "schedule"] == []
+
     def test_manifest_keeps_native_todoist_facts_internal(self):
         digest = {"assigned": [
             {

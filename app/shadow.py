@@ -455,6 +455,26 @@ def _source_name_collisions(assigned_items: list[dict[str, Any]]) -> list[str]:
     return sorted(str(name) for name in source_names & other_names)
 
 
+def _is_all_day_assigned(item: dict[str, Any]) -> bool:
+    """Whether an assigned row is untimed all-day work with no timed write.
+
+    ``blocks == 0`` is TDTB's existing all-day state (``untimed_lane`` sets it
+    for date-only quick check-ins, 2026-11-09), and the date-only all-day loop
+    at the end of :func:`build_plan_manifest` is its Step A writer. Calendar
+    and Capacities rows keep their own zero-block behavior, and a server
+    ``native_blocks`` timed pin outranks a zero override exactly as it does in
+    :func:`_todoist_manifest_metadata`.
+    """
+    if _is_calendar_assigned(item) or _is_capacities_assigned(item):
+        return False
+    blocks = item.get("blocks")
+    if isinstance(blocks, bool) or not isinstance(blocks, (int, float)):
+        return False
+    if blocks != 0:
+        return False
+    return not sequence_module.timed_auto_pins([item])
+
+
 def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
     """Copy the trusted Todoist timing facts into internal manifest metadata.
 
@@ -577,6 +597,11 @@ def build_plan_manifest(
 
         if row_id in assigned:
             item = assigned[row_id]
+            if _is_all_day_assigned(item):
+                # Untimed lane (2026-11-09): an all-day row's only write is the
+                # date-only entry the loop below emits, so a stray timed row
+                # for it must neither become a timed write nor hide that entry.
+                continue
             sequenced_assigned.add(row_id)
             if _is_calendar_assigned(item):
                 # Unit 2: a schedulable all-day calendar row is calendar-only —

@@ -802,3 +802,91 @@ def test_repaired_proposal_is_exactly_the_committed_body_sequence():
     result = planning.validate_revalidation(revalidated)
     assert result.ok is True, result.hard_errors
     assert result.sequence == []
+
+
+# ---------------------------------------------------------------------------
+# Untimed lane partition (A2, 2026-11-09).
+#
+# ``blocks == 0`` is TDTB's existing all-day state: ``untimed_lane`` marks
+# date-only quick check-ins with it, and nothing in block-based planning can
+# describe such a row.  It must never reach the judgment payload, the
+# correction-factor estimate, the capacity count, or the never-bump assigned
+# set, and it must still be visible on the run result.
+# ---------------------------------------------------------------------------
+
+_UNTIMED = {"id": "fu Sam", "name": "fu Sam", "blocks": 0, "untimed_auto": True}
+
+# No injected schedulable rows: these tests are only about the partition.
+_NO_INJECTION = {"schedulable": {"qt": {"on": False}, "minting": {"on": False}}}
+
+
+def test_untimed_row_is_partitioned_out_of_the_payload_and_returned():
+    prepared = planning.prepare_sequence(_inputs(
+        assigned=[{"id": "A", "name": "A", "blocks": 1}, dict(_UNTIMED)],
+        day_setup=_NO_INJECTION,
+    ), mode="proposal")
+    assert [item["id"] for item in prepared.assigned] == ["A"]
+    assert [item["id"] for item in prepared.movable_assigned] == ["A"]
+    assert [item["id"] for item in prepared.untimed] == ["fu Sam"]
+
+    adapter = _adapter([{"id": "A", "start": "09:00", "end": "09:30", "zone": "any"}])
+    outcome = planning.run_proposal(prepared, adapter)
+    assert [item["id"] for item in adapter.calls[0][0]] == ["A"]
+    assert outcome.validation.ok is True, outcome.validation.hard_errors
+    assert outcome.result is not None
+    assert [row["id"] for row in outcome.result["sequence"]] == ["A"]
+    assert [item["id"] for item in outcome.result["untimed"]] == ["fu Sam"]
+
+
+def test_untimed_row_is_not_reestimated_into_a_timed_row():
+    # The correction-factor estimate gives every item at least one block, so an
+    # all-day row would silently become a 2-block timed placement at factor 2.
+    prepared = planning.prepare_sequence(_inputs(
+        config={"Defaults": {"estimation.correction_factor": 2.0}},
+        assigned=[dict(_UNTIMED), {"id": "A", "name": "A", "blocks": 2}],
+        day_setup=_NO_INJECTION,
+    ), mode="proposal")
+    assert [item["id"] for item in prepared.movable_assigned] == ["A"]
+    assert prepared.movable_assigned[0]["blocks"] == 4
+    assert [item["id"] for item in prepared.untimed] == ["fu Sam"]
+
+
+def test_zero_block_row_with_a_native_timed_pin_stays_timed():
+    # ``native_blocks`` is server provenance: a native Todoist time keeps its
+    # pin even when the effective block override is zero.
+    prepared = planning.prepare_sequence(_inputs(
+        assigned=[{
+            "id": "A", "name": "A", "blocks": 0, "native_blocks": 1,
+            "source": "todoist", "scheduled_start": "09:00",
+        }],
+        day_setup=_NO_INJECTION,
+    ), mode="proposal")
+    assert prepared.untimed == []
+    assert [pin["id"] for pin in prepared.effective_pins] == ["A"]
+    assert prepared.movable_assigned == []
+
+
+def test_revalidation_tolerates_a_stray_untimed_row():
+    # A client layout saved before the row became untimed can still carry its
+    # old timed row: the row is optional, never demanded and never an extra.
+    prepared = planning.prepare_sequence(_inputs(
+        assigned=[{"id": "A", "name": "A", "blocks": 1}, dict(_UNTIMED)],
+        day_setup=_NO_INJECTION,
+        sequence=[
+            {"id": "A", "start": "09:00", "end": "09:30", "zone": "any"},
+            {"id": "fu Sam", "start": "10:00", "end": "10:30", "zone": "any"},
+        ],
+    ), mode="revalidation")
+    assert [item["id"] for item in prepared.untimed] == ["fu Sam"]
+    result = planning.validate_revalidation(prepared)
+    assert result.ok is True, result.hard_errors
+
+
+def test_revalidation_never_demands_an_untimed_row():
+    prepared = planning.prepare_sequence(_inputs(
+        assigned=[{"id": "A", "name": "A", "blocks": 1}, dict(_UNTIMED)],
+        day_setup=_NO_INJECTION,
+        sequence=[{"id": "A", "start": "09:00", "end": "09:30", "zone": "any"}],
+    ), mode="revalidation")
+    result = planning.validate_revalidation(prepared)
+    assert result.ok is True, result.hard_errors
