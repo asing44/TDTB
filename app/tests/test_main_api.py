@@ -1733,6 +1733,103 @@ class TestNativeTimedRouteEnforcement:
         )
 
 
+class TestUntimedLaneCanonicalization:
+    """A1: a date-only quick check-in is canonicalized to the all-day state.
+
+    Owner decision 2026-11-09 (reverses the 2026-10-16 "no automatic
+    date-only rule"): a native Todoist row with a date-only due that is very
+    short or named like a check-in gets ``blocks = 0`` — the EXISTING all-day
+    state, not a new lane type.
+    """
+
+    CHECKIN = {
+        "id": "TEXTS", "name": "Meegy couch inspo texts",
+        "source": "todoist", "todoist_id": "t-texts",
+        "path": "todoist://t-texts",
+    }
+
+    #: A real date-only Todoist row: a duration, no ``scheduled_start``, and no
+    #: ``blocks`` (the digest does not synthesize one).
+    SERVER_ROW = {
+        "name": "Meegy couch inspo texts", "todoist_id": "t-texts",
+        "path": "todoist://t-texts", "surface": "assigned",
+        "source": "todoist", "duration": 10, "is_recurring": False,
+    }
+
+    def _canonicalize(self, submitted_rows, config=None):
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(today, [dict(self.SERVER_ROW)])
+        return main_mod._canonicalize_route_assigned(
+            today, submitted_rows, config,
+        )
+
+    def test_quick_check_in_is_canonicalized_to_all_day(self):
+        rows = self._canonicalize([dict(self.CHECKIN)])
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["blocks"] == 0            # the existing all-day state
+        assert row["untimed_auto"] is True
+        assert "untimed_reason" in row and row["untimed_reason"]
+        assert row["source"] == "todoist"
+        assert row["duration"] == 10
+
+    def test_client_blocks_override_beats_the_automatic_rule(self):
+        rows = self._canonicalize([{**self.CHECKIN, "blocks": 1}])
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["blocks"] == 1            # operator-stated duration wins
+        assert "untimed_auto" not in row
+        assert "untimed_reason" not in row
+
+    def test_client_untimed_claim_is_never_carried_forward(self):
+        rows = self._canonicalize([
+            {**self.CHECKIN, "blocks": 2, "untimed_auto": True,
+             "untimed_reason": "forged"},
+        ])
+        assert len(rows) == 1
+        assert rows[0]["blocks"] == 2
+        assert "untimed_auto" not in rows[0]
+        assert "untimed_reason" not in rows[0]
+
+    def test_config_can_disable_the_lane(self):
+        config = {"Defaults": {"untimed_lane": {"enabled": False}}}
+        rows = self._canonicalize([dict(self.CHECKIN)], config)
+        assert rows[0].get("blocks") != 0
+        assert "untimed_auto" not in rows[0]
+
+    def test_sequence_route_canonicalizes_before_planning(self, client, monkeypatch):
+        # End-to-end: the view judgment receives carries blocks == 0, so the
+        # row is never offered as a timed slot.
+        captured = {}
+
+        def fake_propose(assigned, config, anchored_blocks, ctx=None):
+            captured["assigned"] = assigned
+            return {"sequence": [], "overlap_grants": []}
+
+        monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+        monkeypatch.setattr(
+            main_mod.planning.sequence,
+            "validate_sequence",
+            lambda *a, **k: type("R", (), {
+                "ok": True, "hard_errors": [], "warnings": []
+            })(),
+        )
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(today, [dict(self.SERVER_ROW)])
+        r = client.post("/sequence", json={
+            "assigned": [dict(self.CHECKIN)],
+            "config": {},
+            "anchored_blocks": [],
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        row = next(
+            i for i in captured["assigned"]
+            if i["name"] == "Meegy couch inspo texts"
+        )
+        assert row["blocks"] == 0
+        assert row["untimed_auto"] is True
+
+
 class TestCommitNativeProtection:
     def _seed_recurring_todoist(self, today):
         rs.write_digest_index(today, [{

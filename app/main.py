@@ -96,6 +96,7 @@ import todoist_exclusions  # noqa: E402
 import app_config  # noqa: E402
 import config_write  # noqa: E402
 import artifact_source  # noqa: E402
+import untimed_lane  # noqa: E402
 
 #: Sentinel distinguishing "no coordinator built yet" from a built-but-
 #: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
@@ -1254,6 +1255,11 @@ _ROUTE_TIMING_FIELDS = frozenset({
     "capacities_completion_supported", "may_overlap_mint",
 })
 
+#: Server-owned annotations from the untimed lane (A1).  A client may never
+#: claim them: the values are stripped from the submitted row and re-derived
+#: from the server row + config alone.
+_UNTIMED_ANNOTATION_FIELDS = frozenset({"untimed_auto", "untimed_reason"})
+
 _ROUTE_NATIVE_CLAIM_FIELDS = frozenset({
     "identity", "source", "scheduled_start", "is_recurring", "native_blocks",
     "allow_time_adjustment", "capacities_id", "capacities_space_id",
@@ -1367,6 +1373,7 @@ def _validated_blocks_overlay(value: Any) -> float | int | None:
 def _canonicalize_route_assigned(
     today: date,
     submitted_rows: list[dict[str, Any]],
+    config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Canonicalize assigned rows before proposal or revalidation planning.
 
@@ -1384,6 +1391,11 @@ def _canonicalize_route_assigned(
     override cannot unpin a native timed row. Malformed or extreme ``blocks``
     overlays fail closed (the row is refused). Client pins remain untouched
     and are passed to planning for its canonical conflict diagnostics.
+
+    A1 untimed lane: a matched row that ``untimed_lane.classify`` calls a
+    quick check-in gets the existing all-day state (``blocks = 0``) plus the
+    server-owned ``untimed_auto``/``untimed_reason`` annotations.  A submitted
+    ``blocks > 0`` is the explicit escape hatch and beats the rule.
     """
     index = runstate.read_digest_index(today)
     server_rows = [
@@ -1456,6 +1468,7 @@ def _canonicalize_route_assigned(
             projected = {
                 key: value for key, value in row.items()
                 if key not in _ROUTE_TIMING_FIELDS
+                and key not in _UNTIMED_ANNOTATION_FIELDS
             }
             projected["id"] = str(match.get("name") or "").strip()
             projected["name"] = str(match.get("name") or "").strip()
@@ -1499,6 +1512,26 @@ def _canonicalize_route_assigned(
             # grant; the exact literal True is the only authorization.
             if row.get("may_overlap_mint") is True:
                 projected["may_overlap_mint"] = True
+            # A1 untimed lane (owner decision 2026-11-09) — this REVERSES the
+            # 2026-10-16 queue decision "no automatic date-only rule"
+            # (docs/queue/2026-10-16-placement-edits/05-keep-all-day-action.md)
+            # whose per-row "Keep all-day" action stays.  A date-only quick
+            # check-in rides the EXISTING all-day state (``blocks == 0``); no
+            # new lane type is introduced.  Nothing else has to change: a
+            # date-only row has no ``scheduled_start``, so
+            # ``sequence.timed_auto_pins`` derives no pin, a zero-block row has
+            # no placement duration, and ``shadow.build_plan_manifest`` emits
+            # ``schedule-all-day``.  See 05a-untimed-lane-reversal.md.
+            #
+            # The escape hatch: an explicit client ``blocks > 0`` (the same
+            # validated overlay applied above) is the operator's stated
+            # duration and always beats the automatic rule.
+            if overlay is None or overlay == 0:
+                verdict = untimed_lane.classify(projected, config)
+                if verdict["untimed"]:
+                    projected["blocks"] = 0
+                    projected["untimed_reason"] = verdict["reason"]
+                    projected["untimed_auto"] = True
             canonical.append(projected)
             continue
 
@@ -6833,7 +6866,7 @@ def create_app() -> FastAPI:
         """Propose a timeline through the pure planning boundary."""
         today = gather.effective_date(datetime.now())
         canonical_assigned = _canonicalize_route_assigned(
-            today, body.assigned,
+            today, body.assigned, body.config,
         )
         day_setup, _prompt_warnings = _read_day_setup(today)
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
@@ -6915,7 +6948,7 @@ def create_app() -> FastAPI:
         """Revalidate the client layout without provider calls or merging."""
         today = gather.effective_date(datetime.now())
         canonical_assigned = _canonicalize_route_assigned(
-            today, body.assigned,
+            today, body.assigned, body.config,
         )
         snapshot = _read_today_runstate(today)
         day_setup, _prompt_warnings = _day_setup_with_prompts(snapshot, today)
