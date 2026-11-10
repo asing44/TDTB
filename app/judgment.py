@@ -1535,7 +1535,8 @@ event starts before 12:00, the STANDING RULE below still wins — no before-noon
 
 OVERLAP POLICY: config.overlap_permissions_raw is the verbatim configured policy and \
 config.resolved_zones lists today's non-consuming Template zones. Template zones are \
-permeable backdrops, never capacity or walls. When you intentionally overlap a placed \
+permeable backdrops, never capacity or walls — except work_hours zone rows, which are \
+work blocks and walls for every item not zoned work_hours. When you intentionally overlap a placed \
 primary row with an anchored companion under that policy, emit one overlap_grant with the \
 exact stable IDs, exact intervals, concise reason, and copy \
 config.planning_config_fingerprint exactly. Do not grant hard-safety exceptions.

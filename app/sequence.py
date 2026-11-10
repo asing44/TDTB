@@ -1209,6 +1209,9 @@ def reseat_overflow_tail_rows(
         span = _anchored_span(block)
         if span and span[1] > span[0]:
             obstacles.append(span)
+    # Work blocks are walls (2026-11-09): the park must not seat a row inside
+    # one, since the work-wall pass exempts park-owned rows afterwards.
+    obstacles.extend(work_walls(sequence, anchored_blocks))
 
     candidates: list[tuple[dict[str, Any], str, int, str, str]] = []
     for row in sequence:
