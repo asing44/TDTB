@@ -737,11 +737,17 @@ class TestCalendarBusyBlocks:
 class TestCalendarSoftOverlap:
     """Explicit user decision (2026-10-15) reverses the FEEDBACK-02 / FF-CAL-03
     hard-wall contract: an assigned row overlapping a non-permeable calendar
-    block (fixed or work class) validates with a soft 'calendar_overlap'
-    warning and is never rejected. Permeable windows, exact overlap grants, and
-    ignored/quarantined (contract 17 excluded) rows keep their old behavior.
-    Config-backed anchored blocks stay on the LD26 acceptable-defect path, and
-    the overflow tail is soft like every other calendar overlap."""
+    block validates with a soft 'calendar_overlap' warning and is never
+    rejected. Permeable windows, exact overlap grants, and ignored/quarantined
+    (contract 17 excluded) rows keep their old behavior. Config-backed anchored
+    blocks stay on the LD26 acceptable-defect path, and the overflow tail is
+    soft like every other calendar overlap.
+
+    2026-11-09 refinement (owner decision): the ``work`` capacity class is a
+    WORK BLOCK — a wall for every item not zoned ``work_hours`` — so such a row
+    is moved out of it (soft ``work_wall_reseated``) rather than left inside
+    with a ``calendar_overlap`` flag. Fixed-class blocks keep this soft-only
+    reading."""
 
     def _calendar(self, block="Cooking", start="20:30", end="21:00",
                   capacity_class="fixed"):
@@ -764,18 +770,22 @@ class TestCalendarSoftOverlap:
         assert "Cooking" in warning["detail"]
         assert warning["detail"].endswith("resolve on the timeline")
 
-    def test_work_class_calendar_block_overlap_is_soft_warning(self):
-        # A work-class meeting is still busy time — the planner flags the
-        # overlap but never rejects the sequence.
+    def test_work_class_calendar_block_is_a_work_wall(self):
+        # 2026-11-09 owner decision supersedes the soft-only reading for the
+        # WORK class: a work-class calendar block is a work block, so it is a
+        # wall for a non-work item — the row is moved out of it (softly, never
+        # rejected) instead of only being flagged inside it.
         anchored = [self._calendar(block="Trinoor sync", start="09:00",
                                    end="10:00", capacity_class="work")]
         proposal = {"sequence": [_seq_row("t1", "09:30", "10:15")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
         assert result.ok is True
         assert result.hard_errors == []
-        assert any(w.get("rule") == "calendar_overlap"
-                   and "Trinoor sync" in w["detail"]
-                   for w in result.warnings)
+        row = proposal["sequence"][0]
+        assert (row["start"], row["end"]) == ("10:00", "10:30")
+        assert any(w.get("rule") == "work_wall_reseated" for w in result.warnings)
+        assert not any(w.get("rule") == "calendar_overlap"
+                       for w in result.warnings)
 
     def test_calendar_block_without_class_is_soft_warning(self):
         # Unidentified calendars keep the historical fixed default (contract

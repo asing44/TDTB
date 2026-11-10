@@ -1482,8 +1482,10 @@ judgment budget in a deterministic day-planning app.
 
 Role: propose start/end times for assigned items around fixed anchored blocks, mirroring the \
 tdtb-bridger-vault skill's Phase 4 placement passes: calendar events and hard/window anchored \
-blocks are fixed (place assigned items around them, never overlapping a non-permeable anchored \
-block); zone preferences (before_work / work_hours / after_work / evening / weekend / any) are \
+blocks are fixed, and work blocks (zone work_hours backdrop rows and calendar blocks with \
+capacity class work) are walls for every item not zoned work_hours — place such items in free \
+gaps outside them (e.g. a lunch gap); other calendar overlaps are tolerated but flagged; \
+zone preferences (before_work / work_hours / after_work / evening / weekend / any) are \
 soft constraints — prefer a compatible window, flag "zone_violation" only when none exists; a \
 latest_start on an item means it must start at or before that time, flagged \
 "latest_start_violation" if forced later; never drop an item (never-bump) — every assigned item \
@@ -1500,8 +1502,9 @@ boundary: late blocks may run past it. Times remain same-day HH:MM, so a block t
 midnight ends at 23:59 instead; never emit an early-morning end after a late-evening start. \
 Overflow items that cannot fit in free gaps park at or after effective_eod \
 even if that overlaps a late anchored block — in the overflow tail (start >= effective_eod) \
-such overlaps are tolerated and merely flagged; BEFORE effective_eod, never overlap a \
-non-permeable anchored block.
+such overlaps are tolerated and merely flagged; BEFORE effective_eod, keep every item that is \
+not zoned work_hours out of the day's work blocks, and tolerate but flag every other \
+non-permeable anchored-block overlap.
 
 DURATIONS ARE FIXED INPUTS BY DEFAULT: every assigned item's duration is its "blocks" field × \
 30 minutes; an item with no "blocks" field is exactly 1 block = 30 minutes. Each sequence row's \

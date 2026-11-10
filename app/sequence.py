@@ -1085,6 +1085,25 @@ def _constraint_member_ids(constraints: list[dict[str, Any]]) -> set[str]:
     return members
 
 
+def _free_start(cursor: int, duration: int, obstacles: list[tuple[int, int]]) -> int:
+    """Advance ``cursor`` past every obstacle span it would share.
+
+    The single placement primitive behind both deterministic re-seats: a
+    ``duration``-minute row may not begin while any obstacle still overlaps
+    ``[cursor, cursor + duration)``, so the cursor is pushed to that
+    obstacle's end and the scan repeats until nothing overlaps.
+    """
+    start = cursor
+    progressed = True
+    while progressed:
+        progressed = False
+        for o_start, o_end in obstacles:
+            if o_start < start + duration and start < o_end:
+                start = max(start, o_end)
+                progressed = True
+    return start
+
+
 def reseat_overflow_tail_rows(
     proposal: dict[str, Any],
     assigned: list[dict[str, Any]],
@@ -1219,18 +1238,6 @@ def reseat_overflow_tail_rows(
             obstacles.append((start_min, end_min))
     obstacles.sort()
 
-    def _free_start(cursor: int, duration: int) -> int:
-        """Advance ``cursor`` past every obstacle span it would share."""
-        start = cursor
-        progressed = True
-        while progressed:
-            progressed = False
-            for o_start, o_end in obstacles:
-                if o_start < start + duration and start < o_end:
-                    start = max(start, o_end)
-                    progressed = True
-        return start
-
     cursor = park_min
     moved = False
     # Independent stack for rows that fit NO free gap: they park at 17:00 and
@@ -1238,7 +1245,7 @@ def reseat_overflow_tail_rows(
     # them land consecutively in original order (owner request 2026-10-29).
     spill_cursor = park_min
     for row, row_id, duration, start, end in candidates:
-        new_start = _free_start(cursor, duration)
+        new_start = _free_start(cursor, duration, obstacles)
         new_end = new_start + duration
         spilled = new_end > _TAIL_END_MIN
         if spilled and spill_cursor + duration > _TAIL_END_MIN:
@@ -1314,6 +1321,411 @@ def reseat_overflow_tail_rows(
             )
         reseated.append({
             "id": row_id, "rule": rule, "detail": detail,
+            "start": start, "end": end,
+        })
+    return reseated
+
+
+# ---------------------------------------------------------------------------
+# Work-wall re-seat (2026-11-09): work blocks are walls for non-work items
+# ---------------------------------------------------------------------------
+
+# Zone label marking a work block: the Trinoor zone framing rows carry it, and
+# an assigned item carrying it belongs INSIDE a work block rather than around
+# it.
+WORK_ZONE = "work_hours"
+# Calendar capacity class that makes an imported calendar block a work block.
+_CALENDAR_WORK_CLASS = "work"
+
+# Row key recording that the work-wall re-seat OWNS this row's placement:
+# ``gap`` (moved into the first free gap at/after its start) or ``park`` (no
+# same-day gap, handed to the 5:00 PM overflow park). Mirrors
+# ``OVERFLOW_PARK_KEY``: the marker travels with the row through the client
+# store and back into /validate-sequence, which is what makes the re-seat a
+# fixed point (see the invariant in ``reseat_work_wall_rows``). ``user`` means
+# the owner has since moved or resized the row and it is theirs again.
+WORK_WALL_RESEAT_KEY = "work_wall_reseat"
+# Companion key recording the span the re-seat SET, as ``"HH:MM-HH:MM"`` — the
+# marker alone cannot tell a re-seat-owned placement from one the owner edited
+# afterwards (same reasoning as ``OVERFLOW_PARK_SPAN_KEY``).
+WORK_WALL_RESEAT_SPAN_KEY = "work_wall_reseat_span"
+_WALL_GAP = "gap"
+_WALL_PARK = "park"
+_WALL_USER = "user"
+# Marker values that mean the work-wall re-seat still owns the row.
+_WALL_KINDS = (_WALL_GAP, _WALL_PARK)
+
+
+def _row_span(row: Any) -> tuple[int, int] | None:
+    """A sequence row's [start, end) span in minutes, or None."""
+    if not isinstance(row, dict):
+        return None
+    start = placement_rules.canonical_time(row.get("start"))
+    end = placement_rules.canonical_time(row.get("end"))
+    if start is None or end is None:
+        return None
+    return (_to_minutes(start), _to_minutes(end))
+
+
+def _work_wall_entries(
+    sequence: list[Any] | None, anchored_blocks: list[dict[str, Any]] | None
+) -> list[tuple[str, tuple[int, int]]]:
+    """Every work block today, as ``[(id, (start_min, end_min)), ...]``.
+
+    Two sources make a work block a wall:
+
+    - a ``backdrop: true`` zone framing row zoned ``work_hours`` (the 🟡
+      Trinoor zone rows the planner appends — permeable visuals that until now
+      were exempt from validation entirely and therefore no wall at all);
+    - an imported calendar block with ``capacity_class: "work"`` that is not
+      ``overlap_allowed`` (permeable).
+
+    Empty/zero-length spans are skipped. ``work_walls`` exposes the same set as
+    bare spans; this richer form keeps the block identity for exact
+    overlap-grant matching.
+    """
+    entries: list[tuple[str, tuple[int, int]]] = []
+    for row in sequence or []:
+        if not isinstance(row, dict) or not row.get("backdrop"):
+            continue
+        if str(row.get("zone") or "").strip().casefold() != WORK_ZONE:
+            continue
+        span = _row_span(row)
+        if span and span[1] > span[0]:
+            entries.append((str(row.get("id")), span))
+    for block in anchored_blocks or []:
+        if not isinstance(block, dict) or block.get("overlap_allowed"):
+            continue
+        if str(block.get("source") or "").strip().casefold() != "calendar":
+            continue
+        klass = str(block.get("capacity_class") or "fixed").strip().casefold()
+        if klass != _CALENDAR_WORK_CLASS:
+            continue
+        span = _anchored_span(block)
+        if span and span[1] > span[0]:
+            entries.append((str(_anchored_block_id(block)), span))
+    return entries
+
+
+def work_walls(
+    sequence: list[Any] | None, anchored_blocks: list[dict[str, Any]] | None
+) -> list[tuple[int, int]]:
+    """The day's work-block spans — walls for every non-work item.
+
+    See ``_work_wall_entries`` for what qualifies. Returned in discovery order
+    (zone rows in sequence order, then calendar blocks), duplicates included.
+    """
+    return [span for _name, span in _work_wall_entries(sequence, anchored_blocks)]
+
+
+def _recorded_wall_span(row: dict[str, Any]) -> tuple[str, str] | None:
+    """The span the work-wall re-seat recorded when it took ownership."""
+    raw = row.get(WORK_WALL_RESEAT_SPAN_KEY)
+    if not isinstance(raw, str):
+        return None
+    start_text, separator, end_text = raw.partition("-")
+    if not separator:
+        return None
+    start = placement_rules.canonical_time(start_text)
+    end = placement_rules.canonical_time(end_text)
+    if start is None or end is None:
+        return None
+    return (start, end)
+
+
+def _release_owner_edited_wall_rows(sequence: list[Any]) -> None:
+    """Hand a re-seat-owned row back to the owner when its placement changed.
+
+    Same contract as ``_release_owner_edited_park_rows``: the marker rides the
+    row's wire dict, so a user drag or resize keeps it. A marker whose recorded
+    span no longer matches the row is STALE, so the row is released to
+    ``_WALL_USER`` — the owner's explicit edit wins, the row is not moved again,
+    and no regenerated warning is reported for it.
+    """
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        if row.get(WORK_WALL_RESEAT_KEY) not in _WALL_KINDS:
+            continue
+        recorded = _recorded_wall_span(row)
+        if recorded is None:
+            continue
+        start = placement_rules.canonical_time(row.get("start"))
+        end = placement_rules.canonical_time(row.get("end"))
+        if start is None or end is None:
+            continue
+        if (start, end) == recorded:
+            continue
+        row[WORK_WALL_RESEAT_KEY] = _WALL_USER
+        row.pop(WORK_WALL_RESEAT_SPAN_KEY, None)
+
+
+def _wall_grant_covers(
+    grants: Any,
+    row: dict[str, Any],
+    walls: list[tuple[str, tuple[int, int]]],
+) -> bool:
+    """Whether an exact overlap grant already permits this row inside a wall.
+
+    Exactness is the whole point: the grant must name this row, its CURRENT
+    interval, one of today's work walls, and that wall's exact interval. A
+    stale or partial grant is no exemption.
+    """
+    if not isinstance(grants, list):
+        return False
+    row_id = str(row.get("id"))
+    row_interval = {
+        "start": placement_rules.canonical_time(row.get("start")),
+        "end": placement_rules.canonical_time(row.get("end")),
+    }
+    for grant in grants:
+        if not isinstance(grant, dict):
+            continue
+        if str(grant.get("primary_id")) != row_id:
+            continue
+        if grant.get("primary_interval") != row_interval:
+            continue
+        companion_interval = grant.get("companion_interval")
+        if not isinstance(companion_interval, dict):
+            continue
+        companion_start = placement_rules.canonical_time(
+            companion_interval.get("start")
+        )
+        companion_end = placement_rules.canonical_time(
+            companion_interval.get("end")
+        )
+        if companion_start is None or companion_end is None:
+            continue
+        companion_span = (_to_minutes(companion_start), _to_minutes(companion_end))
+        for wall_name, wall_span in walls:
+            if str(grant.get("companion_id")) != wall_name:
+                continue
+            if companion_span == wall_span:
+                return True
+    return False
+
+
+def _park_spill_cursor(
+    sequence: list[Any], durations: dict[str, int]
+) -> int:
+    """The next free minute in the existing 5:00 PM overflow stack."""
+    cursor = _to_minutes(OVERFLOW_PARK_TIME)
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        if row.get(OVERFLOW_PARK_KEY) != _PARK_SPILL:
+            continue
+        duration = durations.get(str(row.get("id")))
+        if duration is None:
+            span = _row_span(row)
+            duration = span[1] - span[0] if span and span[1] > span[0] else 30
+        cursor += duration
+    return cursor
+
+
+def reseat_work_wall_rows(
+    proposal: dict[str, Any],
+    assigned: list[dict[str, Any]],
+    anchored_blocks: list[dict[str, Any]] | None = None,
+    time_frame: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    """Move non-work items out of the day's work blocks.
+
+    Live defect (2026-11-09): Trinoor Morning 08:30-12:30 and Afternoon
+    13:30-17:00 are the day's work blocks, but the planner placed a barefoot
+    walk at 12:00-12:30 (inside Morning) and two items at 16:30/16:45 (inside
+    Afternoon). Those zone rows reach ``validate_sequence`` as ``backdrop`` rows
+    and were exempt from validation entirely, so they were no wall at all, and
+    the calendar reading of a work block is only a soft ``calendar_overlap``.
+
+    Owner decision: a work block IS a wall for every item that is not itself
+    work. Each ASSIGNED row overlapping a work wall is moved, at its full
+    duration, into the first FREE gap that begins at/after its own start and
+    avoids every work wall, every non-permeable anchored block, and every other
+    row of the day. (An item that fits no same-day gap is handed to the 5:00 PM
+    overflow park, which is the owner's settled place for a row with no home.)
+
+    Exempt rows keep their placement:
+
+    - items zoned ``work_hours`` — work belongs inside a work block;
+    - explicit placements: rows marked ``pinned``, the caller's
+      ``pinned_rows``, and server-derived native timed pins
+      (``timed_auto_pins``);
+    - an exact ``overlap_grant`` naming this row, its current interval, and the
+      wall's exact interval and id;
+    - anchored passthrough rows, selected Mint session rows, and ``backdrop``
+      zone rows (they are the walls and other fixed framing, not movable work);
+    - rows the overflow park already owns, and rows it released to the owner
+      (``_PARK_USER``);
+    - rows a previous pass placed (``WORK_WALL_RESEAT_KEY``), which is what
+      makes the re-seat a FIXED POINT: validation re-runs on its own output
+      after every timeline edit, so a second pass must move nothing. Ownership
+      is released when the owner drags or resizes the row — see
+      ``_release_owner_edited_wall_rows``.
+
+    Mutates ``proposal`` rows and any matching overlap grants in place,
+    re-sorts the sequence chronologically (stable), and returns one soft
+    ``work_wall_reseated`` descriptor per row the re-seat currently owns,
+    regenerated from the row's CURRENT placement so a converged sequence
+    reports the same warnings on every pass.
+    """
+    sequence = proposal.get("sequence")
+    if not isinstance(sequence, list):
+        return []
+    # Release owner-edited rows BEFORE candidacy/obstacles/reporting are
+    # derived, so a released row behaves like any other user-placed row.
+    _release_owner_edited_wall_rows(sequence)
+    walls = _work_wall_entries(sequence, anchored_blocks)
+    if not walls:
+        return []
+    wall_spans = [span for _name, span in walls]
+    items = [item for item in assigned or [] if isinstance(item, dict)]
+    durations = _assigned_durations(items)
+    grants = proposal.get("overlap_grants")
+    item_by_id = {str(item.get("id")): item for item in items}
+
+    # Placements that are never re-seated: anchored passthroughs (including the
+    # synthetic pinned walls), selected Mint session rows, and explicit pins.
+    anchored_ids = {
+        str(_anchored_block_id(block)) for block in (anchored_blocks or [])
+    }
+    mint_ids = {wall_id for wall_id, _span in selected_mint_walls(items)}
+    pinned_ids = {
+        str(pin.get("id"))
+        for pin in (proposal.get("pinned_rows") or [])
+        if isinstance(pin, dict) and pin.get("id") is not None
+    }
+    pinned_ids.update(
+        str(pin.get("id")) for pin in timed_auto_pins(items)
+    )
+
+    candidates: list[tuple[dict[str, Any], str, int, str, str]] = []
+    for row in sequence:
+        if not isinstance(row, dict) or row.get("backdrop"):
+            continue
+        row_id = str(row.get("id"))
+        span = _row_span(row)
+        if span is None or span[1] <= span[0]:
+            continue
+        if not any(span[0] < wall[1] and wall[0] < span[1] for wall in wall_spans):
+            continue
+        if row.get("pinned") is True or row_id in pinned_ids:
+            continue
+        if row_id in anchored_ids or row_id in mint_ids:
+            continue
+        if row.get(OVERFLOW_PARK_KEY) is not None:
+            continue
+        if row.get(WORK_WALL_RESEAT_KEY) is not None:
+            continue
+        zone = str(
+            item_by_id.get(row_id, {}).get("zone") or row.get("zone") or ""
+        ).strip().casefold()
+        if zone == WORK_ZONE:
+            continue
+        if _wall_grant_covers(grants, row, walls):
+            continue
+        duration = durations.get(row_id)
+        if duration is None:
+            continue
+        candidates.append((
+            row, row_id, duration,
+            placement_rules.canonical_time(row.get("start")),
+            placement_rules.canonical_time(row.get("end")),
+        ))
+    # Obstacles: the walls themselves, every non-permeable anchored block, and
+    # every row that is not itself moving on this pass. (An empty candidate set
+    # still falls through to the reporting loop below: a converged sequence
+    # reports the same warnings on every pass.)
+    candidate_ids = {row_id for _row, row_id, *_ in candidates}
+    obstacles: list[tuple[int, int]] = list(wall_spans)
+    for block in anchored_blocks or []:
+        if not isinstance(block, dict) or block.get("overlap_allowed"):
+            continue
+        # A ``Type: window`` block is a floating placement window, not solid
+        # time (ISS-6: "don't block windows; flag overlaps"), and an excluded
+        # calendar class (contract 17) is no wall at all.
+        if str(block.get("Type") or block.get("type") or "").strip().lower() \
+                == "window":
+            continue
+        if str(block.get("source") or "").strip().casefold() == "calendar" \
+                and str(block.get("capacity_class") or "fixed").strip().casefold() \
+                in _CALENDAR_EXCLUDED_CLASSES:
+            continue
+        span = _anchored_span(block)
+        if span and span[1] > span[0]:
+            obstacles.append(span)
+    for row in sequence:
+        if not isinstance(row, dict) or row.get("backdrop"):
+            continue
+        if str(row.get("id")) in candidate_ids:
+            continue
+        span = _row_span(row)
+        if span and span[1] > span[0]:
+            obstacles.append(span)
+    obstacles.sort()
+
+    spill_cursor = _park_spill_cursor(sequence, durations)
+    moved = False
+    for row, row_id, duration, start, end in candidates:
+        new_start = _free_start(_to_minutes(start), duration, obstacles)
+        new_end = new_start + duration
+        if new_end > _TAIL_END_MIN:
+            # No same-day free gap after this row's start: hand it to the
+            # overflow park (owner decision), which stacks from 5:00 PM.
+            if spill_cursor + duration > _TAIL_END_MIN:
+                # Even the 5:00 PM stack is full: leave the row where it is,
+                # flagged, and never drop it (never-bump).
+                row[WORK_WALL_RESEAT_KEY] = _WALL_PARK
+                row[WORK_WALL_RESEAT_SPAN_KEY] = _park_span_text(start, end)
+                continue
+            new_start, new_end = spill_cursor, spill_cursor + duration
+            spill_cursor = new_end
+            kind = _WALL_PARK
+        else:
+            kind = _WALL_GAP
+        new_start_str = _minutes_to_hhmm(new_start)
+        new_end_str = _minutes_to_hhmm(new_end)
+        row["start"], row["end"] = new_start_str, new_end_str
+        row[WORK_WALL_RESEAT_KEY] = kind
+        row[WORK_WALL_RESEAT_SPAN_KEY] = _park_span_text(new_start_str, new_end_str)
+        _repair_reseated_grant_intervals(
+            grants, row_id, {"start": start, "end": end},
+            {"start": new_start_str, "end": new_end_str},
+        )
+        obstacles.append((new_start, new_end))
+        moved = True
+    if moved:
+        # Moved rows land later in the day; re-sort so the returned sequence
+        # (and the structural chronological-order check) is consistent.
+        sequence.sort(key=_row_start_sort_key)
+
+    reseated: list[dict[str, str]] = []
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        kind = row.get(WORK_WALL_RESEAT_KEY)
+        if kind not in _WALL_KINDS:
+            # ``_WALL_USER`` (the owner has moved this row since) and unknown
+            # values are not re-seat-owned: no warning, no further movement.
+            continue
+        row_id = str(row.get("id"))
+        if durations.get(row_id) is None:
+            continue
+        start = placement_rules.canonical_time(row.get("start")) or ""
+        end = placement_rules.canonical_time(row.get("end")) or ""
+        if kind == _WALL_PARK:
+            detail = (
+                f"{row_id!r} lands inside a work block and fits no same-day "
+                f"gap — parked at 5:00 PM ({start}-{end}); move or drop it"
+            )
+        else:
+            detail = (
+                f"{row_id!r} landed inside a work block — moved to "
+                f"{start}-{end}; work blocks are walls for items not zoned "
+                f"{WORK_ZONE}"
+            )
+        reseated.append({
+            "id": row_id, "rule": "work_wall_reseated", "detail": detail,
             "start": start, "end": end,
         })
     return reseated
@@ -1581,6 +1993,22 @@ def validate_sequence(
         reseated_ids.add(item["id"])
         if item["rule"] == "overflow_past_eod":
             spill_ids.add(item["id"])
+        add_warning(
+            {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
+            affected_rows=[item["id"]],
+            intervals=[interval_for(item["id"], item["start"], item["end"])],
+        )
+    # Work walls (2026-11-09, owner decision): a work block — the 🟡 Trinoor
+    # ``work_hours`` zone rows and calendar blocks with capacity class ``work``
+    # — is a wall for every item that is not itself work. Non-work rows that
+    # land inside one are moved to the first free gap at/after their own start
+    # (or handed to the 5:00 PM overflow park when the day holds no gap), so
+    # the returned plan carries the corrected times on both /sequence and
+    # /validate-sequence. Runs AFTER the overflow park: a parked row holds its
+    # ground and is never a candidate here.
+    for item in reseat_work_wall_rows(
+        proposal, assigned, anchored_blocks, time_frame
+    ):
         add_warning(
             {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
             affected_rows=[item["id"]],

@@ -243,12 +243,20 @@ class TestFeedback05WallSafety:
         assert any(w.get("rule") == "calendar_overlap"
                    and "Cooking" in w["detail"] for w in r.warnings)
 
-    def test_row_over_trivia_work_wall_is_soft_warning(self):
-        r = self._res([_seq_row("t1", "19:15", "19:45")])
+    def test_row_over_trivia_work_wall_is_moved_out(self):
+        # 2026-11-09 owner decision: a work-class calendar block is a work
+        # block, so a non-work row is moved out of it — softly, never rejected.
+        # The row lands in the first free gap after trivia's end (Cooking starts
+        # 20:30), skipping the permeable Foods Dinner window and the
+        # quarantined Steelers block (no wall at all, contract 17).
+        rows = [_seq_row("t1", "19:15", "19:45")]
+        r = self._res(rows)
         assert r.ok is True
         assert r.hard_errors == []
-        assert any(w.get("rule") == "calendar_overlap"
-                   and "DCP Bark Bar trivia" in w["detail"] for w in r.warnings)
+        assert any(w.get("rule") == "work_wall_reseated" for w in r.warnings)
+        assert not any(w.get("rule") == "calendar_overlap" for w in r.warnings)
+        moved = next(row for row in rows if row["id"] == "t1")
+        assert (moved["start"], moved["end"]) == ("20:00", "20:30")
 
     def test_row_over_quarantined_steelers_is_no_wall(self):
         # Steelers 20:00-22:00 is quarantined (contract 17): a row may cross

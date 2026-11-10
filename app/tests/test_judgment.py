@@ -345,6 +345,22 @@ class TestProposeSequence:
             "never-bump covers only the items you receive."
         ) in p
 
+    def test_prompt_names_work_blocks_as_walls(self):
+        # B2 (2026-11-09): the prompt must agree with validate_sequence's
+        # work-wall rule — work blocks are walls for non-work items — instead
+        # of the old blanket "never overlap a non-permeable anchored block".
+        p = j.SEQUENCE_SYSTEM_PROMPT
+        assert (
+            "work blocks (zone work_hours backdrop rows and calendar blocks "
+            "with capacity class work) are walls for every item not zoned "
+            "work_hours"
+        ) in p
+        assert "other calendar overlaps are tolerated but flagged" in p
+        assert "never overlapping a non-permeable anchored block" not in p
+        assert "BEFORE effective_eod, never overlap a" not in p
+        # A2's untimed-row sentence stays.
+        assert "Items with blocks 0 are untimed" in p
+
     def test_prompt_grants_task_task_overlap_and_bundling(self):
         # T29: the prompt must invite reasoned task-task overlap (errand
         # ride-alongs) and bundling into named context blocks, not only
