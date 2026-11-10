@@ -1526,7 +1526,13 @@ def _canonicalize_route_assigned(
             # The escape hatch: an explicit client ``blocks > 0`` (the same
             # validated overlay applied above) is the operator's stated
             # duration and always beats the automatic rule.
-            if overlay is None or overlay == 0:
+            # The cockpit always echoes ``blocks`` (shapeAssignedWire), so an
+            # overlay equal to the server's own value is not an override.
+            if (
+                overlay is None
+                or overlay == 0
+                or overlay == match.get("blocks")
+            ):
                 verdict = untimed_lane.classify(projected, config)
                 if verdict["untimed"]:
                     projected["blocks"] = 0

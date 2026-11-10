@@ -1782,6 +1782,26 @@ class TestUntimedLaneCanonicalization:
         assert "untimed_auto" not in row
         assert "untimed_reason" not in row
 
+    def test_echoed_server_blocks_is_not_an_override(self):
+        # The cockpit always sends ``blocks``; echoing the server's own value
+        # must not count as the operator escape hatch.
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(today, [{**self.SERVER_ROW, "blocks": 1}])
+        rows = main_mod._canonicalize_route_assigned(
+            today, [{**self.CHECKIN, "blocks": 1}], None,
+        )
+        assert rows[0]["blocks"] == 0
+        assert rows[0]["untimed_auto"] is True
+
+    def test_changed_blocks_still_beats_the_rule(self):
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(today, [{**self.SERVER_ROW, "blocks": 1}])
+        rows = main_mod._canonicalize_route_assigned(
+            today, [{**self.CHECKIN, "blocks": 2}], None,
+        )
+        assert rows[0]["blocks"] == 2
+        assert "untimed_auto" not in rows[0]
+
     def test_client_untimed_claim_is_never_carried_forward(self):
         rows = self._canonicalize([
             {**self.CHECKIN, "blocks": 2, "untimed_auto": True,
