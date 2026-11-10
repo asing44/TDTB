@@ -97,17 +97,18 @@
 /* Row cluster: the kebab is the seventh slot of a plan row's controls (Mint,
    switch, Complete, source slot, Expand, Hide, Source menu). The rules sit here,
    with higher specificity than app.css's cluster rules, so the cluster and its
-   column widen together: 52 + 44 + 5 x 32 + 6 x 10 = 316px. Plan rows only
+   column widen together: 52 + 44 + 5 x 32 + 6 x 6 = 292px (gaps tightened
+   from 10px so the kebab costs the title almost nothing). Plan rows only
    (`.trow--plan`); the Not in plan drawer rows keep their content-sized flex
    cluster, which simply gains the fixed 32px kebab slot. */
 @media (min-width: 641px) {
   .queue .qrow.trow.trow--dslider.trow--plan {
-    grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 316px;
+    grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 292px;
   }
   .queue .qrow.trow.trow--dslider.trow--plan > .trow__acts {
-    min-width: 316px;
+    min-width: 292px;
     grid-template-columns: 52px 44px repeat(5, 32px);
-    gap: 10px;
+    gap: 6px;
   }
 }
 .qrow.trow > .trow__acts > .source-menu {
@@ -171,4 +172,12 @@
   background: var(--t-surface-2, #f1efe8);
   color: var(--t-muted);
   cursor: not-allowed;
+}
+
+/* Not in plan drawer rows: the kebab is a fourth 32px slot; tighter gaps keep
+   the title column close to its pre-kebab width. */
+@media (min-width: 641px) {
+  .skipped-today__list > .qrow.trow--unassigned.trow--dslider > .trow__acts {
+    gap: 4px;
+  }
 }
