@@ -99,12 +99,32 @@ const PRIORITY_TITLE: Record<string, string> = {
 
 const NATIVE_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
+/** A1 untimed lane (A3): whether the SERVER owns this row's all-day state.
+    Only the row's CURRENT shape counts, so a stated duration — any `blocks > 0`,
+    the override that beats the automatic rule — ends the automatic state; the
+    annotation the server gave the item stays on it. */
+export function untimedAutoAllDay(s: AppState, item: AssignedItem): boolean {
+  return item.untimedAuto === true && (s.overrides[item.id]?.blocks ?? item.blocks) === 0;
+}
+
+/** The server's own reason for an automatic all-day row, for the row's native
+    tooltip; null when the lane did not classify the row or the payload carried
+    no reason. The cockpit never invents this sentence. */
+export function untimedAutoNote(s: AppState, item: AssignedItem): string | null {
+  if (!untimedAutoAllDay(s, item)) return null;
+  const reason = (item.untimedReason ?? "").trim();
+  return reason.length > 0 ? reason : null;
+}
+
 /** The row's short scheduling state: All-day (a local plan state), Source
     time (a native Todoist wall time), Pinned (an exact start chosen here),
-    else Automatic start. Edits apply at once, so there is no "Staged" state. */
+    else Automatic start. Edits apply at once, so there is no "Staged" state.
+    An all-day row the SERVER classified (the A1 untimed lane) reads "Auto
+    all-day": the state is still the same all-day state, and the words say the
+    operator did not choose it. */
 function shortState(s: AppState, item: AssignedItem): string {
   const blocks = s.overrides[item.id]?.blocks ?? item.blocks;
-  if (blocks === 0) return "All-day";
+  if (blocks === 0) return untimedAutoAllDay(s, item) ? "Auto all-day" : "All-day";
   const pin = s.placements[item.id];
   if (pin) return `Pinned ${display12h(pin)}`;
   if (
@@ -250,6 +270,9 @@ export function TaskRow({
   // The slider applies at once through the row's local edit path, so it shows
   // the committed value (an all-day row reads the inert "All day" notch).
   const allDay = blocks === 0;
+  // A1 untimed lane (A3): why the SERVER made this row all-day, if it did. The
+  // label keeps the state; the tooltip carries the reason and the escape hatch.
+  const untimedWhy = untimedAutoNote(s, item);
   const durBlocks = allDay ? 0 : blocks;
   // The leftmost All-day notch is open for every row (a Capacities row's
   // All-day is a local plan state) except a protected Todoist native time.
@@ -384,7 +407,16 @@ export function TaskRow({
               )}
             </ul>
           )}
-          <span class="trow__state">{shortState(s, item)}</span>
+          <span
+            class="trow__state"
+            title={
+              untimedWhy
+                ? `Untimed automatically: ${untimedWhy}. Set a duration to schedule it.`
+                : undefined
+            }
+          >
+            {shortState(s, item)}
+          </span>
           <DurationUndo s={s} item={item} />
         </span>
         {rowOverlaps.map((n) => {

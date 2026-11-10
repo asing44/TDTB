@@ -406,6 +406,17 @@ export interface AssignedItem {
       the planner to place. scheduledStart is their current Todoist wall time. */
   isRecurring?: boolean;
   scheduledStart?: string | null;
+  /** A1 untimed lane: the server classified this date-only quick check-in into
+      the existing all-day state and said so. SERVER-OWNED — the client never
+      sends it back (the route strips the key from a submitted row and
+      re-derives it), and it only describes the row's CURRENT shape: a stated
+      duration (any `blocks > 0` override) schedules the row and the marker
+      goes, while the annotation stays on the item. */
+  untimedAuto?: boolean;
+  /** The server's own one-line reason for the automatic all-day state, shown
+      verbatim in the row's tooltip. Null on every row the lane did not
+      classify, and never a client-authored string. */
+  untimedReason?: string | null;
   /** Todoist labels, verbatim (T23 source context); absent/[] for Capacities rows. */
   labels?: string[];
   /** Source tags, verbatim; absent/[] when the backend carries no tags. */

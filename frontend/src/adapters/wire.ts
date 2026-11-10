@@ -1381,6 +1381,12 @@ export function projectAssigned(row: Wire): AssignedItem {
       path: source === "capacities" || source === "calendar" ? (row.path ?? null) : null,
     }),
     durationSource: durationSourceOf(row.duration_source),
+    // A1 untimed lane: the server's own annotation for a date-only quick
+    // check-in it classified into the all-day state. Read-only display
+    // metadata — `shapeAssignedWire` strips it from every POST body, so the
+    // client never claims it back.
+    untimedAuto: row.untimed_auto === true,
+    untimedReason: nonBlank(row.untimed_reason),
     // Review reasons (warn-only) ride the indexed row, so a Capacities row
     // already in the plan can say it still needs a look without a second read.
     capacitiesReviewReasons: Array.isArray(row.capacities_review_reasons)
@@ -3170,6 +3176,16 @@ export function grantToWire(g: OverlapGrant): Wire {
   };
 }
 
+/** The server-owned untimed-lane annotations (A1), removed from a submitted
+    row. The route strips them itself and re-derives them; the client keeps the
+    row it sends free of any claim it may not make. */
+export function withoutUntimedAnnotations(row: Wire): Wire {
+  const out: Wire = { ...row };
+  delete out.untimed_auto;
+  delete out.untimed_reason;
+  return out;
+}
+
 /** Today-only shaping applied to the RAW digest rows for POST bodies:
     excluded rows drop, duration overrides replace `blocks`. Rows keep their
     wire shape verbatim otherwise (id = name, the T1 contract) — assignment
@@ -3184,7 +3200,12 @@ export function shapeAssignedWire(
   return rawAssigned
     .filter((row) => byId.has(String(row.name)))
     .map((row) => ({
-      ...row,
+      // A1 untimed lane: `untimed_auto`/`untimed_reason` are SERVER-OWNED. The
+      // raw digest row may carry them, but they are a projection detail, not
+      // part of the submitted row: the route strips the keys and re-derives
+      // them from the server row + config alone, so echoing them back is dead
+      // weight that only looks like a client claim.
+      ...withoutUntimedAnnotations(row),
       id: String(row.name),
       blocks: byId.get(String(row.name)),
       // Native Todoist times are protected unless this exact item was opted
