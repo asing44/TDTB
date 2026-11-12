@@ -17,6 +17,9 @@
   margin: 0; padding: 6px 0; background: var(--t-surface);
   border-bottom: 1px solid var(--t-border);
 }
+/* Inside the padded settings drawer, stick flush to the drawer's top edge so
+   no content scrolls through the 24px padding gap above the bar. */
+.settings-shell .settings-hub__jump { top: -24px; padding-top: 30px; }
 /* Narrow: keep the bar one row (scrolls sideways) so the 64px scroll margin
    always clears it and a jump never hides the target heading. */
 @media (max-width: 560px) {
