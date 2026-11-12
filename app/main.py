@@ -4108,6 +4108,77 @@ class _CommitFlight:
             }
 
 
+def _server_commit_config(
+    today: date, day_setup: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the effective config used by the commit boundary.
+
+    The browser echoes config in the commit body, but source rows must be
+    authorized from the current config and dated setup instead of
+    from that echo.  The returned object is also passed to the manifest
+    builder so a client cannot alter an authorized row after validation.
+
+    Module-level because both the commit lane and the early immutable-pin
+    gate (``_admitted_mint_grant_ids``) must derive the same server sessions.
+    """
+    result = config_reader.read_config()
+    config: dict[str, Any] = (
+        dict(result.config.sections) if result.config is not None else {}
+    )
+    config = shadow.apply_day_setup(config, day_setup)
+    return _ensure_micro_adventure(config, today)
+
+
+def _frame_for_writes(
+    config: dict[str, Any] | None, day_setup: dict[str, Any],
+) -> dict[str, Any]:
+    """Day frame handed to ``shadow.build_plan_manifest`` so anchored
+    blocks that already elapsed stay out of the write contract (T12
+    qualification, 2026-07-26 — a 21:45 run back-dated five create-events).
+
+    Deliberately omits calendar busy events: those only ever push the
+    anchor LATER, so leaving them out can only make the filter more
+    permissive. It will never drop a block that is still ahead.
+    """
+    defaults: dict[str, Any] = dict((config or {}).get("Defaults") or {})
+    frame = time_engine.compute_time_frame(
+        now=datetime.now(),
+        config_eod=time_engine.to_hhmm(defaults.get("eod")) or "23:59",
+        round_to_minutes=int(defaults.get("anchor.round_to_minutes") or 15),
+        anchor_override=time_engine.to_hhmm(day_setup.get("anchor")),
+        eod_override=time_engine.to_hhmm(day_setup.get("eod")),
+    )
+    return frame.as_dict()
+
+
+def _mint_grant_placed_row_ids(
+    authorized_matches: list[tuple[dict[str, Any], dict[str, Any]]],
+    sequence_rows: list[dict[str, Any]],
+    sched_items: list[dict[str, Any]],
+) -> set[str]:
+    """Row ids whose ADMITTED Mint grant put them inside a selected session.
+
+    Owner decision 2026-11-15: the per-row ``may_overlap_mint`` grant lets the
+    app place that row INSIDE a selected Mint session — a retime, even for a
+    native Todoist due time. The grant is admitted exactly like the route
+    projection (``_authorize_route_rows``): the submitted row must be
+    server-matched and carry the literal ``True``. The interval geometry (which
+    rows really sit inside a server-selected session run) lives in
+    ``sequence.mint_grant_covered_row_ids`` so the planning revalidation gate
+    applies the identical rule.
+    """
+    granted = {
+        str(candidate.get("name") or "").strip()
+        for candidate, submitted in authorized_matches
+        if isinstance(submitted, dict)
+        and submitted.get("may_overlap_mint") is True
+    }
+    granted.discard("")
+    return planning.sequence.mint_grant_covered_row_ids(
+        granted, sequence_rows, sched_items,
+    )
+
+
 def create_app() -> FastAPI:
     """Build the TDTB FastAPI app. Every store lives in
     the app home (``app_config.app_home()``)."""
@@ -7644,6 +7715,75 @@ def create_app() -> FastAPI:
                     "warnings": []}
         return planning.validate_revalidation(prepared).as_dict()
 
+    def _has_snapshot_metadata(body: CommitRequest) -> bool:
+        """Whether the client sent any snapshot metadata at all.
+
+        Older clients omit it entirely; that omission must not disable the
+        server-derived native protection, so both the metadata check and the
+        immutable-pin comparison are skipped only when nothing was sent.
+        """
+        return bool(
+            body.pinned_rows
+            or body.overlap_grants
+            or body.planning_config_fingerprint
+        )
+
+    def _admitted_mint_grant_ids(
+        body: CommitRequest,
+        today: date,
+        sequence_rows: list[dict[str, Any]],
+    ) -> set[str]:
+        """Ids a grant the SERVER admitted places fully inside selected Mint.
+
+        Reused by the immutable-pin 409 (``_check_optional_commit_snapshot``)
+        for both commit modes, so it must not trust client metadata: the grant
+        is admitted exactly like the route projection — a server-matched
+        assigned row carrying the literal ``True`` (``_canonicalize_route_
+        assigned``) — and the sessions are the server's own selection derived
+        from today's config and dated setup.
+
+        The server derivation is paid ONLY when the request could carry a
+        grant at all, so an ordinary commit does no extra work. Any derivation
+        failure yields an empty set, i.e. the pin comparison stays exactly as
+        strict as before.
+        """
+        digest = body.digest if isinstance(body.digest, dict) else {}
+        submitted = digest.get("assigned") or []
+        if not isinstance(submitted, list):
+            return set()
+        if not any(
+            isinstance(row, dict) and row.get("may_overlap_mint") is True
+            for row in submitted
+        ):
+            return set()
+        try:
+            day_setup, _prompt_warnings = _read_day_setup(today)
+            config = _server_commit_config(today, day_setup)
+            granted = {
+                str(row.get("name") or "").strip()
+                for row in _canonicalize_route_assigned(today, submitted, config)
+                if row.get("may_overlap_mint") is True
+            }
+            granted.discard("")
+            if not granted:
+                return set()
+            frame = _frame_for_writes(config, day_setup)
+            resolved_day_semantics = _authoritative_day_semantics(
+                config, day_setup, today,
+            )
+            sched_items, _zone_rows, _notes = (
+                external_sources.build_schedulable_blocks(
+                    config, day_setup, today,
+                    str(frame.get("anchor") or "00:00"),
+                    resolved_day_semantics=resolved_day_semantics,
+                )
+            )
+        except Exception:  # noqa: BLE001 — no server sessions, no waiver
+            return set()
+        return planning.sequence.mint_grant_covered_row_ids(
+            granted, sequence_rows, sched_items,
+        )
+
     def _check_optional_commit_snapshot(body: CommitRequest) -> None:
         """Keep the legacy snapshot check optional, separate from native pins.
 
@@ -7651,11 +7791,7 @@ def create_app() -> FastAPI:
         not disable the server-derived native protection, so this compatibility
         check is deliberately limited to the metadata a client actually sent.
         """
-        if not (
-            body.pinned_rows
-            or body.overlap_grants
-            or body.planning_config_fingerprint
-        ):
+        if not _has_snapshot_metadata(body):
             return
         today = gather.effective_date(datetime.now())
         snapshot = _read_today_runstate(today)
@@ -7673,7 +7809,16 @@ def create_app() -> FastAPI:
             body.sequence.get("sequence", [])
             if isinstance(body.sequence, dict) else []
         )
-        expected_pins = {str(pin.get("id")): pin for pin in body.pinned_rows}
+        # Owner decision 2026-11-15: an ADMITTED Mint grant placed fully inside
+        # a server-selected session is the authorized retime of that row, so
+        # that one row is not compared. Every other pin comparison is
+        # unchanged — a granted row moved OUTSIDE Mint and any ungranted native
+        # row still 409 here exactly as before.
+        mint_exempt = _admitted_mint_grant_ids(body, today, sequence_rows)
+        expected_pins = {
+            str(pin.get("id")): pin for pin in body.pinned_rows
+            if str(pin.get("id")) not in mint_exempt
+        }
         actual_pins = {
             str(row.get("id")): row for row in sequence_rows
             if str(row.get("id")) in expected_pins
@@ -7818,43 +7963,6 @@ def create_app() -> FastAPI:
             prompt_flags_unreadable=preview_disabled is None,
         )
         return result
-
-    def _frame_for_writes(config: dict[str, Any] | None,
-                          day_setup: dict[str, Any]) -> dict[str, Any]:
-        """Day frame handed to ``shadow.build_plan_manifest`` so anchored
-        blocks that already elapsed stay out of the write contract (T12
-        qualification, 2026-07-26 — a 21:45 run back-dated five create-events).
-
-        Deliberately omits calendar busy events: those only ever push the
-        anchor LATER, so leaving them out can only make the filter more
-        permissive. It will never drop a block that is still ahead.
-        """
-        defaults: dict[str, Any] = dict((config or {}).get("Defaults") or {})
-        frame = time_engine.compute_time_frame(
-            now=datetime.now(),
-            config_eod=time_engine.to_hhmm(defaults.get("eod")) or "23:59",
-            round_to_minutes=int(defaults.get("anchor.round_to_minutes") or 15),
-            anchor_override=time_engine.to_hhmm(day_setup.get("anchor")),
-            eod_override=time_engine.to_hhmm(day_setup.get("eod")),
-        )
-        return frame.as_dict()
-
-    def _server_commit_config(
-        today: date, day_setup: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Build the effective config used by the commit boundary.
-
-        The browser echoes config in the commit body, but source rows must be
-        authorized from the current config and dated setup instead of
-        from that echo.  The returned object is also passed to the manifest
-        builder so a client cannot alter an authorized row after validation.
-        """
-        result = config_reader.read_config()
-        config: dict[str, Any] = (
-            dict(result.config.sections) if result.config is not None else {}
-        )
-        config = shadow.apply_day_setup(config, day_setup)
-        return _ensure_micro_adventure(config, today)
 
     def _validate_commit_eligibility(
         body: CommitRequest, today: date,
@@ -8146,22 +8254,6 @@ def create_app() -> FastAPI:
             normalized_row.update({"id": row_id, "start": start, "end": end})
             valid_rows.append(normalized_row)
 
-        # The caller's pin list is only diagnostic input. Native protection is
-        # server-derived for the assigned rows actually included in this
-        # commit; intentionally omitted assigned rows are not in this lane.
-        native_assigned: list[dict[str, Any]] = []
-        for candidate, submitted in authorized_matches:
-            if not _is_todoist_row(candidate):
-                continue
-            native_row = _server_digest_row(candidate)
-            native_row["id"] = native_row["name"]
-            if submitted.get("allow_time_adjustment") is True:
-                native_row["allow_time_adjustment"] = True
-            native_assigned.append(native_row)
-        native_pin_errors = planning.sequence.verify_native_pins_in_sequence(
-            native_assigned, valid_rows, body.pinned_rows,
-        )
-
         frame = _frame_for_writes(config, day_setup)
         resolved_day_semantics = _authoritative_day_semantics(
             config, day_setup, today,
@@ -8177,6 +8269,31 @@ def create_app() -> FastAPI:
                 detail=f"commit refused: server schedulable eligibility unavailable ({exc})"
                        " — nothing was written",
             ) from exc
+
+        # The caller's pin list is only diagnostic input. Native protection is
+        # server-derived for the assigned rows actually included in this
+        # commit; intentionally omitted assigned rows are not in this lane.
+        native_assigned: list[dict[str, Any]] = []
+        for candidate, submitted in authorized_matches:
+            if not _is_todoist_row(candidate):
+                continue
+            native_row = _server_digest_row(candidate)
+            native_row["id"] = native_row["name"]
+            if submitted.get("allow_time_adjustment") is True:
+                native_row["allow_time_adjustment"] = True
+            native_assigned.append(native_row)
+        # Owner decision 2026-11-15: an admitted Mint grant authorizes moving
+        # that row into Mint, so its native pin is waived for THAT row and only
+        # while the committed interval sits inside a server-selected session.
+        # The same set exempts the row from the immutable-pin 409 below, so the
+        # two gateways agree on exactly one row.
+        mint_placed_ids = _mint_grant_placed_row_ids(
+            authorized_matches, valid_rows, sched_items,
+        )
+        native_pin_errors = planning.sequence.verify_native_pins_in_sequence(
+            native_assigned, valid_rows, body.pinned_rows,
+            mint_granted_ids=mint_placed_ids,
+        )
 
         def _hhmm2(value: Any) -> str | None:
             text = time_engine.to_hhmm(value)
@@ -8420,6 +8537,12 @@ def create_app() -> FastAPI:
                 sanitized["blocks"] = overlay
             if _is_todoist_row(candidate) and submitted.get("allow_time_adjustment") is True:
                 sanitized["allow_time_adjustment"] = True
+            # The admitted Mint grant reaches the shadow lane as a retime
+            # authorization for this row (owner decision 2026-11-15). It is
+            # admitted exactly like the route projection: a server-matched row
+            # carrying the literal True.
+            if _is_todoist_row(candidate) and submitted.get("may_overlap_mint") is True:
+                sanitized["may_overlap_mint"] = True
             sanitized_assigned.append(sanitized)
         safe_digest = {
             "valid_date": str(today),

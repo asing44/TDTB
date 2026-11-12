@@ -1558,9 +1558,12 @@ METADATA-AWARE PLACEMENT: `relates_to`, `tags`, `labels`, `mint_session`, and \
 user payload. A selected Mint session is a HARD placement wall: only the Mint row itself \
 occupies its exact window, and no other assigned row may overlap it — place movable work \
 around every selected Mint interval, never inside one. An assigned item carrying \
-may_overlap_mint: true is explicitly operator-granted to overlap a selected Mint interval; \
-place it inside Mint time only when day capacity requires, and the overlap is always \
-reported. Keep related parent/child rows and \
+may_overlap_mint: true is explicitly operator-granted to overlap a selected Mint interval, \
+and the APP places each such row inside a selected Mint session for you: one granted row \
+per session, a longer row spanning consecutive free sessions, earliest free session first, \
+and Mint time beating that row's own source time — so leave a granted row wherever is \
+convenient (its natural placement is fine), never work around Mint for it, and the overlap \
+is always reported. Keep related parent/child rows and \
 grouped systems rows as separate sequence entries. Parent children must remain inside their \
 parent interval. All systems-tagged rows share one start. A unique same-activity calendar \
 companion uses the event's exact span. Emit an exact overlap_grant for every required \
