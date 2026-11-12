@@ -1,7 +1,7 @@
 /* Settings hub — status line, five entries, calm folds. Theme tokens only. */
 .settings-hub { --hub-gap: 8px; --hub-pad: 12px 14px; display: grid; gap: 16px; min-width: 0; }
 .settings-hub > * { min-width: 0; }
-.settings-hub__panel, .hb { scroll-margin-top: 64px; }
+.settings-hub__panel, .hb { scroll-margin-top: 96px; }
 .settings-hub__summary {
   display: flex; align-items: center; gap: 8px; margin: 0;
   padding: 10px 12px; border: 1px solid var(--t-border); border-radius: 10px;
@@ -16,6 +16,12 @@
   position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px;
   margin: 0; padding: 6px 0; background: var(--t-surface);
   border-bottom: 1px solid var(--t-border);
+}
+/* Narrow: keep the bar one row (scrolls sideways) so the 64px scroll margin
+   always clears it and a jump never hides the target heading. */
+@media (max-width: 560px) {
+  .settings-hub__jump { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .settings-hub__jump-btn { flex: 0 0 auto; white-space: nowrap; }
 }
 .settings-hub__jump-btn {
   display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; justify-content: center;
