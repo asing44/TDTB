@@ -4,7 +4,7 @@
    "deleted" when the inventory reports itself complete. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { TagExclusionSettingsDrawer } from "./TagExclusionSettingsDrawer";
 import { makeHarness } from "./test-harness";
 import type { TagExclusionIdentity, TagExclusionSettings } from "../model/types";
@@ -56,7 +56,9 @@ describe("TagExclusionSettingsDrawer", () => {
   it("lists searchable #title checkboxes with ids secondary", async () => {
     const { rendered } = open(settingsFixture());
 
-    expect(rendered.getByRole("status").textContent).toContain("Loading tag exclusions");
+    const tags = rendered.container.querySelector(".settings-panel--tags") as HTMLElement;
+    expect(tags).toBeTruthy();
+    expect(within(tags).getByRole("status").textContent).toContain("Loading tag exclusions");
     await waitFor(() => expect(rendered.getByText("#habituals")).toBeTruthy());
     expect(rendered.getByText("#chores")).toBeTruthy();
     // Ids are secondary text, always rendered.

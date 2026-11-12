@@ -85,7 +85,12 @@ describe("a note's fix goes where the fix actually lives (KTD8)", () => {
 
     cleanup();
     const hub = h.ui(<SettingsShell />);
-    expect(hub.getByRole("heading", { name: "Repair connections" })).toBeTruthy();
+    // The one-page hub keeps repair under Advanced; the jump bar marks where
+    // the note sent the operator.
+    expect(hub.getByRole("heading", { name: "Advanced" })).toBeTruthy();
+    expect(hub.getByRole("button", { name: "Advanced" }).getAttribute("aria-current")).toBe(
+      "location",
+    );
   });
 
   it("opens the hub's freshness entry for a calendar diagnostic", () => {
@@ -104,9 +109,12 @@ describe("a note's fix goes where the fix actually lives (KTD8)", () => {
 
     cleanup();
     const hub = h.ui(<SettingsShell />);
-    expect(
-      hub.getByRole("button", { name: /Is my data up to date\?/ }).getAttribute("aria-expanded"),
-    ).toBe("true");
+    // Freshness is the Sources section of the one-page hub: it is open, so the
+    // jump bar points at it.
+    expect(hub.getByRole("heading", { name: "Sources" })).toBeTruthy();
+    expect(hub.getByRole("button", { name: /^Sources/ }).getAttribute("aria-current")).toBe(
+      "location",
+    );
   });
 
   it("keeps the Skipped objects hint for a note with no single action", () => {

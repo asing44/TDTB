@@ -296,7 +296,9 @@ export function SettingsHub() {
         "freshness",
         "Sources",
         <>
-          <p class="settings-hub__muted" role="status">
+          {/* Not a live region: this is a static statement of the last read,
+              and the refresh panel below announces its own loads. */}
+          <p class="settings-hub__muted">
             {syncText}
           </p>
           <CapacitiesRefreshPanel active extraNotes={missingNote ? [missingNote] : []} />

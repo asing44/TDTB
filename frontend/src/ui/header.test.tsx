@@ -542,13 +542,14 @@ describe("U7 stepper header", () => {
     fireEvent.click(r.getByRole("button", { name: "Settings" }));
     expect(h.store.getState().ui.settingsPanel).toBe("freshness");
 
-    // The hub is the destination: its freshness entry is the expanded one, and
-    // no Connections screen is what the press produced.
+    // The hub is the destination: its Sources section marks the freshness
+    // entry as where the press landed, and no Connections screen was produced.
     cleanup();
     const hub = h.ui(<SettingsShell />);
-    expect(
-      hub.getByRole("button", { name: /Is my data up to date\?/ }).getAttribute("aria-expanded"),
-    ).toBe("true");
+    expect(hub.getByRole("heading", { name: "Sources" })).toBeTruthy();
+    expect(hub.getByRole("button", { name: /^Sources/ }).getAttribute("aria-current")).toBe(
+      "location",
+    );
     expect(hub.queryByRole("heading", { name: "Connections" })).toBeNull();
   });
 });

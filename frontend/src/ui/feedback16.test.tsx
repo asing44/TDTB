@@ -34,9 +34,11 @@ function openDrawer() {
 }
 
 function sectionHeadings(r: ReturnType<ReturnType<typeof makeHarness>["ui"]>) {
-  return Array.from(r.container.querySelectorAll(".setup-section h3") as NodeListOf<HTMLElement>).map(
-    (el) => el.textContent,
-  );
+  return Array.from(
+    r.container.querySelectorAll(
+      "#settings-panel-day .setup-section[data-settings-section] h3",
+    ) as NodeListOf<HTMLElement>,
+  ).map((el) => el.textContent);
 }
 
 /* Mirror App.tsx's drawer lifecycle: drawers mount only while open, so the
@@ -55,7 +57,9 @@ describe("FEEDBACK-16 — Day Setup sections have a clear scan order and distinc
   it("renders each section as a grouped card in fixed scan order", () => {
     const { r } = openDrawer();
     const sections = Array.from(
-      r.container.querySelectorAll(".setup-section") as NodeListOf<HTMLElement>,
+      r.container.querySelectorAll(
+        "#settings-panel-day .setup-section[data-settings-section]",
+      ) as NodeListOf<HTMLElement>,
     );
     expect(sections.length).toBeGreaterThanOrEqual(4);
     expect(sectionHeadings(r)).toEqual([
