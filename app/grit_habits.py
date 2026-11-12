@@ -112,11 +112,19 @@ MAX_RECORDS = artifact_source.HABIT_ITEMS_MAX
 MAX_TEXT = artifact_source.HABIT_TEXT_MAX
 
 # ---------------------------------------------------------------------------
-# Classifier vocabulary (TODO(U0): replace with the real Grit recordKind values)
+# Classifier vocabulary
 # ---------------------------------------------------------------------------
-# Best-guess placeholders. A record whose normalized kind is in
-# COMPLETION_KINDS makes the habit done; FAILED_KINDS makes it failed (unless
-# it is also done); PROGRESS_KINDS makes it partial.
+# U0 finding (operator sample, 2026-11-12): Grit's App Intent reports every
+# history record with recordKind "0" — done, skipped, and not-done habits all
+# look alike, and a failed habit has no record at all. Record kinds therefore
+# carry no status; ``progress`` is the only signal (1 = done, 0 = not done).
+# Skipped and failed habits are indistinguishable from not-done and keep
+# counting toward remaining time; the operator switches them off for today on
+# the Set up day habits card. None of these vocabularies match "0", so they
+# stay inert unless a future Grit version reports named kinds.
+# A record whose normalized kind is in COMPLETION_KINDS makes the habit done;
+# FAILED_KINDS makes it failed (unless it is also done); PROGRESS_KINDS makes
+# it partial.
 COMPLETION_KINDS: frozenset[str] = frozenset({"completed", "complete", "done"})
 FAILED_KINDS: frozenset[str] = frozenset({"failed", "failure", "missed", "skipped"})
 PROGRESS_KINDS: frozenset[str] = frozenset({"progress", "partial", "in progress"})

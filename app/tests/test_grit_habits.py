@@ -492,3 +492,36 @@ class TestWarnings:
             "Grit habits without minutes — using the default habit minutes"
         )
         assert "Read" not in gh.GRIT_READ_STALE
+
+
+# ---------------------------------------------------------------------------
+# U0: the real Grit Shortcut shape (operator sample, 2026-11-12, names generic)
+# ---------------------------------------------------------------------------
+# Grit reports recordKind "0" for every record; a failed habit has no record.
+# progress is the only status signal: done habits read 1, everything else 0.
+_U0_SAMPLE = {
+    "schema": "tdtb.grit.v1",
+    "generated_at": "2026-11-12T16:57:29-05:00",
+    "habits": [
+        {"name": "done-once", "progress": 1, "records": [{"kind": "0", "amount": 1}]},
+        {"name": "done-thrice", "progress": 1,
+         "records": [{"kind": "0", "amount": 1}] * 3},
+        {"name": "skipped", "progress": 0, "records": [{"kind": "0", "amount": 1}]},
+        {"name": "failed", "progress": 0, "records": []},
+        {"name": "logged-not-done", "progress": 0,
+         "records": [{"kind": "0", "amount": 1}]},
+        {"name": "untouched", "progress": 0, "records": []},
+    ],
+}
+
+
+def test_u0_real_sample_classifies_on_progress_only():
+    readings = {r.name: r for r in gh.parse_payload(_U0_SAMPLE)}
+    assert readings["done-once"].status == gh.STATUS_DONE
+    assert readings["done-thrice"].status == gh.STATUS_DONE
+    # Skip, fail, and logged-but-not-done are indistinguishable in Grit's
+    # intent output, so they stay counting toward remaining time.
+    for name in ("skipped", "failed", "logged-not-done", "untouched"):
+        assert readings[name].status == gh.STATUS_NONE, name
+        assert gh.counts_toward_remaining(readings[name].status)
+    assert not gh.counts_toward_remaining(readings["done-once"].status)
