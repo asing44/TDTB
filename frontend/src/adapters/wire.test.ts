@@ -396,6 +396,54 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
   });
 });
 
+describe("Todoist habit fallbacks (advisory, 2026-11-12)", () => {
+  const readFailed = "Todoist habits read failed — showing the last artifact habit list";
+  const emptyLive = "Todoist returned no habits — showing the last artifact habit list";
+
+  it("does not let either habit fallback hold sequencing or commit", () => {
+    for (const warning of [readFailed, emptyLive]) {
+      expect(sourceHealthOf([warning])).toBe("ok");
+      expect(blockingWarnings([warning])).toEqual([]);
+    }
+    expect(sourceHealthOf([readFailed, emptyLive])).toBe("ok");
+  });
+
+  it("still surfaces each fallback as an advisory note with a refresh fix", () => {
+    expect(advisoryNotes([readFailed])).toEqual([{ text: readFailed, fix: "refresh" }]);
+    expect(advisoryNotes([emptyLive])).toEqual([{ text: emptyLive, fix: "refresh" }]);
+  });
+
+  it("keeps the Todoist dot marked while the cached habit list is stale", () => {
+    expect(sourceHealthBySource([readFailed])).toEqual({
+      todoist: "degraded",
+      calendar: "ok",
+      capacities: "ok",
+    });
+  });
+
+  it("does not broaden to any other Todoist or habit warning", () => {
+    for (const nearMiss of [
+      "Todoist read failed (timeout)",
+      "Todoist habits read failed",
+      "habit 'Read' has no duration",
+      "Todoist returned no habits",
+    ]) {
+      expect(sourceHealthOf([nearMiss])).toBe("degraded");
+      expect(blockingWarnings([nearMiss])).toEqual([nearMiss]);
+      expect(advisoryNotes([nearMiss])).toEqual([]);
+    }
+    expect(sourceHealthBySource(["Todoist read failed (timeout)"]).todoist).toBe(
+      "degraded",
+    );
+  });
+
+  it("keeps a real warning blocking beside an advisory habit fallback", () => {
+    expect(sourceHealthOf([readFailed, "Todoist read failed (timeout)"])).toBe(
+      "degraded",
+    );
+  });
+});
+
 describe("skipped Capacities objects (advisory)", () => {
   const skipped =
     "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title";

@@ -1787,12 +1787,25 @@ const advisoryCapacitiesReviewNotice =
 const advisorySelectionNotice =
   /^\s*Capacities selection \S+ was (?:not promoted: |promoted, but |removed: ).+$/;
 
+/** The two Todoist habit fallbacks the server words exactly ``Todoist habits
+    read failed — showing the last artifact habit list``
+    (``HABITS_READ_FAILED_WARNING``) and ``Todoist returned no habits — showing
+    the last artifact habit list`` (``HABITS_EMPTY_LIVE_WARNING``). Habits reach
+    the plan only as a capacity summary, never as rows, so the labelled stale
+    cached habit list cannot change what gets sequenced: the operator made this
+    fallback advisory on 2026-11-12. Because ``blockingWarnings`` also governs
+    commit, that is unblocked for these two notices as well. The match stays
+    anchored and closed — any other habit or Todoist failure still blocks. */
+const advisoryHabitsFallback =
+  /^\s*Todoist (?:habits read failed|returned no habits) — showing the last artifact habit list\s*$/;
+
 /** Every warning that does NOT block commit or sequence. The list is explicit
     and closed: an unrecognised warning stays blocking, so a future server
     diagnostic fails closed rather than passing silently (KTD6). */
 function isAdvisoryWarning(warning: string): boolean {
   return (
     advisoryReminderOmission.test(warning) ||
+    advisoryHabitsFallback.test(warning) ||
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
     advisoryCapacitiesReviewNotice.test(warning) ||
@@ -1829,6 +1842,7 @@ export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
     value is unchanged by the retirement of the full-screen Connections page. */
 function advisoryFixOf(warning: string): AdvisoryNoteFix {
   if (advisoryTypeStaleness.test(warning)) return "refresh";
+  if (advisoryHabitsFallback.test(warning)) return "refresh";
   if (/Refresh to reconcile\.\s*$/.test(warning)) return "refresh";
   if (advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning))) {
     return "connections";
@@ -1843,14 +1857,18 @@ function advisoryFixOf(warning: string): AdvisoryNoteFix {
     commit (OQ-P1), so the advisory filter keeps them out of
     ``blockingWarnings``; they are attributed straight from
     ``calendarWarnings`` so the Calendar dot and its card still show a real read
-    problem without gating commit. Config, prompt, habit and artifact warnings
-    match no source, so they colour no dot while still blocking commit through
-    ``sourceHealthOf``. */
+    problem without gating commit. The advisory habit fallbacks are attributed
+    straight from their own pattern for the same reason: the Todoist dot stays
+    visibly degraded while it shows a stale cached habit list. Other config,
+    prompt, habit and artifact warnings match no source, so they colour no dot
+    while still blocking commit through ``sourceHealthOf``. */
 export function sourceHealthBySource(
   warnings: readonly string[],
 ): SourceHealthBySource {
   const out: SourceHealthBySource = {
-    todoist: "ok",
+    todoist: warnings.some((warning) => advisoryHabitsFallback.test(warning))
+      ? "degraded"
+      : "ok",
     calendar: calendarWarnings(warnings).length > 0 ? "degraded" : "ok",
     capacities: "ok",
   };
