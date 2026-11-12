@@ -67,7 +67,9 @@ TODAY = date(2026, 7, 14)
 # ---------------------------------------------------------------------------
 
 class TestFetchTodoistItems:
-    def test_habit_project_tasks_are_not_plannable(self):
+    def test_habit_project_tasks_are_ordinary_work(self):
+        """U7 retired the Todoist habit read, so a project called "Habits" no
+        longer scopes habits and its tasks are plannable like any other."""
         class WithProjects(FakeTodoist):
             def get_projects(self):
                 return [{"id": "p-habits", "name": "\U0001F501 Habits"}, {"id": "p-work", "name": "Work"}]
@@ -84,8 +86,8 @@ class TestFetchTodoistItems:
         })
         assigned, pool, warnings = ext.fetch_todoist_items(client, {})
         assert warnings == []
-        assert [i["name"] for i in assigned] == ["Ship it"]
-        assert [i["name"] for i in pool] == []
+        assert [i["name"] for i in assigned] == ["Messages", "Ship it"]
+        assert [i["name"] for i in pool] == ["News"]
 
     def test_project_lookup_failure_keeps_rows_visible(self):
         class Broken(FakeTodoist):

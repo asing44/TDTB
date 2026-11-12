@@ -3511,9 +3511,11 @@ def _grit_habits_source(
        ``GRIT_READ_FAILED``: the plan is known, only today's completion is not,
        so the day is planned pessimistically rather than under-counted.
     3. **No usable cache and no saved plan for today.** ``(None, [])`` — the
-       caller keeps its previous behaviour (the Todoist live read, then the
-       artifact's cached list), so an unconfigured app plans the day exactly as
-       it did before Grit existed. Unit U7 retires that path.
+       caller publishes the zeroed ``HABITS_EMPTY`` block (or the artifact
+       seam's own block in artifact source mode). Unit U7 retired the Todoist
+       habit read here: nothing calls Todoist for habits and nothing falls back
+       to the archived Habits project, so an unconfigured app plans with no
+       habit load instead of a silently stale list.
 
     Never runs the Shortcut: the cache is read, and when it is missing, from an
     earlier day, or older than ``grit_habits.CACHE_MAX_AGE_S`` exactly ONE
@@ -6247,8 +6249,9 @@ def create_app() -> FastAPI:
         source_mode = app_config.sources_mode()
         # U4 S3: under ``direct`` intake the published Capacities generation is
         # the only Capacities source, in either source mode. It replaces the
-        # artifact's Capacities rows and the live builder; Todoist and habits
-        # keep their source-mode readers. Refusals never fall back to either.
+        # artifact's Capacities rows and the live builder; Todoist keeps its
+        # source-mode reader and habits come from Grit (U7). Refusals never
+        # fall back to either.
         direct_intake = app_config.capacities_intake() == app_config.CAPACITIES_INTAKE_DIRECT
         direct_coverage = capacities_intake.DirectCoverage()
         direct_warnings: list[str] = []
@@ -6262,9 +6265,9 @@ def create_app() -> FastAPI:
         }
         artifact_warnings: list[str] = []
         todoist_c = None
-        # ONE Todoist project catalogue per request: the habit scope read and
-        # every row's project name/colour share this single paginated read, so
-        # a request never costs one project lookup per row (or two reads).
+        # ONE Todoist project catalogue per request: every row's project
+        # name/colour shares this single paginated read, so a request never
+        # costs one project lookup per row.
         todoist_projects: Any = None
         store = None
         t_assigned: list[dict[str, Any]] = []
@@ -6281,18 +6284,17 @@ def create_app() -> FastAPI:
         # degrades visibly here; it never crashes plan-inputs.
         mirror_excluded, mirror_warnings = _mirror_intake_exclusions()
         # Habits are a CAPACITY summary: their time deducts from the day,
-        # they never become rows. Grit owns the habit source now: today's Grit
-        # cache supplies the completion-aware list (U4), and only when that is
-        # unusable does the older ladder step run — the operator's own Habits
-        # project read live, then the published artifact's cached list. A
-        # failed live read brings a loud source_warnings entry (never a silent
-        # zero); a live read that succeeds with no habit is a real zero.
+        # they never become rows. Grit OWNS the habit source: today's Grit
+        # cache supplies the completion-aware list (U4). Unit U7 retired the
+        # Todoist habit read, so nothing here calls a Todoist client for
+        # habits: an unusable Grit read leaves the zeroed block in live mode,
+        # and the artifact seam keeps its own published block in artifact mode.
         habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
         w_hab: list[str] = []
         grit_habits_block, grit_warnings = _grit_habits_source(app.state)
         if grit_habits_block is not None:
             # Grit is the source: no Todoist habit read and no artifact
-            # fallback happens on this path (unit U7 retires the ladder step).
+            # fallback happens on this path.
             habits = grit_habits_block
             w_hab = grit_warnings
         elif source_mode == app_config.SOURCES_MODE_ARTIFACT:
@@ -6347,25 +6349,12 @@ def create_app() -> FastAPI:
                     # A pool:true or UNKNOWN row stays on the pool.
                     capacities_items = [r for r in live_capacities if r.get("assigned") is True]
                     c_pool = [r for r in live_capacities if r.get("assigned") is not True]
-            # Live habits: read the operator's Habits project open tasks so
-            # the plan lists every habit, not the artifact's cached snapshot.
+            # Live habits are NOT read from Todoist (U7): Grit answered above
+            # or the day keeps the zeroed block. The run's project and label
+            # catalogues are still built here so the row builder shares one
+            # read of each.
             todoist_projects = external_sources.TodoistProjects(todoist_c)
-            # Run-scoped label catalogue: at most one paginated label read for
-            # this request (the row builder uses it, never once per row).
             todoist_labels = external_sources.TodoistLabels(todoist_c)
-            live_habits, w_hab = external_sources.fetch_habits_items(
-                todoist_c, ext_cfg, today, projects=todoist_projects
-            )
-            if live_habits is None:
-                # Stale list. A failed read brings its own warning; when no
-                # live read was possible at all (no client / no token) the
-                # label is added here, so the cached list is never unlabelled.
-                habits, artifact_habit_warnings = artifact_source.load_habits()
-                if not w_hab:
-                    w_hab = [external_sources.HABITS_READ_FAILED_WARNING]
-                w_hab = [*w_hab, *artifact_habit_warnings]
-            else:
-                habits = live_habits
         if direct_intake:
             # ONE generation read per request: the rows and the intake block
             # must describe the same generation (R-B F3, adjacent-generation
@@ -6864,19 +6853,11 @@ def create_app() -> FastAPI:
             )
             # Same habit source as /plan-inputs so the two consumers agree on
             # the capacity math: today's Grit cache when it is usable (U4),
-            # else the live Habits project read when a Todoist client exists,
-            # else the artifact's cached list.
+            # else the zeroed block — no Todoist habit read (U7).
+            habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
             grit_habits_block, _grit_warnings = _grit_habits_source(app.state)
             if grit_habits_block is not None:
                 habits = grit_habits_block
-            else:
-                live_habits, _w_hab = external_sources.fetch_habits_items(
-                    todoist_c, ext_cfg, today
-                )
-                habits = (
-                    live_habits if live_habits is not None
-                    else artifact_source.load_habits()[0]
-                )
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:

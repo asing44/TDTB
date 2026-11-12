@@ -163,17 +163,12 @@ def test_a_label_with_no_name_is_never_indexed():
 # One label read per run
 # ---------------------------------------------------------------------------
 
-def test_labels_are_read_once_per_run_across_the_habit_and_row_reads():
-    """The habit read issues no label read; the row read issues exactly one."""
-    habit_task = _task("2", "Messages")
+def test_labels_are_read_once_per_run_for_the_row_read():
+    """The row read issues exactly one label read (U7 retired the habit read)."""
     client = _CountingLabels(
         {ext.ASSIGNED_QUERY_FALLBACK: [_task()]}, labels=[TEN_MIN]
     )
     catalog = ext.TodoistLabels(client)
-
-    ext.fetch_habits_items(client, {}, None)
-    # Habits carry no label chips, so they never trigger the label catalog.
-    assert client.label_reads == 0
 
     assigned, _pool, warnings = ext.fetch_todoist_items(client, {}, labels=catalog)
 

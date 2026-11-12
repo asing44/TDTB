@@ -11,8 +11,10 @@ empty data + one human-readable warning the UI must surface loudly.
 Habits are a CAPACITY summary, not digest items — the skill SOT states habits
 are never placed on the timeline and never become tasks/events; only the
 outstanding-minutes total deducts from capacity (SKILL.md § Habits). The habit
-list itself is read LIVE from the operator's habit project in live source mode
-(:func:`fetch_habits_items`) and from the planning artifact in artifact mode.
+list itself is NOT read here: Grit is the habit source (``grit_habits``, joined
+in ``main._grit_habits_source``), and artifact source mode consumes the
+planning artifact's own habit block. Unit U7 of the Grit-habits work retired
+the Todoist habit read, so nothing in this module reads habits any more.
 """
 from __future__ import annotations
 
@@ -63,30 +65,6 @@ def _duration_minutes(task: dict[str, Any]) -> int | None:
     if dur.get("unit") == "day" and dur.get("amount"):
         return int(dur["amount"]) * 24 * 60
     return None
-
-#: Todoist projects whose tasks are habit nudges, not plannable work. Habits
-#: reach the plan only as a capacity summary, so their tasks never become rows.
-_HABIT_PROJECT_NAMES = frozenset({"habits"})
-
-#: One loud, content-free warning when the live habit read fails: the caller
-#: then shows the artifact's cached habit list, labelled as stale. Never a
-#: silent zero, and never habit names, ids, or provider text.
-HABITS_READ_FAILED_WARNING = (
-    "Todoist habits read failed — showing the last artifact habit list"
-)
-
-#: The live read SUCCEEDED but found no habit while the cached artifact list
-#: still carries some. A zero where habits are expected is a silent failure,
-#: so the cached list is shown instead — under its own content-free label.
-HABITS_EMPTY_LIVE_WARNING = (
-    "Todoist returned no habits — showing the last artifact habit list"
-)
-
-
-def _normalize_project_name(name: Any) -> str:
-    """Lowercase letters/digits only, so "🔁 Habits" and "habits" compare equal."""
-    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
-
 
 def _project_label(project: dict[str, Any]) -> str | None:
     """A project's display name, or ``None`` when it carries no usable one."""
@@ -193,16 +171,13 @@ class TodoistLabels:
 class TodoistProjects:
     """The Todoist project catalogue for ONE run: at most one paginated read.
 
-    A single ``/plan-inputs`` request needs the project list twice — the habit
-    scope read (to find the Habits project) and every row's project
-    name/colour — so the catalogue is built once and passed to both readers.
-    Nothing is persisted: a new run builds a new catalogue and re-reads.
+    A single ``/plan-inputs`` request reads every row's project name/colour, so
+    the catalogue is built once and passed to the row readers. Nothing is
+    persisted: a new run builds a new catalogue and re-reads.
 
     A failed, unavailable, or malformed lookup is SILENT here: rows degrade to
     a null project name/colour rather than blocking planning with a new
-    warning. The habit reader still labels its own failure in the existing
-    words (``HABITS_READ_FAILED_WARNING``), so its one loud fallback is
-    unchanged.
+    warning.
     """
 
     def __init__(self, client: Any = None) -> None:
@@ -248,166 +223,6 @@ class TodoistProjects:
         if project_id is None:
             return None, None
         return self._index.get(str(project_id).strip(), (None, None))
-
-
-def _habit_projects(
-    client: Any, catalog: TodoistProjects | None = None
-) -> tuple[list[dict[str, Any]] | None, list[str]]:
-    """The habit projects as ``(projects, warnings)``.
-
-    ``None`` means the read cannot be project-scoped at all: the client has no
-    project lookup (a double, or an unconfigured runtime). The caller keeps its
-    existing source and adds no warning. A lookup that RAISES returns the same
-    ``None`` plus the loud stale-list warning, so a real failure is labelled.
-
-    ``catalog`` (optional) is the run's already-built project catalogue: the
-    habit scope then reuses that one read instead of issuing its own.
-    """
-    catalog = catalog if catalog is not None else TodoistProjects(client)
-    projects = catalog.load()
-    if projects is None:
-        return None, ([HABITS_READ_FAILED_WARNING] if catalog.failed else [])
-    return [
-        p for p in projects
-        if _normalize_project_name(p.get("name")) in _HABIT_PROJECT_NAMES
-    ], []
-
-
-def _habit_project_ids(
-    client: Any, catalog: TodoistProjects | None = None
-) -> set[str]:
-    """IDs of the habit projects; empty when the lookup is unavailable."""
-    projects, _warnings = _habit_projects(client, catalog)
-    return {
-        str(p.get("id")) for p in (projects or []) if p.get("id") is not None
-    }
-
-
-def _artifact_habit_total() -> int:
-    """The cached artifact's habit ``total``, or ``0`` when it carries none."""
-    try:
-        block, _warnings = artifact_source.load_habits()
-    except Exception:  # noqa: BLE001 — a cache read never blocks a live answer
-        return 0
-    total = block.get("total") if isinstance(block, dict) else None
-    return total if type(total) is int and total > 0 else 0
-
-
-def _bounded_habit_task(task: dict[str, Any]) -> dict[str, Any]:
-    """One live task, bounded to the artifact's published habit contract.
-
-    The live block must not carry anything the artifact contract would reject:
-    ``content`` is clipped to ``HABIT_TEXT_MAX`` characters and a duration is
-    kept only as minute-unit minutes, capped at ``HABIT_MINUTES_MAX``. Any
-    other duration unit falls away so the per-habit fallback applies — the
-    live adapter never invents a 24-hour habit from a ``day``-unit duration.
-    """
-    bounded = dict(task)
-    content = bounded.get("content")
-    if isinstance(content, str) and len(content) > artifact_source.HABIT_TEXT_MAX:
-        bounded["content"] = content[: artifact_source.HABIT_TEXT_MAX]
-    duration = bounded.get("duration")
-    if not isinstance(duration, dict) or duration.get("unit") != "minute":
-        bounded.pop("duration", None)
-    else:
-        amount = duration.get("amount")
-        if not (type(amount) is int and amount > 0):
-            bounded.pop("duration", None)
-        elif amount > artifact_source.HABIT_MINUTES_MAX:
-            bounded["duration"] = {
-                "amount": artifact_source.HABIT_MINUTES_MAX, "unit": "minute",
-            }
-    return bounded
-
-
-def _is_habit_task(task: dict[str, Any], project_ids: set[str]) -> bool:
-    """True when a fetched task belongs to a habit project.
-
-    The read is already scoped to those project IDs, so this only drops a task
-    a misbehaving source attached to another project. A task with no
-    ``project_id`` is kept: dropping it would turn a real habit into a silent
-    omission."""
-    project_id = task.get("project_id")
-    if project_id is None:
-        return True
-    return str(project_id) in project_ids
-
-
-def fetch_habits_items(
-    client: Any,
-    config: dict[str, Any],
-    logical_day: Any = None,
-    projects: TodoistProjects | None = None,
-) -> tuple[dict[str, Any] | None, list[str]]:
-    """Read the operator's OPEN habit tasks as the artifact's habits block.
-
-    Habits are a manual toggle list: completion is tracked elsewhere, so every
-    open task in a habit project is one habit, ``done`` stays ``0``, and no
-    completed/completion read is ever issued. The tasks are read BY PROJECT ID
-    (``GET /tasks?project_id=…``), never through a filter query: Todoist's
-    filter grammar cannot express a project name carrying a space or an emoji,
-    so a name filter would match nothing and look exactly like a habit-free
-    day. The block is computed by the producer's own rule
-    (:func:`producer_rules.compute_habit_summary`), so the live read and an
-    artifact refresh cannot disagree on the arithmetic: minutes come from the
-    Todoist duration (``fallback_minutes_per_habit`` where unset) and
-    ``est_minutes`` rounds UP to the ``round_to_minutes`` grain. Items are
-    bounded to the artifact's published contract
-    (``HABIT_ITEMS_MAX``/``HABIT_MINUTES_MAX``/``HABIT_TEXT_MAX``).
-
-    Returns ``(block, warnings)`` and never raises. ``block`` is ``None`` when
-    the live read is unavailable or failed — the caller then falls back to the
-    artifact's cached list and surfaces ``warnings``. A read that finds no
-    habit is a valid live zero ONLY when the cached list carries none either;
-    otherwise it is reported and the cached list wins, so a real zero and a
-    broken read can never look alike.
-    """
-    if client is None:
-        return None, []
-    project_list, warnings = _habit_projects(client, projects)
-    if project_list is None:
-        return None, warnings
-    project_ids = {
-        str(p.get("id")) for p in project_list if p.get("id") is not None
-    }
-    if not project_ids:
-        # Nothing to scope the read to: without a project the "zero" would be
-        # a silent failure, so report it and let the caller label the cache.
-        return None, [HABITS_READ_FAILED_WARNING]
-    getter = getattr(client, "get_project_tasks", None)
-    if not callable(getter):
-        return None, [HABITS_READ_FAILED_WARNING]
-    # Local import: producer_rules imports THIS module, so a module-level
-    # import would close the cycle.
-    import producer_rules
-
-    try:
-        fetched: list[dict[str, Any]] = []
-        for project_id in sorted(project_ids):
-            fetched.extend(getter(project_id))
-    except Exception:  # noqa: BLE001 — degrade contract; the caller labels it
-        return None, [HABITS_READ_FAILED_WARNING]
-    tasks = [t for t in fetched if isinstance(t, dict)]
-    scoped = [_bounded_habit_task(t) for t in tasks if _is_habit_task(t, project_ids)]
-    if tasks and not scoped:
-        # The scoped read answered with foreign tasks only: it is not doing
-        # what it claims, so report instead of publishing a false zero.
-        return None, [HABITS_READ_FAILED_WARNING]
-    if len(scoped) > artifact_source.HABIT_ITEMS_MAX:
-        scoped = scoped[: artifact_source.HABIT_ITEMS_MAX]
-    entry = {
-        "tasks": scoped,
-        "fallback_minutes_per_habit": config.get(
-            "habits.fallback_minutes_per_habit"
-        ),
-        "round_to_minutes": config.get("habits.round_to_minutes"),
-    }
-    block = producer_rules.compute_habit_summary(entry, logical_day=logical_day)
-    if not block.get("total") and _artifact_habit_total():
-        # Live zero against a cached list that still carries habits: the read
-        # is broken, not the day. Hand the caller its cache back, labelled.
-        return None, [HABITS_EMPTY_LIVE_WARNING]
-    return block, []
 
 
 def _is_reminder(task: dict[str, Any]) -> bool:
@@ -539,11 +354,10 @@ def fetch_todoist_items(
     assigned_q = str(config.get("todoist.read_query.assigned") or ASSIGNED_QUERY_FALLBACK)
     quick_q = str(config.get("todoist.read_query.quick") or QUICK_QUERY_FALLBACK)
     try:
-        habit_projects = _habit_project_ids(client, catalog)
-
         def _plannable(t: dict[str, Any]) -> bool:
+            # No habit-project exclusion: Grit is the habit source (U7), so a
+            # Todoist task in a project called "habits" is ordinary work.
             return (not _is_reminder(t)
-                    and str(t.get("project_id")) not in habit_projects
                     and str(t.get("id")) not in excluded)
 
         assigned_tasks = [t for t in client.get_filter_tasks(assigned_q) if _plannable(t)]

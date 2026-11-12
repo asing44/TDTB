@@ -14,8 +14,10 @@ The failure ladder pinned here, in order:
    ``GRIT_UNCONFIGURED`` when a due habit has no saved minutes;
 2. no usable cache but a saved plan -> every configured due habit counts as not
    done, with ``GRIT_READ_FAILED``;
-3. neither -> the previous behaviour (Todoist live read, then the artifact)
-   is untouched, so an unconfigured app plans exactly as it did before.
+3. neither -> an EMPTY habit block with no warning. Unit U7 retired the
+   Todoist habit read: no Todoist client method is called for habits and the
+   archived Habits project is never consulted, so an unconfigured app plans the
+   day with no habit load.
 
 Absolute rules: a plan read NEVER runs the Shortcut. It serves the cache and
 kicks at most ONE detached background refresh, so ``/plan-inputs`` returns
@@ -146,19 +148,28 @@ class FakeRunner:
         return gh.RunResult(ok=True)
 
 
-class FakeHabitsTodoist:
-    """The legacy live habit read's client, for the ladder's step 3."""
+class SpyTodoist:
+    """A Todoist double for ladder step 3 that FLAGS any habit read.
+
+    U7 retired the Todoist habit read, so ``/plan-inputs`` must never call the
+    one method that read implemented (``get_project_tasks``). Row reads still
+    happen and answer empty.
+    """
 
     PROJECT = {"id": "p-habits", "name": "\U0001F501 Habits"}
 
-    def __init__(self, tasks):
-        self._tasks = tasks
+    def __init__(self):
+        self.project_task_reads: list[str] = []
 
     def get_projects(self):
         return [dict(self.PROJECT)]
 
     def get_project_tasks(self, project_id, limit=None):
-        return [dict(task) for task in self._tasks]
+        self.project_task_reads.append(project_id)
+        return [
+            {"id": "h1", "content": "TDTB", "project_id": self.PROJECT["id"],
+             "duration": {"amount": 5, "unit": "minute"}},
+        ]
 
     def get_filter_tasks(self, query, limit=None):
         return []
@@ -408,28 +419,40 @@ class TestStaleAndFailedLadder:
 
 
 # ---------------------------------------------------------------------------
-# Ladder step 3 — an unconfigured app keeps the previous behaviour
+# Ladder step 3 — Grit has nothing to say, and Todoist is never asked
 # ---------------------------------------------------------------------------
 
-class TestUnconfiguredKeepsLegacy:
-    def test_no_settings_and_no_cache_read_the_live_habits_project(
+class TestUnconfiguredHasNoHabitSource:
+    def test_no_settings_and_no_cache_publish_an_empty_habit_block(
         self, client, live_sources_mode
     ):
-        client.app.state.build_read_clients = lambda cfg: (
-            FakeHabitsTodoist([
-                {"id": "h1", "content": "TDTB", "project_id": "p-habits",
-                 "duration": {"amount": 5, "unit": "minute"}},
-            ]),
-            None,
-        )
+        spy = SpyTodoist()
+        client.app.state.build_read_clients = lambda cfg: (spy, None)
 
         body = _body(client)
 
-        assert body["habits"]["total"] == 1
-        assert body["habits"]["done"] == 0
+        # Step 3 is the zeroed block: Grit has no settings and no cache, so the
+        # day carries no habit load and no habit warning — never the archived
+        # project's habits.
+        assert body["habits"] == {
+            "total": 0, "done": 0, "outstanding": 0, "est_minutes": 0,
+        }
+        assert "items" not in body["habits"]
         assert _grit_warnings(body) == []
         # Nothing is configured, so nothing asked the Shortcut to run.
         assert client.app.state.grit_refresh_inflight is False
+
+    def test_no_todoist_method_reads_habits(
+        self, client, live_sources_mode
+    ):
+        """U7: the row read still runs, the habit read cannot."""
+        spy = SpyTodoist()
+        client.app.state.build_read_clients = lambda cfg: (spy, None)
+
+        body = _body(client)
+
+        assert body["habits"]["total"] == 0
+        assert spy.project_task_reads == []
 
     def test_an_empty_saved_plan_still_reads_grit_with_defaults(self, client):
         _save([])

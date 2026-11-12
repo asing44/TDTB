@@ -117,10 +117,9 @@ def _client(todoist=None, store=None) -> TestClient:
 def _write_habits_artifact(habits) -> None:
     """Write a minimal fresh artifact carrying a habits block.
 
-    Artifact source mode reads this block. Live source mode reads the
-    operator's Todoist Habits project instead (``fetch_habits_items``) and
-    lands on this block only as the fallback for a failed live read, so every
-    test here that expects the artifact block must stay in artifact mode."""
+    Artifact source mode reads this block. Unit U7 retired the Todoist habit
+    read, so live source mode never lands here; every test here that expects
+    the artifact block must stay in artifact mode."""
     import artifact_source as art
 
     read_at = datetime.now().astimezone().isoformat(timespec="seconds")
