@@ -84,12 +84,16 @@ function HabitRowView({
   onDays: (days: number[] | null) => void;
   onDelete: () => void;
 }) {
-  const [text, setText] = useState(row.minutes === null ? "" : String(row.minutes));
+  /* The operator's keystrokes live in `draft`; with no draft the field shows
+     the server-confirmed minutes. Leaving the field drops the draft, so a
+     rejected save shows the rolled-back value in the same render as its row
+     message, and a confirmed save can normalise what was typed. A state copy
+     synced by an effect cannot do this: it rewrites the box on a later frame
+     and would discard a keystroke typed in between. */
+  const [draft, setDraft] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState("");
   const [daysOpen, setDaysOpen] = useState(false);
-  useEffect(() => {
-    setText(row.minutes === null ? "" : String(row.minutes));
-  }, [row.minutes]);
+  const text = draft ?? (row.minutes === null ? "" : String(row.minutes));
   const missing = row.status === "missing";
   const unconfigured = row.status === "unconfigured";
 
@@ -101,6 +105,9 @@ function HabitRowView({
       setFieldError(`Enter whole minutes from 0 to ${HABIT_MINUTES_MAX}.`);
       return;
     }
+    /* Keep a draft only when it holds something this commit did not accept (an
+       unparseable value above). Everything else follows the confirmed copy. */
+    setDraft(null);
     if (value !== row.minutes) onMinutes(value);
   }
   function toggleDay(day: number) {
@@ -130,7 +137,7 @@ function HabitRowView({
             aria-label={`Minutes for ${row.name}`}
             aria-invalid={fieldError ? "true" : undefined}
             disabled={locked}
-            onInput={(e) => setText(e.currentTarget.value)}
+            onInput={(e) => setDraft(e.currentTarget.value)}
             onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === "Enter") commit();
