@@ -3365,6 +3365,194 @@ def _habit_override_for(overrides: dict[str, Any], item: Any) -> Any:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Grit habits: today's habit block (U4 of the Grit-habits work)
+# ---------------------------------------------------------------------------
+
+def _habit_settings_or_empty() -> habit_settings.HabitSettings:
+    """The saved habit plan, or the empty default when storage is unreadable.
+
+    A plan read must never fail because the settings file is missing or
+    broken: an absent file already reads as the empty default, and malformed
+    storage degrades the same way here. The Settings route is the surface that
+    reports the problem; nothing is repaired, echoed, or guessed at.
+    """
+    try:
+        return habit_settings.load().settings
+    except (habit_settings.HabitSettingsStoreError, OSError):
+        return habit_settings.HabitSettings()
+
+
+def _grit_refresh_worker(app_state: Any, runner: Any) -> None:
+    """Run one single-flight refresh off the request thread; never raises.
+
+    A failed read is recorded inside ``grit_habits.refresh`` itself; nothing
+    here is logged (no habit name, no Shortcut output) and the in-flight flag
+    is always cleared so a later request may try again.
+    """
+    try:
+        grit_habits.refresh(runner=runner)
+    except Exception:  # noqa: BLE001 — a background refresh must never crash
+        pass
+    finally:
+        app_state.grit_refresh_inflight = False
+
+
+def _kick_grit_refresh(app_state: Any) -> None:
+    """Start ONE detached Grit refresh; never blocks, never raises.
+
+    The gate is a non-blocking ``app.state.grit_refresh_lock`` plus an
+    in-flight flag, so concurrent plan reads that all find the cache missing
+    start exactly one Shortcut run between them (the thread follows the
+    Capacities refresh precedent: a daemon thread, not the request). The read
+    itself single-flights in ``grit_habits.refresh``; this guard only keeps a
+    burst of requests from stacking threads.
+    """
+    lock = getattr(app_state, "grit_refresh_lock", None)
+    if lock is None:
+        return
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        if getattr(app_state, "grit_refresh_inflight", False):
+            return
+        app_state.grit_refresh_inflight = True
+    finally:
+        lock.release()
+    try:
+        threading.Thread(
+            target=_grit_refresh_worker,
+            args=(app_state, getattr(app_state, "grit_runner", None)),
+            name="grit-habits-refresh",
+            daemon=True,
+        ).start()
+    except RuntimeError:  # pragma: no cover — thread start failure
+        app_state.grit_refresh_inflight = False
+
+
+def _grit_due_items(
+    readings: Any,
+    settings: habit_settings.HabitSettings,
+    weekday: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Today's habit items: the Grit read joined with the saved plan.
+
+    A habit is kept when it is due today (``habit_settings`` weekdays; an
+    unconfigured habit is due every day). One item per kept habit in Grit's own
+    order, shaped ``{id, content, minutes, done, status}`` — ``id`` and
+    ``content`` are both the trimmed habit NAME, so a Day Setup override still
+    matches a Grit habit by name (Grit has no TDTB id to key on). ``done`` and
+    ``status`` come from the ``grit_habits`` classifier, never re-derived here.
+
+    Returns the items plus whether ANY kept habit was unconfigured (present in
+    Grit, no saved minutes), which the caller turns into ``GRIT_UNCONFIGURED``.
+    """
+    items: list[dict[str, Any]] = []
+    unconfigured = False
+    for reading in readings:
+        saved = settings.find(reading.name)
+        if saved is not None and not saved.due_on(weekday):
+            continue
+        if saved is None:
+            unconfigured = True
+            minutes = grit_habits.GRIT_UNCONFIGURED_MINUTES
+        else:
+            minutes = saved.minutes
+        status = reading.status
+        items.append(
+            {
+                "id": reading.name,
+                "content": reading.name,
+                "minutes": minutes,
+                "done": not grit_habits.counts_toward_remaining(status),
+                "status": status,
+            }
+        )
+    return items, unconfigured
+
+
+def _habit_block_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """The habit block the rest of the app already reads, built from items.
+
+    ``total`` counts every admitted habit, ``done`` counts the ones that stop
+    consuming capacity (done or failed), ``outstanding`` the rest, and
+    ``est_minutes`` sums only the outstanding minutes — a binary treatment, so
+    a partial habit still costs its full duration. Unlike the producer block
+    this is NOT grain-rounded: the capacity segment rounds the pool itself.
+    ``items`` is omitted when empty, so a zero block keeps the four-field
+    ``HABITS_EMPTY`` shape.
+    """
+    outstanding = [item for item in items if not item.get("done")]
+    block: dict[str, Any] = {
+        "total": len(items),
+        "done": len(items) - len(outstanding),
+        "outstanding": len(outstanding),
+        "est_minutes": sum(int(item["minutes"]) for item in outstanding),
+    }
+    if items:
+        block[artifact_source.HABITS_ITEMS_KEY] = items
+    return block
+
+
+def _grit_habits_source(
+    app_state: Any,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Today's habit block from the Grit CACHE, or ``None`` for the legacy path.
+
+    Failure ladder, in this exact order:
+
+    1. **A usable same-logical-day cache read is the source.** Grit habits are
+       joined with the saved plan (:func:`_grit_due_items`). ``GRIT_READ_STALE``
+       is added only when a refresh attempt for today failed AFTER this cache
+       was stored (``grit_habits.failed_since_cache``), and
+       ``GRIT_UNCONFIGURED`` when a due habit has no saved minutes.
+    2. **No usable cache, but a saved plan for today.** Every configured due
+       habit counts as not done and keeps its saved minutes, with
+       ``GRIT_READ_FAILED``: the plan is known, only today's completion is not,
+       so the day is planned pessimistically rather than under-counted.
+    3. **No usable cache and no saved plan for today.** ``(None, [])`` — the
+       caller keeps its previous behaviour (the Todoist live read, then the
+       artifact's cached list), so an unconfigured app plans the day exactly as
+       it did before Grit existed. Unit U7 retires that path.
+
+    Never runs the Shortcut: the cache is read, and when it is missing, from an
+    earlier day, or older than ``grit_habits.CACHE_MAX_AGE_S`` exactly ONE
+    detached background refresh is kicked first (``grit_habits.needs_refresh``).
+    A background refresh is kicked only once Grit is CONFIGURED (a saved plan
+    with at least one habit): an app that has never been set up has no reason
+    to spawn the operator's Shortcut on every plan read.
+
+    Warnings are content-free — no habit name, minutes, or Shortcut output.
+    """
+    settings = _habit_settings_or_empty()
+    if settings.habits and grit_habits.needs_refresh():
+        _kick_grit_refresh(app_state)
+    weekday = gather.effective_date(datetime.now()).weekday()
+    today = grit_habits.read_today()
+    if today.habits is not None:
+        items, unconfigured = _grit_due_items(today.habits, settings, weekday)
+        warnings: list[str] = []
+        if unconfigured:
+            warnings.append(grit_habits.GRIT_UNCONFIGURED)
+        if grit_habits.failed_since_cache():
+            warnings.append(grit_habits.GRIT_READ_STALE)
+        return _habit_block_from_items(items), warnings
+    due = habit_settings.due_today(settings, weekday)
+    if not due:
+        return None, []
+    items = [
+        {
+            "id": entry.name,
+            "content": entry.name,
+            "minutes": entry.minutes,
+            "done": False,
+            "status": grit_habits.STATUS_NONE,
+        }
+        for entry in due
+    ]
+    return _habit_block_from_items(items), [grit_habits.GRIT_READ_FAILED]
+
+
 def _habits_segment(
     habits: dict[str, Any], override: Any,
 ) -> tuple[int, str]:
@@ -3377,15 +3565,30 @@ def _habits_segment(
     Overrides keyed to ids/names not in ``items`` are ignored (they still
     round-trip in the dated note). The base note text is unchanged; a
     ``· N skipped`` / ``· M adjusted`` suffix is appended only when an override
-    is actually in play."""
+    is actually in play.
+
+    A Grit-sourced item carries ``status``: ``done`` and ``failed`` stop
+    consuming capacity (``grit_habits.counts_toward_remaining``), so their
+    minutes leave the pool while ``partial`` and ``none`` keep their full
+    duration. Those items also let the note report completion, which is why the
+    note reads ``habits: N due · D done`` for a Grit block and keeps the older
+    ``habits: N active`` wording for a block that carries no completion data
+    (the legacy Todoist/artifact block never reads completion at all)."""
     items = habits.get(artifact_source.HABITS_ITEMS_KEY)
     ov = override if isinstance(override, dict) else {}
     ov_items = ov.get("items") if isinstance(ov.get("items"), dict) else {}
     ov_total = ov.get("total") if isinstance(ov.get("total"), dict) else None
     skipped = adjusted = 0
+    completion = False
     if isinstance(items, list) and items:
         total_minutes = 0
         for item in items:
+            status = item.get("status") if isinstance(item, dict) else None
+            if isinstance(status, str):
+                # A Grit item knows whether it still costs capacity.
+                completion = True
+                if not grit_habits.counts_toward_remaining(status):
+                    continue
             entry = _habit_override_for(ov_items, item)
             if isinstance(entry, dict) and entry.get("on") is False:
                 skipped += 1
@@ -3407,13 +3610,20 @@ def _habits_segment(
             elif _override_minutes(ov_total) is not None:
                 total_minutes = _override_minutes(ov_total)
                 adjusted += 1
-    # Completion is never read (the habit list IS the active set), so the block
-    # always reports done=0; name the active count instead of a done/left split.
+    # The legacy habit list IS the active set (completion is never read), so
+    # its note names the active count. A Grit block reads real completion, so
+    # it reports how many were due and how many stopped consuming capacity.
     total = habits.get("total")
     if type(total) is not int:
         # Legacy block without a usable total: fall back to its done+outstanding.
         total = (habits.get("done") or 0) + (habits.get("outstanding") or 0)
-    note = f"habits: {total} active"
+    done = habits.get("done")
+    if type(done) is not int or done < 0:
+        done = 0
+    if completion:
+        note = f"habits: {total} due · {done} done"
+    else:
+        note = f"habits: {total} active"
     flags = []
     if skipped:
         flags.append(f"{skipped} skipped")
@@ -3977,6 +4187,11 @@ def create_app() -> FastAPI:
     # ``grit_habits.run_shortcut``. The GET route never runs a Shortcut at all:
     # it reconciles against the stored cache only.
     app.state.grit_runner = None
+    #: U4: gate on the ONE detached Grit refresh a plan read may start. The
+    #: lock is only held for the flag flip, so a request never waits on it; the
+    #: in-flight flag is what makes a burst of plan reads share one Shortcut run.
+    app.state.grit_refresh_lock = threading.Lock()
+    app.state.grit_refresh_inflight = False
 
     def require_token(x_tdtb_token: str | None = Header(default=None)) -> None:
         if not x_tdtb_token or not secrets.compare_digest(x_tdtb_token, app.state.token):
@@ -5918,15 +6133,21 @@ def create_app() -> FastAPI:
         # degrades visibly here; it never crashes plan-inputs.
         mirror_excluded, mirror_warnings = _mirror_intake_exclusions()
         # Habits are a CAPACITY summary: their time deducts from the day,
-        # they never become rows. In artifact mode the published artifact's
-        # block is the source; in live mode the operator's own Habits project
-        # is read live, so every open habit shows up. A failed live read falls
-        # back to the artifact's cached list with a loud source_warnings entry
-        # (never a silent zero); a live read that succeeds with no habit is a
-        # real zero and stays one.
+        # they never become rows. Grit owns the habit source now: today's Grit
+        # cache supplies the completion-aware list (U4), and only when that is
+        # unusable does the older ladder step run — the operator's own Habits
+        # project read live, then the published artifact's cached list. A
+        # failed live read brings a loud source_warnings entry (never a silent
+        # zero); a live read that succeeds with no habit is a real zero.
         habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
         w_hab: list[str] = []
-        if source_mode == app_config.SOURCES_MODE_ARTIFACT:
+        grit_habits_block, grit_warnings = _grit_habits_source(app.state)
+        if grit_habits_block is not None:
+            # Grit is the source: no Todoist habit read and no artifact
+            # fallback happens on this path (unit U7 retires the ladder step).
+            habits = grit_habits_block
+            w_hab = grit_warnings
+        elif source_mode == app_config.SOURCES_MODE_ARTIFACT:
             # The calendar store is NOT a live plan source the artifact
             # replaces: calendar, habits and anchored blocks keep their
             # current readers under the artifact seam (A1 fix). Obtain it
@@ -6494,15 +6715,20 @@ def create_app() -> FastAPI:
                 external_sources.split_schedulable_all_day(busy_blocks)
             )
             # Same habit source as /plan-inputs so the two consumers agree on
-            # the capacity math: the live Habits project read when a Todoist
-            # client exists, the artifact's cached list otherwise.
-            live_habits, _w_hab = external_sources.fetch_habits_items(
-                todoist_c, ext_cfg, today
-            )
-            habits = (
-                live_habits if live_habits is not None
-                else artifact_source.load_habits()[0]
-            )
+            # the capacity math: today's Grit cache when it is usable (U4),
+            # else the live Habits project read when a Todoist client exists,
+            # else the artifact's cached list.
+            grit_habits_block, _grit_warnings = _grit_habits_source(app.state)
+            if grit_habits_block is not None:
+                habits = grit_habits_block
+            else:
+                live_habits, _w_hab = external_sources.fetch_habits_items(
+                    todoist_c, ext_cfg, today
+                )
+                habits = (
+                    live_habits if live_habits is not None
+                    else artifact_source.load_habits()[0]
+                )
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:
