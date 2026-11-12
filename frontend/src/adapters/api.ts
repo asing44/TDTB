@@ -57,6 +57,10 @@ import type {
   TagCatalog,
   CalendarSettings,
   CalendarSettingsDraft,
+  HabitGritRefreshResult,
+  HabitSettings,
+  HabitSettingsDraft,
+  HabitSettingsSaveOutcome,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -84,6 +88,9 @@ import {
   projectTagExclusionSettings,
   projectCalendarSettings,
   calendarSettingsToWire,
+  projectHabitSettings,
+  projectHabitGritRefresh,
+  habitSettingsToWire,
   tagExclusionSettingsToWire,
   emptyTagCatalog,
   projectCalendarDrift,
@@ -326,6 +333,83 @@ export function exclusionSettingsConflictOf(
   if (!Number.isSafeInteger(expected) || expected < 0) return null;
   if (!Number.isSafeInteger(current) || current < 0) return null;
   return { expectedRevision: expected, currentRevision: current };
+}
+
+/** One server error `detail` record, or null when the error is not the typed
+    `ApiError` this shape applies to. The habit-settings routes answer ``409``
+    for two different codes (a stale revision and malformed stored bytes), so
+    every extractor below narrows on BOTH the status and the code. */
+function habitSettingsDetail(
+  error: unknown,
+  status: number,
+  code: string,
+): Wire | null {
+  if (!(error instanceof ApiError) || error.status !== status) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== code) return null;
+  return record;
+}
+
+/** The message a typed habit-settings outcome carries. The server's own text
+    is bounded and content-free (no habit name, no minutes, no path), so it is
+    passed through; a body without one falls back to the caller's text. */
+function habitSettingsMessage(record: Wire, fallback: string): string {
+  return typeof record.message === "string" && record.message !== ""
+    ? record.message
+    : fallback;
+}
+
+/** Extract the stale-revision conflict from a real 409
+    ``habit_settings_conflict``. Returns null for anything else — including the
+    route's other 409 code (``habit_settings_storage_error``, which the next
+    extractor owns) — so the caller narrows to a typed outcome rather than an
+    error subclass. */
+export function habitSettingsConflictOf(error: unknown): { message: string } | null {
+  const record = habitSettingsDetail(error, 409, "habit_settings_conflict");
+  if (!record) return null;
+  return {
+    message: habitSettingsMessage(
+      record,
+      "Habit settings changed since they were read; reload and retry.",
+    ),
+  };
+}
+
+/** Extract the malformed-storage 409 ``habit_settings_storage_error``: the
+    stored file is unreadable, so nothing can be saved until an operator fixes
+    it. Not the same outcome as a stale revision, and never offered as a
+    retry. */
+export function habitSettingsStorageErrorOf(error: unknown): { message: string } | null {
+  const record = habitSettingsDetail(error, 409, "habit_settings_storage_error");
+  if (!record) return null;
+  return {
+    message: habitSettingsMessage(
+      record,
+      "Habit settings storage is malformed or unsupported; the existing file was preserved.",
+    ),
+  };
+}
+
+/** Extract the rejected-row 422 ``habit_settings_invalid``. ``index`` is the
+    position in the SUBMITTED list (the UI highlights one input) and ``field``
+    names which value failed; both are null when the rejection named no row.
+    The offending value is never echoed by the server, so it cannot be leaked
+    here. */
+export function habitSettingsInvalidOf(
+  error: unknown,
+): { message: string; index: number | null; field: string | null } | null {
+  const record = habitSettingsDetail(error, 422, "habit_settings_invalid");
+  if (!record) return null;
+  const index = Number.isInteger(record.index) && (record.index as number) >= 0
+    ? (record.index as number)
+    : null;
+  return {
+    message: habitSettingsMessage(record, "Habit settings payload is invalid."),
+    index,
+    field: typeof record.field === "string" ? record.field : null,
+  };
 }
 
 export class ApiAdapter implements Adapter {
@@ -650,6 +734,57 @@ export class ApiAdapter implements Adapter {
     );
   }
 
+  /** GET /settings/habits — tokenless local read of the per-habit duration and
+      weekday policy plus the advisory Grit inventory. The route never runs
+      the operator's Shortcut: the inventory comes from the Grit CACHE only,
+      and `inventoryStatus: "unavailable"` is a reported state (nothing is
+      known about Grit yet), not an error. */
+  async loadHabitSettings(): Promise<HabitSettings> {
+    return projectHabitSettings(await this.request("/settings/habits"));
+  }
+
+  /** POST /settings/habits/save — ONE token-guarded non-billed full
+      replacement. The three EXPECTED rejections come back as a typed
+      outcome (stale revision, rejected row, malformed storage) so an autosave
+      caller can act without catching; everything else — transport, protocol,
+      an unmapped status — still rejects.
+
+      The save response is the same payload as the GET, inventory included, so
+      no last-loaded fallback is needed here (unlike the calendar save). */
+  async saveHabitSettings(draft: HabitSettingsDraft): Promise<HabitSettingsSaveOutcome> {
+    let wire: Wire;
+    try {
+      wire = await this.post("/settings/habits/save", habitSettingsToWire(draft));
+    } catch (e) {
+      const conflict = habitSettingsConflictOf(e);
+      if (conflict) return { ok: false, reason: "conflict", message: conflict.message };
+      const storage = habitSettingsStorageErrorOf(e);
+      if (storage) return { ok: false, reason: "storage", message: storage.message };
+      const invalid = habitSettingsInvalidOf(e);
+      if (invalid) {
+        return {
+          ok: false,
+          reason: "invalid",
+          message: invalid.message,
+          index: invalid.index,
+          field: invalid.field,
+        };
+      }
+      throw e;
+    }
+    return { ok: true, settings: projectHabitSettings(wire) };
+  }
+
+  /** POST /habits/grit/refresh — ONE token-guarded read of Grit through the
+      operator's Shortcut (a local read, never billed). A read that reports
+      ``ok: false`` is a 200 with the reader's typed reason and the LAST
+      cached inventory: that is the read's status, not a client or server
+      fault, so it resolves rather than throwing. Only a failure to touch the
+      cache itself is a 500. */
+  async refreshGritHabits(): Promise<HabitGritRefreshResult> {
+    return projectHabitGritRefresh(await this.post("/habits/grit/refresh", {}));
+  }
+
   /** Explicit durable save (duration-memory MVP): exactly ONE token-guarded
       non-billed POST. Strict client validation happens before this method is
       ever reached; the wire body carries the exact value untouched. */
@@ -823,4 +958,65 @@ export class ApiAdapter implements Adapter {
       await this.post(`/runtime-batches/${encodeURIComponent(batchId)}/undo`, {}),
     );
   }
+}
+
+/** A single-flight, revision-chained autosave for the habit-settings store.
+
+    The store is a versioned full replacement: every save must name the
+    revision it expects, and the new revision is server-owned. Two operator
+    keystrokes a second apart therefore cannot both send the revision they read
+    — the second would 409 against the first's write and lose the edit. This
+    helper serialises the saves, so each one sends the revision the PREVIOUS
+    save returned, and coalesces nothing: every call is its own save, in call
+    order, with the caller's own habit list.
+
+    A 409 is terminal for the chain. It means someone else wrote the plan (a
+    second tab, another device), so the local revision is stale and NO later
+    save can be honest until the UI reloads: the conflict is returned to every
+    waiting caller without issuing another request, and `blocked()` reports it.
+    A `storage` or `invalid` rejection does NOT break the chain — the revision
+    is untouched, so a corrected save can still succeed. */
+export interface HabitSettingsAutosave {
+  /** The latest known settings (the seed, then each successful save). */
+  current(): HabitSettings;
+  /** True once a 409 stopped the chain: the UI reloads before saving again. */
+  blocked(): boolean;
+  /** Queue one full-replacement save; resolves with its own typed outcome. */
+  save(habits: HabitSettingsDraft["habits"]): Promise<HabitSettingsSaveOutcome>;
+}
+
+export function createHabitSettingsAutosave(
+  save: (draft: HabitSettingsDraft) => Promise<HabitSettingsSaveOutcome>,
+  initial: HabitSettings,
+): HabitSettingsAutosave {
+  let latest = initial;
+  let blocked = false;
+  let conflict: HabitSettingsSaveOutcome | null = null;
+  let tail: Promise<unknown> = Promise.resolve();
+
+  return {
+    current: () => latest,
+    blocked: () => blocked,
+    save(habits) {
+      const run = tail.then(async (): Promise<HabitSettingsSaveOutcome> => {
+        // A queued save that arrives after the conflict never reaches the
+        // server: its revision is already known to be stale.
+        if (conflict) return conflict;
+        // A rejection (transport or protocol) propagates to this caller and
+        // says nothing about the revision, so the chain stays usable.
+        const outcome = await save({ expectedRevision: latest.revision, habits });
+        if (outcome.ok) {
+          latest = outcome.settings;
+        } else if (outcome.reason === "conflict") {
+          blocked = true;
+          conflict = outcome;
+        }
+        return outcome;
+      });
+      // The chain must survive a rejected save: later calls still queue on a
+      // settled promise and re-throw their own error.
+      tail = run.catch(() => undefined);
+      return run;
+    },
+  };
 }
