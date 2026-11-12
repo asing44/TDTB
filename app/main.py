@@ -31,7 +31,7 @@ import re
 import subprocess
 import sys
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -3790,6 +3790,61 @@ def _capacity_frame(
     return frame, cap
 
 
+class _CommitFlight:
+    """Secret-free, thread-safe projection of whether a ``POST /commit`` is
+    being served right now.
+
+    Why this exists: the operator's post-commit restart hook must never
+    restart the live service while a commit is in flight, and the app's own
+    G25 guard (``app.state.live_commit_lock``) cannot answer that question
+    from outside the process — it is a ``threading.Lock``, not a file, and no
+    read route exposes it. This class holds exactly that one fact and nothing
+    else, so a tokenless GET can report it.
+
+    It OBSERVES the request path instead of the lock, so it covers both
+    ``mode=shadow`` (the preview path, which never takes the G25 lock) and
+    ``mode=live``, and it never changes that lock's semantics.
+
+    Routes run in the threadpool and shadow commits are not serialized, so
+    two commits can overlap: ``depth`` counts them, ``since`` is when the
+    outermost one started, and ``mode`` is the most recently started mode —
+    the honest answer while two modes overlap.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._depth = 0
+        self._mode: str | None = None
+        self._since: datetime | None = None
+
+    def begin(self, mode: str | None) -> None:
+        with self._lock:
+            if self._depth == 0:
+                self._since = datetime.now(timezone.utc)
+            self._depth += 1
+            self._mode = mode
+
+    def end(self) -> None:
+        with self._lock:
+            if self._depth > 0:
+                self._depth -= 1
+            if self._depth == 0:
+                self._mode = None
+                self._since = None
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "in_flight": self._depth > 0,
+                "mode": self._mode,
+                "since": (
+                    self._since.isoformat().replace("+00:00", "Z")
+                    if self._since is not None
+                    else None
+                ),
+            }
+
+
 def create_app() -> FastAPI:
     """Build the TDTB FastAPI app. Every store lives in
     the app home (``app_config.app_home()``)."""
@@ -3918,6 +3973,10 @@ def create_app() -> FastAPI:
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
+    #: Read-only projection of "is a POST /commit being served right now?" for
+    #: the operator restart hook (GET /commit/status). Observes the request
+    #: path only — it never gates, serializes, or delays a commit.
+    app.state.commit_flight = _CommitFlight()
 
     def require_token(x_tdtb_token: str | None = Header(default=None)) -> None:
         if not x_tdtb_token or not secrets.compare_digest(x_tdtb_token, app.state.token):
@@ -4010,6 +4069,24 @@ def create_app() -> FastAPI:
                        "identity, index, or asset)",
             )
         return payload
+
+    @app.get("/commit/status")
+    def get_commit_status() -> dict:
+        """Tokenless, secret-free read of whether a ``POST /commit`` is being
+        served right now — the one signal the operator's post-commit restart
+        hook needs before it restarts the live service.
+
+        Tokenless like ``/health`` and ``/version``, which expose equally
+        non-sensitive runtime facts: the payload is a boolean, the commit
+        mode, and a start timestamp, and reading it performs no judgment,
+        ledger, provider, runstate, billing, Todoist, Calendar, or
+        external-source call and mutates no state.
+
+        ``in_flight`` covers ``mode=shadow`` previews too, because a preview
+        is still a commit request in flight. It is projected from the request
+        path (``_CommitFlight``), not from ``app.state.live_commit_lock``, so
+        the G25 live-commit lock keeps its exact semantics."""
+        return app.state.commit_flight.snapshot()
 
     @app.get("/session-token")
     def get_session_token(request: Request) -> dict:
@@ -7084,6 +7161,23 @@ def create_app() -> FastAPI:
 
     @app.post("/commit", dependencies=[Depends(require_token)])
     def post_commit(
+        mode: str | None = None, resume: bool = False, body: CommitRequest | None = None
+    ) -> Any:
+        """Commit entry point. Records the in-flight window that
+        ``GET /commit/status`` reports, then delegates to ``_serve_commit``.
+
+        The record is taken at the very top of the handler and cleared in a
+        ``finally``, so it is released on every exit: a 501/400/409 refusal, a
+        raised ``HTTPException``, a writer failure, and a normal return. It
+        covers BOTH modes and is independent of the G25 live-commit lock.
+        """
+        app.state.commit_flight.begin(mode)
+        try:
+            return _serve_commit(mode=mode, resume=resume, body=body)
+        finally:
+            app.state.commit_flight.end()
+
+    def _serve_commit(
         mode: str | None = None, resume: bool = False, body: CommitRequest | None = None
     ) -> Any:
         """T13: shadow-mode preview. T15: ``mode=live`` real commit.

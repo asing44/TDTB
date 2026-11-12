@@ -1,0 +1,160 @@
+#!/bin/zsh
+# Operator post-commit auto-restart for the live TDTB cockpit.
+#
+# Purpose: every commit that touches `app/` or `frontend/` otherwise needs a
+# manual `restart-live.sh` (rebuild both committed bundles, re-render the
+# plist, bootout + bootstrap, health check). Installed in the MAIN checkout,
+# this hook schedules that restart in the background after the commit returns,
+# so the live seat tracks the operator's own commits without a second step.
+#
+# Attended operator use only. The hook fires only for a commit made in the
+# operator's own terminal in the main checkout, and it never blocks, fails, or
+# delays a commit: it always exits 0 and prints one line to stderr.
+#
+# EVERY guard below must hold, otherwise the restart is skipped:
+#   1. stderr is a terminal      — an agent or scripted commit never fires it;
+#   2. no agent marker           — PI_CODING_AGENT, PI_SESSION_ID,
+#                                  CLAUDE_AGENT_SDK_VERSION, OPENCODE_*;
+#   3. main checkout             — hooks are shared by every linked worktree
+#                                  (~30 of them); only the main checkout's own
+#                                  commits restart the live seat;
+#   4. branch is `main`          — worktree/topic branches never restart it;
+#   5. non-root commit;
+#   6. the commit touches app/ or frontend/;
+#   7. no plan commit in flight  — GET /commit/status must say in_flight false.
+#                                  Fail closed: an unreachable, unparseable, or
+#                                  non-false answer also skips. Until the live
+#                                  app is restarted onto the code that serves
+#                                  that route, it 404s and every commit skips;
+#   8. no concurrent auto-restart (mkdir lock with stale cleanup).
+#
+# Log: ~/Library/Logs/tdtb-autorestart.log — one timestamped block per run with
+# restart-live.sh's full output and its final exit status.
+#
+# Test seams (never set in normal operation):
+#   TDTB_AUTORESTART_CMD         — restart command (default: the main
+#                                  checkout's restart-live.sh)
+#   TDTB_AUTORESTART_STATUS_URL  — commit-status URL to probe
+#   TDTB_AUTORESTART_LOG         — log path
+#   TDTB_AUTORESTART_LOCK        — lock directory
+
+set -u
+setopt pipefail
+
+readonly LOG="${TDTB_AUTORESTART_LOG:-$HOME/Library/Logs/tdtb-autorestart.log}"
+readonly LOCK="${TDTB_AUTORESTART_LOCK:-$HOME/Library/Logs/tdtb-autorestart.lock}"
+readonly STATUS_URL="${TDTB_AUTORESTART_STATUS_URL:-http://127.0.0.1:8746/commit/status}"
+readonly LOCK_STALE_MINUTES=30
+
+# One short stderr line, then a successful exit: a hook must never break a
+# commit, so every skip is a silent-ish no-op.
+skip() {
+  print -u2 -- "tdtb-autorestart: skipped — $1"
+  exit 0
+}
+
+agent_marker() {
+  local name
+  # `${(P)name-}` rather than `${(P)name}`: the latter aborts under `set -u`
+  # when the marker is unset, which would silently disable the guard.
+  for name in PI_CODING_AGENT PI_SESSION_ID CLAUDE_AGENT_SDK_VERSION; do
+    if [[ -n "${(P)name-}" ]]; then
+      print -- "$name"
+      return 0
+    fi
+  done
+  for name in ${(k)parameters}; do
+    if [[ "$name" == OPENCODE_* && -n "${(P)name-}" ]]; then
+      print -- "$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# --- 1-2. attended terminal only --------------------------------------------
+[[ -t 2 ]] || skip "stderr is not a terminal"
+if marker="$(agent_marker)"; then
+  skip "agent session ($marker)"
+fi
+
+# --- 3. main checkout only ---------------------------------------------------
+# `--git-common-dir` points at the MAIN checkout's .git even inside a linked
+# worktree, so this comparison is exactly "am I in the main checkout?".
+common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || skip "not inside a git worktree"
+toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" \
+  || skip "not inside a git worktree"
+main_root="${common:h}"
+[[ "${toplevel:A}" == "${main_root:A}" ]] \
+  || skip "linked worktree ($toplevel) — only the main checkout auto-restarts"
+
+# --- 4-5. main branch, non-root commit --------------------------------------
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || skip "no current branch"
+[[ "$branch" == "main" ]] || skip "branch $branch is not main"
+git rev-parse --verify -q HEAD^ >/dev/null || skip "root commit (no parent to diff against)"
+
+# --- 6. the commit must touch app/ or frontend/ -----------------------------
+touched=0
+for changed in "${(@f)$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)}"; do
+  if [[ "$changed" == app/* || "$changed" == frontend/* ]]; then
+    touched=1
+    break
+  fi
+done
+(( touched )) || skip "commit does not touch app/ or frontend/"
+
+# --- 7. no plan commit in flight --------------------------------------------
+# The projection is the app's own GET /commit/status (app/main.py). Fail closed:
+# only an explicit `"in_flight": false` lets the restart through.
+if ! status_body="$(curl -sf -m 2 "$STATUS_URL" 2>/dev/null)" || [[ -z "$status_body" ]]; then
+  skip "commit status unavailable ($STATUS_URL) — not restarting during a possible commit"
+fi
+case "$status_body" in
+  (*'"in_flight": true'*|*'"in_flight":true'*)
+    skip "a plan commit is in flight ($STATUS_URL)"
+    ;;
+  (*'"in_flight": false'*|*'"in_flight":false'*)
+    :
+    ;;
+  (*)
+    skip "commit status unreadable ($STATUS_URL) — not restarting during a possible commit"
+    ;;
+esac
+
+# --- 8. no concurrent auto-restart ------------------------------------------
+# Advisory pre-check so the common case skips before scheduling anything. The
+# authoritative lock is the atomic mkdir inside the detached run below, which
+# is why a launch that never starts cannot leak a lock and block the next
+# commit. A crashed restart can leave one behind, so drop it once it is stale.
+if [[ -d "$LOCK" ]]; then
+  find "$LOCK" -maxdepth 0 -mmin +$LOCK_STALE_MINUTES -exec rm -rf {} + 2>/dev/null
+  [[ -d "$LOCK" ]] && skip "another auto-restart is already running"
+fi
+
+restart_cmd="${TDTB_AUTORESTART_CMD:-$main_root/restart-live.sh}"
+[[ -x "$restart_cmd" ]] || skip "restart command is missing or not executable: $restart_cmd"
+
+sha="$(git rev-parse --short HEAD 2>/dev/null)"
+subject="$(git log -1 --format='%s' 2>/dev/null | cut -c1-100)"
+print -u2 -- "tdtb-autorestart: scheduled $restart_cmd for $sha"
+
+# Detached so the commit returns immediately. Ignoring SIGHUP in the subshell
+# (inherited across exec) is the nohup behaviour: closing the terminal does not
+# kill a rebuild mid-flight.
+{
+  trap '' HUP
+  # The lock exists only while this run does: taken atomically here and
+  # released last, so two commits cannot stack two bootout/bootstrap cycles.
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) skipped — another auto-restart is running"
+    exit 0
+  fi
+  print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) auto-restart after $sha — $subject"
+  "$restart_cmd"
+  restart_status=$?
+  print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) exit $restart_status"
+  rm -rf "$LOCK"
+} >>"$LOG" 2>&1 &
+
+exit 0
