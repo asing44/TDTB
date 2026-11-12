@@ -1,0 +1,230 @@
+#!/bin/zsh
+# tdtb-dev — the attended editing loop for the TDTB cockpit: pause the live
+# seat, run the real backend on :8746 with auto-reload against real state,
+# hot-reload the UI from Vite, then restore live when you exit.
+#
+# Why this exists: every UI edit otherwise costs a full `restart-live.sh`
+# (rebuild both committed bundles, re-render the plist, bootout + bootstrap,
+# health check). This pauses the launchd job ONCE, runs the backend from
+# source with `--reload`, and points the Vite dev server at it, so an edit is
+# live in about a second. Exiting the loop restores the live seat with the
+# full `restart-live.sh` build.
+#
+# ATTENDED OPERATOR USE ONLY. Agents must not run this script: it boots out
+# the live launchd job, binds :8746, and restarts the service on exit. It
+# refuses to run when an agent marker is set or when stderr is not a terminal.
+#
+# Usage:
+#   zsh tdtb-dev              # from your own terminal, in the main checkout
+#   Ctrl-C                    # stops both children, then restores live
+#
+# What it prints:
+#   backend  http://127.0.0.1:8746/health   (uvicorn --reload, real state)
+#   UI       http://127.0.0.1:5273/         (Vite dev, real ApiAdapter)
+#
+# Caveats:
+#   * It serves the MAIN checkout's code, venv, and state even when started
+#     from a linked worktree, because the venv and the machine-local state dir
+#     live in the main checkout.
+#   * EventKit/TCC attributes the calendar grant to the launching terminal, not
+#     to the launchd job, so calendar surfaces can degrade loudly here while
+#     Todoist-backed ones stay real. Restoration re-runs the launchd job, which
+#     regains its own grant.
+
+set -u
+setopt pipefail
+
+readonly LABEL="com.walle.tdtb"
+readonly PORT="${TDTB_PORT:-8746}"
+readonly DEV_PORT="${TDTB_DEV_PORT:-5273}"
+readonly SCRIPT_DIR="${0:A:h}"
+# The PATH the launchd seat provides (launchd/com.walle.tdtb.plist), so the
+# judgment lane still finds node and the claude CLI.
+readonly SEAT_PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+refuse() {
+  print -u2 -- "tdtb-dev: $1"
+  exit 1
+}
+
+# --- attended-only guards ---------------------------------------------------
+# The same marker set the post-commit restart hook skips on: an agent session
+# must never pause, bind, or restart the live seat.
+agent_marker() {
+  local name
+  for name in PI_CODING_AGENT PI_SESSION_ID CLAUDE_AGENT_SDK_VERSION; do
+    if [[ -n "${(P)name}" ]]; then
+      print -- "$name"
+      return 0
+    fi
+  done
+  for name in ${(k)parameters}; do
+    if [[ "$name" == OPENCODE_* && -n "${(P)name}" ]]; then
+      print -- "$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if marker="$(agent_marker)"; then
+  refuse "agent marker $marker is set — attended operator use only; agents must not run this"
+fi
+[[ -t 2 ]] || refuse "stderr is not a terminal — attended operator use only"
+
+# --- resolve the main checkout ---------------------------------------------
+common_dir="$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common_dir=""
+REPO="${common_dir:h}"
+[[ -n "$common_dir" && -d "$REPO/app" ]] || REPO="$SCRIPT_DIR"
+readonly REPO
+if [[ "${SCRIPT_DIR:A}" != "${REPO:A}" ]]; then
+  print -- "tdtb-dev: ${SCRIPT_DIR:t} is a linked worktree — serving $REPO (its venv and state)"
+fi
+
+readonly UVICORN="$REPO/app/.venv/bin/uvicorn"
+[[ -x "$UVICORN" ]] || refuse "missing $UVICORN — create the app venv in the main checkout first"
+[[ -d "$REPO/frontend/node_modules" ]] || refuse "missing $REPO/frontend/node_modules — run 'npm install' in frontend/"
+
+backend_pid=""
+frontend_pid=""
+live_paused=0
+cleaning=0
+exit_status=0
+
+port_busy() {
+  [[ -n "$(lsof -ti ":$1" -sTCP:LISTEN 2>/dev/null)" ]]
+}
+
+wait_port_free() {
+  local port=$1 i
+  for (( i = 0; i < 100; i++ )); do
+    port_busy "$port" || return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_port_busy() {
+  local port=$1 i
+  for (( i = 0; i < 300; i++ )); do
+    port_busy "$port" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# Depth-first TERM so npm's vite child and uvicorn's reload worker go too.
+stop_tree() {
+  local pid=$1 child
+  [[ -n "$pid" ]] || return 0
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    stop_tree "$child"
+  done
+  kill -TERM "$pid" 2>/dev/null
+  return 0
+}
+
+cleanup() {
+  (( cleaning )) && return 0
+  cleaning=1
+  trap - EXIT INT TERM
+  print -u2 -- ""
+  print -u2 -- "tdtb-dev: stopping the dev loop"
+  stop_tree "$frontend_pid"
+  stop_tree "$backend_pid"
+  wait 2>/dev/null
+  if ! wait_port_free "$PORT"; then
+    print -u2 -- "tdtb-dev: :$PORT is still held after stopping the dev backend"
+    print -u2 -- "tdtb-dev:   $REPO/restart-live.sh will refuse to start a second writer"
+  fi
+  wait_port_free "$DEV_PORT" >/dev/null 2>&1
+
+  if (( live_paused )); then
+    print -- ""
+    print -- "tdtb-dev: restoring live $LABEL — restart-live.sh (rebuild + reload + health)"
+    if zsh "$REPO/restart-live.sh"; then
+      print -- "tdtb-dev: live restored"
+    else
+      exit_status=$?
+      print -u2 -- "tdtb-dev: live restore FAILED (restart-live.sh exit $exit_status) — run it again by hand"
+      print -u2 -- "tdtb-dev:   zsh $REPO/restart-live.sh"
+    fi
+  else
+    print -- "tdtb-dev: the live job was not paused; nothing to restore"
+  fi
+  exit "$exit_status"
+}
+
+trap cleanup EXIT INT TERM
+
+# --- pause the live seat ----------------------------------------------------
+if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+  # Mark paused BEFORE the bootout so any later failure still restores live.
+  live_paused=1
+  print -- "tdtb-dev: pausing $LABEL"
+  launchctl bootout "gui/$UID/$LABEL" || refuse "could not boot out gui/$UID/$LABEL"
+else
+  print -- "tdtb-dev: $LABEL is not loaded — continuing without pausing"
+fi
+
+if ! wait_port_free "$PORT"; then
+  refuse ":$PORT is still in use after pausing — refusing to start a second writer"
+fi
+
+# --- backend: real state, auto-reload ---------------------------------------
+print -- "tdtb-dev: starting the backend on :$PORT (auto-reload, real state)"
+(
+  cd "$REPO/app" || exit 1
+  PATH="$SEAT_PATH"
+  export PATH
+  exec "$UVICORN" main:app --host 127.0.0.1 --port "$PORT" --reload
+) &
+backend_pid=$!
+
+healthy=0
+for (( i = 0; i < 300; i++ )); do
+  if curl -sf -m 1 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    healthy=1
+    break
+  fi
+  kill -0 "$backend_pid" 2>/dev/null || break
+  sleep 0.2
+done
+(( healthy )) || refuse "the dev backend did not answer GET /health on :$PORT"
+
+# --- frontend: Vite dev server, proxied to the real backend -----------------
+print -- "tdtb-dev: starting the Vite dev server on :$DEV_PORT"
+(
+  cd "$REPO/frontend" || exit 1
+  # frontend/vite.config.ts compiles the real ApiAdapter (not the fixture one)
+  # only for `vite dev` with this set.
+  TDTB_DEV_API=1
+  export TDTB_DEV_API
+  exec npm run dev
+) &
+frontend_pid=$!
+
+if wait_port_busy "$DEV_PORT"; then
+  print -- "tdtb-dev: Vite dev server listening"
+else
+  print -u2 -- "tdtb-dev: the Vite dev server has not started listening on :$DEV_PORT yet"
+fi
+
+print -- ""
+print -- "tdtb-dev: editing loop running"
+print -- "  backend  http://127.0.0.1:$PORT/health   (uvicorn --reload, real state)"
+print -- "  UI       http://127.0.0.1:$DEV_PORT/     (Vite dev, real ApiAdapter)"
+print -- "  Ctrl-C   stops both children and restores live $LABEL"
+print -- ""
+
+while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$frontend_pid" 2>/dev/null; do
+  sleep 1
+done
+
+if ! kill -0 "$backend_pid" 2>/dev/null; then
+  print -u2 -- "tdtb-dev: the dev backend exited"
+else
+  print -u2 -- "tdtb-dev: the Vite dev server exited"
+fi
+exit_status=1
+exit 1
