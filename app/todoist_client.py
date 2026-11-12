@@ -49,6 +49,21 @@ class TodoistTokenError(Exception):
     """Raised when the token file is missing, malformed, or insecurely permissioned."""
 
 
+def _duration_payload(
+    duration: int | None, duration_unit: str | None
+) -> dict[str, Any]:
+    """Duration fields for ONE task write — empty when no length is given.
+
+    Todoist v1 carries the length as ``duration`` (whole minutes) plus
+    ``duration_unit``; the same shape the create path sends. An omitted
+    duration leaves the task's existing length untouched instead of zeroing
+    it.
+    """
+    if duration is None or duration <= 0:
+        return {}
+    return {"duration": duration, "duration_unit": duration_unit or "minute"}
+
+
 def load_token(path: str | Path) -> str:
     """Parse KEY=VALUE lines from path, return TODOIST_TOKEN.
 
@@ -267,19 +282,43 @@ class TodoistClient:
         response = self._request("POST", f"/tasks/{task_id}", json=fields)
         return response.json()
 
-    def reschedule_task(self, task_id: str, due_string: str) -> dict:
-        """Thin wrapper on update_task that ONLY sets due_string — never clobbers other fields.
+    def reschedule_task(
+        self,
+        task_id: str,
+        due_string: str,
+        *,
+        duration: int | None = None,
+        duration_unit: str | None = None,
+    ) -> dict:
+        """Thin wrapper on update_task that sets due_string plus an OPTIONAL
+        duration — never clobbers other fields.
+
+        The duration rides in the SAME POST as the due (one call): sending it
+        separately would leave a half-applied block (moved, old length) when
+        the second write fails.
 
         WARNING: due_string REPLACES the whole due, wiping any recurrence
         pattern — never use on a recurring task (use reschedule_task_datetime).
         """
-        return self.update_task(task_id, due_string=due_string)
+        fields: dict[str, Any] = {"due_string": due_string}
+        fields.update(_duration_payload(duration, duration_unit))
+        return self.update_task(task_id, **fields)
 
-    def reschedule_task_datetime(self, task_id: str, due_datetime: str) -> dict:
+    def reschedule_task_datetime(
+        self,
+        task_id: str,
+        due_datetime: str,
+        *,
+        duration: int | None = None,
+        duration_unit: str | None = None,
+    ) -> dict:
         """Retime via due_datetime ("YYYY-MM-DDTHH:MM:SS") ONLY — the form that
         preserves an existing recurrence pattern (skill contract: recurring
-        retimes must never go through due_string)."""
-        return self.update_task(task_id, due_datetime=due_datetime)
+        retimes must never go through due_string). An optional duration rides
+        in the same call."""
+        fields: dict[str, Any] = {"due_datetime": due_datetime}
+        fields.update(_duration_payload(duration, duration_unit))
+        return self.update_task(task_id, **fields)
 
     def reschedule_task_date(self, task_id: str, due_date: str) -> dict:
         """Advance a date-only due via due_date ("YYYY-MM-DD") ONLY — the

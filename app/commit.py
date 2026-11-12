@@ -80,8 +80,14 @@ class TodoistLike(Protocol):
     def get_filter_tasks(self, filter_id_or_query: str, limit: int | None = ...) -> list[dict]: ...
     def get_task(self, task_id: str) -> dict: ...
     def create_task(self, content: str, project_id: str | None = ..., **fields: Any) -> dict: ...
-    def reschedule_task(self, task_id: str, due_string: str) -> dict: ...
-    def reschedule_task_datetime(self, task_id: str, due_datetime: str) -> dict: ...
+    def reschedule_task(
+        self, task_id: str, due_string: str,
+        *, duration: int | None = ..., duration_unit: str | None = ...,
+    ) -> dict: ...
+    def reschedule_task_datetime(
+        self, task_id: str, due_datetime: str,
+        *, duration: int | None = ..., duration_unit: str | None = ...,
+    ) -> dict: ...
 
 
 class EventStoreLike(Protocol):
@@ -284,6 +290,48 @@ def _due_string(hhmm: str | None) -> str | None:
     """Todoist natural-language due for a timed task today. ``None`` time means
     no due (shouldn't occur for Step A rows, which always carry a start)."""
     return f"today at {hhmm}" if hhmm else None
+
+
+def _todoist_duration_fields(duration_min: int | None) -> dict[str, Any]:
+    """Todoist duration payload for one task write — the create path's format.
+
+    Todoist v1 takes ``duration`` in whole minutes with ``duration_unit``
+    ``"minute"``. The fields ride in the SAME update as the due: a separate
+    duration call would leave a half-applied block (moved, old length) when
+    the second write fails. A non-positive duration sends nothing, so the
+    provider keeps whatever length the task already has.
+    """
+    minutes = int(duration_min or 0)
+    if minutes <= 0:
+        return {}
+    return {"duration": minutes, "duration_unit": "minute"}
+
+
+def _todoist_duration_minutes(task: dict[str, Any]) -> int | None:
+    """Read one task's live duration in minutes; ``None`` when unreported.
+
+    ``None`` means the payload carried no ``duration`` field at all — the
+    shape is unknown, so it is not evidence of a mismatch. A present-but-null
+    ``duration`` is a real "no duration" reading of 0 minutes, which is what
+    the provider reports for a task whose length was never set.
+    """
+    if "duration" not in task:
+        return None
+    duration = task.get("duration")
+    if not isinstance(duration, dict):
+        return 0
+    try:
+        amount = int(duration.get("amount") or 0)
+    except (TypeError, ValueError):
+        return None
+    if amount <= 0:
+        return 0
+    unit = duration.get("unit") or "minute"
+    if unit == "minute":
+        return amount
+    if unit == "day":
+        return amount * 24 * 60
+    return None
 
 
 def _canonical_hhmm(value: Any) -> str | None:
@@ -837,23 +885,30 @@ def write_todoist(
                     result.noops.append(i.task_id)
                     record_landing(i, i.task_id)
                 continue
+            duration_fields = _todoist_duration_fields(i.duration_min)
             if i.is_recurring:
                 # T27: a recurring due is pattern-owned — due_string in any
                 # form (incl. "today") wipes the recurrence. Time moves use
                 # the datetime form; an all-day/no-time intent skips the due
                 # write entirely and the task keeps its own live due.
                 if i.due_datetime:
-                    client.reschedule_task_datetime(i.task_id, i.due_datetime)
+                    client.reschedule_task_datetime(
+                        i.task_id, i.due_datetime, **duration_fields)
                     # reschedule can return success yet land date-only —
                     # verify the TIME landed and retry once with datetime
                     back = client.get_task(i.task_id)
                     first_reading = _todoist_due_reading(back)
                     if i.due_time and _is_date_only_landing(first_reading):
-                        client.reschedule_task_datetime(i.task_id, i.due_datetime)
+                        client.reschedule_task_datetime(
+                            i.task_id, i.due_datetime, **duration_fields)
             elif i.due_all_day_today:
-                client.reschedule_task(i.task_id, "today")
+                client.reschedule_task(
+                    i.task_id, "today", **duration_fields)
             else:
-                client.reschedule_task(i.task_id, _due_string(i.due_time))
+                # The planned length travels with the due in ONE update: a
+                # moved block must never read back at its previous duration.
+                client.reschedule_task(
+                    i.task_id, _due_string(i.due_time), **duration_fields)
             result.updated.append(i.task_id)
             record_landing(i, i.task_id)
             continue
@@ -959,6 +1014,18 @@ def write_todoist(
             continue
         found += 1
         protected = _is_protected_native_intent(i)
+        if i.op in ("update", "create") and not protected:
+            # Planned length is part of the write identity: a task that landed
+            # at the right time but kept its old duration is a mismatch.
+            planned_duration = int(i.duration_min or 0)
+            live_duration = _todoist_duration_minutes(back)
+            if (planned_duration > 0 and live_duration is not None
+                    and live_duration != planned_duration):
+                live_label = f"{live_duration} min" if live_duration else "none"
+                result.fail(
+                    f"todoist: {i.name!r} duration mismatch "
+                    f"(intent {planned_duration} min, live {live_label})"
+                )
         if protected and not _has_native_provenance(i):
             # Legacy direct pinned intents did not carry the native time. Keep
             # their existence-only reconciliation only when no native
