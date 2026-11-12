@@ -99,6 +99,10 @@ import type {
   CalendarSettingsDraft,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
+  HabitGritRefreshResult,
+  HabitSettings,
+  HabitSettingsDraft,
+  HabitSettingsSaveOutcome,
   TodayOverride,
   TodoistExclusionEntry,
 } from "../model/types";
@@ -618,6 +622,20 @@ export class Controller {
     const settings = await this.adapter.saveCalendarSettings(draft);
     await this.refreshSources();
     return { settings, refreshError: this.getState().refresh.error };
+  }
+
+  /** Habit settings (per-habit minutes and weekdays). Pass-throughs: the
+      autosave helper in api.ts owns serialisation and the revision chain. */
+  async loadHabitSettings(): Promise<HabitSettings> {
+    return this.adapter.loadHabitSettings();
+  }
+
+  async saveHabitSettings(draft: HabitSettingsDraft): Promise<HabitSettingsSaveOutcome> {
+    return this.adapter.saveHabitSettings(draft);
+  }
+
+  async refreshGritHabits(): Promise<HabitGritRefreshResult> {
+    return this.adapter.refreshGritHabits();
   }
 
   /** "Always exclude" for one Todoist task: add it to the persistent

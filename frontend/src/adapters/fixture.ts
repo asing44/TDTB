@@ -49,6 +49,12 @@ import type {
   ShadowDiff,
   CalendarSettings,
   CalendarSettingsDraft,
+  HabitGritRefreshResult,
+  HabitInventoryRow,
+  HabitSetting,
+  HabitSettings,
+  HabitSettingsDraft,
+  HabitSettingsSaveOutcome,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -429,6 +435,34 @@ export class FixtureAdapter implements Adapter {
     inventoryStatus: "ok",
     warnings: [],
   };
+  /** Habit settings the way the server keeps them: saved rows plus the Grit
+      names the fixture "read". `habitsGrit` drives the advisory inventory;
+      `habitMode` forces the edge states a render check needs. */
+  private habitSettings: HabitSettings = {
+    version: 1,
+    revision: 14,
+    persisted: true,
+    habits: [
+      { name: "Stretch", minutes: 10, weekdays: null },
+      { name: "Read", minutes: 20, weekdays: null },
+      { name: "Water plants", minutes: 5, weekdays: [1, 4] },
+      { name: "Meditate", minutes: 10, weekdays: [0, 1, 2, 3, 4] },
+      { name: "Journal (evening)", minutes: 15, weekdays: null },
+    ],
+    inventory: [],
+    inventoryStatus: "ok",
+    gritReadAt: null,
+    warnings: [],
+  };
+  private habitsGrit: string[] | null = [
+    "Stretch",
+    "Read",
+    "Water plants",
+    "Meditate",
+    "Walk the dog",
+  ];
+  private habitsGritReadAt: string | null = "2026-11-12T08:12:00-06:00";
+  private habitMode: "normal" | "unavailable" | "conflict" | "empty" = "normal";
   private tagExclusionSettings: TagExclusionSettings = {
     version: 1,
     revision: 0,
@@ -1185,6 +1219,94 @@ export class FixtureAdapter implements Adapter {
       catalog: structuredClone(this.tagExclusionSettings.catalog),
     };
     return structuredClone(this.tagExclusionSettings);
+  }
+
+  /** Test/render hook: force an edge state of the habit routes. `conflict`
+      makes the NEXT save report a stale revision (and bumps the stored one,
+      as a second window would); `unavailable` clears the Grit read; `empty`
+      reports Grit with no habits. */
+  setHabitSettingsMode(mode: "normal" | "unavailable" | "conflict" | "empty"): void {
+    this.habitMode = mode;
+    if (mode === "unavailable") {
+      this.habitsGrit = null;
+      this.habitsGritReadAt = null;
+    } else if (mode === "empty") {
+      this.habitsGrit = [];
+    }
+    if (mode === "conflict") this.habitSettings.revision += 1;
+  }
+
+  private habitSnapshot(): HabitSettings {
+    const saved = new Map(this.habitSettings.habits.map((h) => [h.name, h]));
+    const grit = this.habitsGrit;
+    const inventory: HabitInventoryRow[] = [];
+    if (grit === null) {
+      for (const h of this.habitSettings.habits) {
+        inventory.push({ name: h.name, status: "unverified", minutes: h.minutes, weekdays: h.weekdays });
+      }
+    } else {
+      for (const name of grit) {
+        const h = saved.get(name);
+        inventory.push(
+          h
+            ? { name, status: "configured", minutes: h.minutes, weekdays: h.weekdays }
+            : { name, status: "unconfigured", minutes: null, weekdays: null },
+        );
+      }
+      for (const h of this.habitSettings.habits) {
+        if (!grit.includes(h.name)) {
+          inventory.push({ name: h.name, status: "missing", minutes: h.minutes, weekdays: h.weekdays });
+        }
+      }
+    }
+    return structuredClone({
+      ...this.habitSettings,
+      inventory,
+      inventoryStatus: grit === null ? "unavailable" : "ok",
+      gritReadAt: this.habitsGritReadAt,
+    });
+  }
+
+  async loadHabitSettings(): Promise<HabitSettings> {
+    await wait(LATENCY_MS);
+    return this.habitSnapshot();
+  }
+
+  async saveHabitSettings(draft: HabitSettingsDraft): Promise<HabitSettingsSaveOutcome> {
+    await wait(LATENCY_MS);
+    if (draft.expectedRevision !== this.habitSettings.revision) {
+      return {
+        ok: false,
+        reason: "conflict",
+        message: "Habit settings changed since they were read; reload and retry.",
+      };
+    }
+    const bad = draft.habits.findIndex(
+      (h: HabitSetting) =>
+        !Number.isInteger(h.minutes) ||
+        h.minutes < 0 ||
+        h.minutes > 480 ||
+        (h.weekdays !== null && h.weekdays.length === 0),
+    );
+    if (bad >= 0) {
+      return { ok: false, reason: "invalid", message: "Habit settings payload is invalid.", index: bad, field: "minutes" };
+    }
+    this.habitSettings = {
+      ...this.habitSettings,
+      revision: this.habitSettings.revision + 1,
+      persisted: true,
+      habits: draft.habits.map((h) => ({ ...h, weekdays: h.weekdays ? [...h.weekdays] : null })),
+    };
+    return { ok: true, settings: this.habitSnapshot() };
+  }
+
+  async refreshGritHabits(): Promise<HabitGritRefreshResult> {
+    await wait(LATENCY_MS);
+    if (this.habitMode === "unavailable") {
+      return { settings: this.habitSnapshot(), refresh: { ok: false, reason: "grit_unavailable" } };
+    }
+    this.habitsGritReadAt = "2026-11-12T09:30:00-06:00";
+    return { settings: this.habitSnapshot(), refresh: { ok: true, reason: null } };
   }
 
   async loadCalendarSettings(): Promise<CalendarSettings> {

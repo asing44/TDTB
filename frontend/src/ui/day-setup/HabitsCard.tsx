@@ -3,6 +3,7 @@ import { habitsView, parseHabitMinutes, withHabitEntry, type HabitRow } from '..
 import { HABIT_GROUPS, habitGroupOf, type HabitGroup } from '../../model/habitGroups';
 import type { HabitOverrides, HabitsInfo } from '../../model/types';
 import { HabitsDrawer, type HabitsSaveStatus } from './HabitsDrawer';
+import '../habit-settings.css';
 
 const SAVE_FAILED = 'Could not save habits. Your previous settings were restored.';
 
@@ -19,9 +20,10 @@ function grouped(rows: HabitRow[]): { group: HabitGroup; rows: HabitRow[] }[] {
 }
 
 /** Today-only planning controls. No upstream completion or assignment writes.
-    Habits are an active list: the card shows the counted summary plus one chip
-    per time-of-day bucket, and "Pick habits" unfolds the per-habit pills the
-    design draws ("tap one to include it today"). */
+    The card shows "N due · D done · ~X min" plus one chip per time-of-day
+    bucket, and "Pick habits" unfolds the per-habit pills ("tap one to include
+    it today"). A habit Grit reports done or failed stays listed as a done pill
+    and is never counted or switchable. */
 export function HabitsCard({ info, overrides, onSave, dateLabel }: {
   info?: HabitsInfo;
   overrides?: HabitOverrides;
@@ -42,8 +44,8 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
     catch { failed.current = value; setError(SAVE_FAILED); setStatus('failed'); }
   }
   if (view.mode === 'items') {
-    const on = view.rows.filter((r) => r.on).length;
     const groups = grouped(view.rows);
+    const open_ = view.rows.filter((r) => !r.done);
     /** One save per changed row, chained so the last write wins on the server. */
     async function setRows(rows: HabitRow[], nextOn: boolean) {
       let value = overrides;
@@ -55,8 +57,12 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
     return <section class="setup-section habits-card" aria-labelledby="setup-sec-habits">
       <div class="setup-section__head habits-card__head">
         <h3 id="setup-sec-habits">Habits</h3>
-        <span class="habits-card__summary">{`${on} of ${view.rows.length} on · ${view.countedMinutes}m`}</span>
-        {groups.map(({ group, rows }) => {
+        <span class="habits-card__summary">{view.summary}</span>
+        {groups.map(({ group, rows: all_ }) => {
+          const rows = all_.filter((r) => !r.done);
+          if (rows.length === 0) {
+            return <span key={group} class="habits-chip habits-chip--done">{group} done</span>;
+          }
           const n = rows.filter((r) => r.on).length;
           const all = n === rows.length;
           return <button type="button" key={group}
@@ -78,10 +84,10 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
           <p class="habits-list__hint">
             Todoist › Habits · tap one to include it today ·{' '}
             <button type="button" class="habits-list__link" disabled={busy}
-              onClick={() => void setRows(view.rows, true)}>all on</button>
+              onClick={() => void setRows(open_, true)}>all on</button>
             {' / '}
             <button type="button" class="habits-list__link" disabled={busy}
-              onClick={() => void setRows(view.rows, false)}>all off</button>
+              onClick={() => void setRows(open_, false)}>all off</button>
             {' · '}
             <button type="button" class="habits-list__link"
               aria-haspopup="dialog"
@@ -91,7 +97,13 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
             <div class="habits-list__group" key={group}>
               <span class="habits-list__label">{group.toUpperCase()}</span>
               <div class="habits-list__pills">
-                {rows.map((row) => (
+                {rows.map((row) => row.done ? (
+                  <span key={row.key} class="habit-pill habit-pill--done"
+                    aria-label={`${row.label}: ${row.status === 'failed' ? 'missed' : 'done'} today, not counted`}>
+                    <span aria-hidden="true">{row.status === 'failed' ? '✕' : '✓'}</span> {row.label}
+                    <small>{row.status === 'failed' ? 'missed' : 'done'}</small>
+                  </span>
+                ) : (
                   <button type="button" key={row.key}
                     class={`habit-pill${row.on ? '' : ' habit-pill--off'}`}
                     aria-pressed={row.on}

@@ -1,13 +1,16 @@
-/* SettingsHub — the body of the one Settings dialog: a status summary line, a compact
-   grid of five plain-language entry buttons that always stays in view, and
-   the one open entry's panel beneath the grid (buttons with
-   aria-expanded/aria-controls). SettingsShell
-   owns the dialog chrome and focus; the hub owns the entries.
+/* SettingsHub — the body of the one Settings dialog: a status summary line, a
+   sticky jump bar, and ONE scrolling page of five sections (Day, Habits, Plan
+   contents, Sources, Advanced). Every section is always rendered, so nothing
+   hides behind a tab; rare tools stay in closed folds. The jump bar scrolls to
+   a section and records it as the destination (`ui.settingsPanel` plus, for
+   Habits, `ui.settingsSection`). SettingsShell owns the dialog chrome and
+   focus; the hub owns the sections.
 
-   Every panel body stays mounted for the life of the shell so unsaved drafts
-   survive switching entries (panels render nothing while inactive; closed
-   folds only hide). Each wrapped component is mounted exactly once. Pre-hub
-   ids (`capacities`, `tags`) arrive already mapped by the store. */
+   Save semantics are per panel and unchanged: Habits autosaves per field;
+   Day, calendars, tags and Capacities rules keep their own explicit saves
+   (some re-read sources, so they are never silent). Each wrapped component is
+   mounted exactly once. Pre-hub ids (`capacities`, `tags`) arrive already
+   mapped by the store. */
 
 import { useEffect, useId, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -21,29 +24,39 @@ import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
 import { CalendarSettingsPanel } from "./CalendarSettingsPanel";
 import { CapacitiesPlanPreview } from "./CapacitiesPlanPreview";
 import { CapacitiesStructureList } from "./CapacitiesStructureList";
+import { HabitSettingsSection } from "./HabitSettingsSection";
 import { usePlanData, type PlanData } from "./planPreview";
 import { missingGenerationWarnings, sourceHealthBySource } from "../adapters/wire";
 import type { SettingsPanel } from "../store/store";
 import type { TagExclusionSettings } from "../model/types";
 import "./settings-hub.css";
 
+/** Jump-bar destinations, in page order. `habits` is a section of the Day
+    destination, not a store panel of its own. */
+export type HubEntryId = "day" | "habits" | "plan" | "freshness" | "repair";
+
 export const HUB_ENTRIES: ReadonlyArray<{
-  id: SettingsPanel;
+  id: HubEntryId;
+  panel: SettingsPanel;
+  /** `ui.settingsSection` the destination carries, when it has one. */
+  section: string | null;
   label: string;
-  hint: string;
 }> = [
-  { id: "freshness", label: "Is my data up to date?", hint: "Todoist, calendar and Capacities, plus Refresh now" },
-  { id: "plan", label: "What shows up in my plan?", hint: "Which items appear, calendars, and tags you hide" },
-  { id: "missing", label: "Why is something missing?", hint: "A short checklist" },
-  { id: "day", label: "Change my day setup", hint: "Hours, sessions, anchored blocks, captures" },
-  { id: "repair", label: "Repair connections", hint: "Only if something looks wrong" },
+  { id: "day", panel: "day", section: null, label: "Day" },
+  { id: "habits", panel: "day", section: "habits", label: "Habits" },
+  { id: "plan", panel: "plan", section: null, label: "Plan contents" },
+  { id: "freshness", panel: "freshness", section: null, label: "Sources" },
+  { id: "repair", panel: "repair", section: null, label: "Advanced" },
 ];
 
 /** `ui.settingsSection` value that opens the per-type admission section. */
 export const ADMISSION_SECTION = "admission-per-type";
 
-export const hubEntryId = (panel: SettingsPanel) => `settings-entry-${panel}`;
-export const hubPanelId = (panel: SettingsPanel) => `settings-panel-${panel}`;
+export const hubEntryId = (id: HubEntryId) => `settings-entry-${id}`;
+/** Section element ids. `missing` is a fold inside Sources, so it shares that id. */
+export const hubPanelId = (panel: SettingsPanel) =>
+  `settings-panel-${panel === "missing" ? "freshness" : panel}`;
+export const HABITS_SECTION_ID = "settings-section-habits";
 
 function Fold({
   title,
@@ -138,13 +151,30 @@ export function SettingsHub() {
   const s = useAppState();
   const { store } = useApp();
   const panel = s.ui.settingsPanel;
-  const open = (id: SettingsPanel) => store.dispatch({ type: "UI", patch: { settingsPanel: id } });
-  // The open entry can be folded away without leaving Settings; a new
-  // destination (panel or section) always reopens it.
-  const [collapsed, setCollapsed] = useState(false);
   const section = s.ui.settingsSection;
-  useEffect(() => setCollapsed(false), [panel, section]);
-  const isOpen = (id: SettingsPanel) => panel === id && !collapsed;
+
+  // A jump records the destination and brings its section under the bar. The
+  // pressed button keeps focus; programmatic navigation is focused by the shell.
+  const go = (entry: (typeof HUB_ENTRIES)[number]) => {
+    store.dispatch({
+      type: "UI",
+      patch: { settingsPanel: entry.panel, settingsSection: entry.section },
+    });
+    const id = entry.id === "habits" ? HABITS_SECTION_ID : hubPanelId(entry.panel);
+    document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+  };
+  const goPanel = (id: HubEntryId) => {
+    const entry = HUB_ENTRIES.find((e) => e.id === id);
+    if (entry) go(entry);
+  };
+  const isHere = (entry: (typeof HUB_ENTRIES)[number]) =>
+    entry.id === "habits"
+      ? panel === "day" && section === "habits"
+      : entry.id === "freshness"
+        ? panel === "freshness" || panel === "missing"
+        : entry.id === "day"
+          ? panel === "day" && section !== "habits"
+          : panel === entry.id;
 
   // Technical details stay unmounted until the second click, then stay mounted.
   const [techShown, setTechShown] = useState(false);
@@ -153,7 +183,7 @@ export function SettingsHub() {
     if (techOn) setTechShown(true);
   }, [techOn]);
 
-  // The per-type admission section lives inside the Repair fold: a link from
+  // The per-type admission section lives inside the Advanced fold: a link from
   // the plan view opens the fold and the technical details, then scrolls to it.
   const [repairOpen, setRepairOpen] = useState(false);
   const wantAdmission = panel === "repair" && section === ADMISSION_SECTION;
@@ -184,6 +214,12 @@ export function SettingsHub() {
     return () => observer.disconnect();
   }, [wantAdmission, repairOpen, techOn, section]);
 
+  // The missing-items checklist is a fold in Sources; asking for it opens it.
+  const [missingOpen, setMissingOpen] = useState(false);
+  useEffect(() => {
+    if (panel === "missing") setMissingOpen(true);
+  }, [panel, section]);
+
   const health = sourceHealthBySource(s.inputs?.sourceWarnings ?? []);
   const healthy = s.inputs?.sourceHealth === "ok";
   const sources: ReadonlyArray<{ name: string; ok: boolean; count: number; noun: string }> = [
@@ -204,19 +240,69 @@ export function SettingsHub() {
   const missingNote =
     missingCount > 0 ? `${missingCount} mapped types are not yet in the latest refresh` : null;
 
-  const body = (id: SettingsPanel) => {
-    const here = isOpen(id);
-    switch (id) {
-      case "freshness":
-        return (
-          <>
-            <p class="settings-hub__muted" role="status">
-              {syncText}
-            </p>
-            <CapacitiesRefreshPanel active={here} extraNotes={missingNote ? [missingNote] : []} />
-            <CapacitiesUnknownReview active={here} />
-            <Fold title="Todoist and Calendar" note="status of each" live={here}>
-              {() => (
+  const sectionOf = (
+    id: SettingsPanel,
+    title: string,
+    children: ComponentChildren,
+    headingId = `settings-heading-${id}`,
+  ) => (
+    <section
+      key={id}
+      class="settings-hub__panel"
+      id={hubPanelId(id)}
+      aria-labelledby={headingId}
+    >
+      <h3 class="settings-hub__title" id={headingId}>
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+
+  return (
+    <div class="settings-hub">
+      <p class="settings-hub__summary">
+        <span class={`settings-hub__dot${healthy ? "" : " settings-hub__dot--warn"}`} aria-hidden="true" />
+        {healthy
+          ? "Your sources are reading cleanly."
+          : "A source had a problem. Your plan keeps using the last read."}
+      </p>
+      <nav class="settings-hub__jump" aria-label="Jump to a section">
+        {HUB_ENTRIES.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            id={hubEntryId(entry.id)}
+            class="settings-hub__jump-btn"
+            aria-current={isHere(entry) ? "location" : undefined}
+            data-entry={entry.id}
+            onClick={() => go(entry)}
+          >
+            {entry.label}
+            {entry.id === "freshness" && !healthy && (
+              <span class="settings-hub__dot settings-hub__dot--warn" role="img" aria-label="needs attention" />
+            )}
+          </button>
+        ))}
+      </nav>
+
+      {sectionOf("day", "Day", <DaySetupPanel active />)}
+
+      <HabitSettingsSection active />
+
+      {sectionOf("plan", "Plan contents", <PlanBody here />)}
+
+      {sectionOf(
+        "freshness",
+        "Sources",
+        <>
+          <p class="settings-hub__muted" role="status">
+            {syncText}
+          </p>
+          <CapacitiesRefreshPanel active extraNotes={missingNote ? [missingNote] : []} />
+          <CapacitiesUnknownReview active />
+          <Fold title="Todoist and Calendar" note="status of each" live>
+            {() => (
               <ul class="settings-hub__rows" aria-label="Todoist and Calendar">
                 {sources.map((src) => (
                   <li key={src.name}>
@@ -227,131 +313,83 @@ export function SettingsHub() {
                   </li>
                 ))}
               </ul>
-              )}
-            </Fold>
-          </>
-        );
-      case "plan":
-        return (
-          <PlanBody here={here} />
-        );
-      case "missing":
-        return here ? (
-          <div class="settings-hub__missing">
-            <h3 class="settings-hub__sub">Check these in order</h3>
-            <ol>
-              <li>
-                <b>Is it hidden by a tag?</b> Look at the tags in{" "}
-                <button type="button" class="settings-hub__link" onClick={() => open("plan")}>
-                  What shows up in my plan?
-                </button>
-              </li>
-              <li>
-                <b>Did you hide it yourself?</b> Look under Tasks I hid in{" "}
-                <button type="button" class="settings-hub__link" onClick={() => open("plan")}>
-                  What shows up in my plan?
-                </button>{" "}
-                and choose Show again.
-              </li>
-              <li>
-                <b>Is it new in Capacities?</b> Press Refresh now in{" "}
-                <button type="button" class="settings-hub__link" onClick={() => open("freshness")}>
-                  Is my data up to date?
-                </button>
-              </li>
-              <li>
-                <b>Still missing?</b> Open{" "}
-                <button type="button" class="settings-hub__link" onClick={() => open("repair")}>
-                  Repair connections
-                </button>
-              </li>
-            </ol>
-          </div>
-        ) : null;
-      case "day":
-        return <DaySetupPanel active={here} />;
-      case "repair":
-        return (
-          <>
-            {here && <h3 class="settings-hub__sub">Repair connections</h3>}
-            <p class="settings-hub__muted">
-              Only needed when something looks wrong. It is folded away so it cannot be changed by accident.
-            </p>
-            <Fold
-              title="Repair tools"
-              note="changing these can hide items from your plan"
-              live={here}
-              openState={[repairOpen, setRepairOpen]}
-            >
-              {(foldOpen) => (
-                <>
-                  {foldOpen && (
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      aria-pressed={techOn}
-                      onClick={() => setTechOn((on) => !on)}
-                    >
-                      {techOn ? "Hide" : "Show"} technical details
+            )}
+          </Fold>
+          <Fold
+            title="Why is something missing?"
+            note="a short checklist"
+            live
+            openState={[missingOpen, setMissingOpen]}
+          >
+            {() => (
+              <div class="settings-hub__missing">
+                <h4 class="settings-hub__sub">Check these in order</h4>
+                <ol>
+                  <li>
+                    <b>Is it hidden by a tag?</b> Look at the tags in{" "}
+                    <button type="button" class="settings-hub__link" onClick={() => goPanel("plan")}>
+                      Plan contents
                     </button>
-                  )}
-                  {techShown && (
-                    <div class="settings-hub__tech" hidden={!techOn}>
-                      <CapacitiesSettingsPanel active={foldOpen && techOn} hosted />
-                    </div>
-                  )}
-                </>
-              )}
-            </Fold>
-          </>
-        );
-    }
-  };
+                  </li>
+                  <li>
+                    <b>Did you hide it yourself?</b> Look under Tasks I hid in{" "}
+                    <button type="button" class="settings-hub__link" onClick={() => goPanel("plan")}>
+                      Plan contents
+                    </button>{" "}
+                    and choose Show again.
+                  </li>
+                  <li>
+                    <b>Is it new in Capacities?</b> Press Refresh now in Capacities refresh above.
+                  </li>
+                  <li>
+                    <b>Still missing?</b> Open{" "}
+                    <button type="button" class="settings-hub__link" onClick={() => goPanel("repair")}>
+                      Advanced
+                    </button>
+                  </li>
+                </ol>
+              </div>
+            )}
+          </Fold>
+        </>,
+      )}
 
-  return (
-    <div class="settings-hub">
-      <p class="settings-hub__summary">
-        <span class={`settings-hub__dot${healthy ? "" : " settings-hub__dot--warn"}`} aria-hidden="true" />
-        {healthy
-          ? "Your sources are reading cleanly."
-          : "A source had a problem. Your plan keeps using the last read."}
-      </p>
-      <ul class="settings-hub__entries">
-        {HUB_ENTRIES.map((entry) => {
-          const expanded = isOpen(entry.id);
-          return (
-            <li key={entry.id} class="settings-hub__entry">
-              <button
-                type="button"
-                id={hubEntryId(entry.id)}
-                class="settings-hub__toggle"
-                aria-expanded={expanded}
-                aria-controls={hubPanelId(entry.id)}
-                onClick={() => (panel === entry.id ? setCollapsed((c) => !c) : open(entry.id))}
-                data-entry={entry.id}
-              >
-                <span>
-                  <b>{entry.label}</b>
-                  <span class="settings-hub__muted">{entry.hint}</span>
-                </span>
-                <span aria-hidden="true">{expanded ? "▾" : "›"}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      {HUB_ENTRIES.map((entry) => (
-        <div
-          key={entry.id}
-          class="settings-hub__panel"
-          id={hubPanelId(entry.id)}
-          role="region"
-          aria-labelledby={hubEntryId(entry.id)}
-          hidden={!isOpen(entry.id)}
-        >
-          {body(entry.id)}
-        </div>
-      ))}
+      {sectionOf(
+        "repair",
+        "Advanced",
+        <>
+          <p class="settings-hub__muted">
+            Repair connections. Only needed when something looks wrong. It is folded away so it cannot
+            be changed by accident.
+          </p>
+          <Fold
+            title="Repair tools"
+            note="changing these can hide items from your plan"
+            live
+            openState={[repairOpen, setRepairOpen]}
+          >
+            {(foldOpen) => (
+              <>
+                {foldOpen && (
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    aria-pressed={techOn}
+                    onClick={() => setTechOn((on) => !on)}
+                  >
+                    {techOn ? "Hide" : "Show"} technical details
+                  </button>
+                )}
+                {techShown && (
+                  <div class="settings-hub__tech" hidden={!techOn}>
+                    <CapacitiesSettingsPanel active={foldOpen && techOn} hosted />
+                  </div>
+                )}
+              </>
+            )}
+          </Fold>
+        </>,
+      )}
     </div>
   );
 }

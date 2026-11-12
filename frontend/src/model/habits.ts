@@ -1,8 +1,9 @@
 /* habits.ts — today-only habit overrides on the Set up day screen.
 
-   Habits are an ACTIVE list: the artifact lists every habit in the Todoist
-   Habits project and completion is tracked elsewhere (Grit), so nothing here
-   reads or derives a done/outstanding count. An operator switches a habit off
+   Habits are an ACTIVE list. A Grit-sourced block marks each item `done`
+   (done or failed, from the server's classifier); such rows stay listed but
+   stop counting. A legacy block carries no completion, so nothing there is
+   done and nothing is derived here. An operator switches a habit off
    today (leaving it out of today's capacity) or changes its minutes. With no
    items only the aggregate exists, so a single "Habits (total)" row stands in
    for them — the backend ignores a total override once items exist. The
@@ -10,7 +11,7 @@
    edit rules. Overrides never reach Todoist or the calendar. */
 
 import { formatDurationMinutes } from "./time";
-import type { HabitOverride, HabitOverrides, HabitsInfo } from "./types";
+import type { HabitOverride, HabitOverrides, HabitsInfo, HabitStatus } from "./types";
 
 export const HABIT_MINUTES_MAX = 480;
 export const HABIT_TOTAL_KEY = "total";
@@ -32,6 +33,12 @@ export interface HabitRow {
   minutes: number;
   /** Count today. */
   on: boolean;
+  /** Grit says this habit is finished for today (done or failed): it stops
+      consuming capacity whatever the override says. Never true for a legacy
+      block or the total row. */
+  done: boolean;
+  /** The Grit verdict behind `done`, when the block carries one. */
+  status?: HabitStatus;
   /** The row differs from its default. */
   edited: boolean;
 }
@@ -42,7 +49,11 @@ export interface HabitsView {
   /** How many habits the active list holds: the rows, or the artifact's
       aggregate total when it carries no per-habit items. */
   habitCount: number;
-  /** Minutes capacity uses: counted rows only. */
+  /** Habits Grit reports finished today (done or failed). */
+  doneCount: number;
+  /** Habits still to do today: every row that is not done. */
+  dueCount: number;
+  /** Minutes capacity uses: rows that are on and not done. */
   countedMinutes: number;
   summary: string;
 }
@@ -52,6 +63,8 @@ function rowOf(
   label: string,
   defaultMinutes: number,
   entry: HabitOverride | null | undefined,
+  done = false,
+  status?: HabitStatus,
 ): HabitRow {
   const on = entry?.on !== false;
   const minutes = entry?.minutes ?? defaultMinutes;
@@ -61,6 +74,8 @@ function rowOf(
     defaultMinutes,
     minutes,
     on,
+    done,
+    ...(status ? { status } : {}),
     edited: !on || minutes !== defaultMinutes,
   };
 }
@@ -78,22 +93,35 @@ export function habitsView(
     habitCount = info.items.length;
     rows = info.items.map((item) => {
       const key = item.id || item.name;
-      return rowOf(key, item.name, item.minutes, ov.items[key] ?? ov.items[item.name]);
+      return rowOf(
+        key,
+        item.name,
+        item.minutes,
+        ov.items[key] ?? ov.items[item.name],
+        item.done === true,
+        item.status,
+      );
     });
   } else if (info && info.estMinutes > 0) {
     mode = "total";
     habitCount = info.total > 0 ? info.total : 1;
     rows = [rowOf(HABIT_TOTAL_KEY, "Habits (total)", info.estMinutes, ov.total)];
   }
-  const countedMinutes = rows.reduce((sum, r) => sum + (r.on ? r.minutes : 0), 0);
+  const countedMinutes = rows.reduce((sum, r) => sum + (r.on && !r.done ? r.minutes : 0), 0);
+  const doneCount = rows.filter((r) => r.done).length;
+  const dueCount = rows.length - doneCount;
   return {
     mode,
     rows,
     habitCount,
+    doneCount,
+    dueCount,
     countedMinutes,
     summary:
-      `${habitCount} ${habitCount === 1 ? "habit" : "habits"} · ` +
-      `${formatDurationMinutes(countedMinutes)} counted`,
+      mode === "items"
+        ? `${dueCount} due · ${doneCount} done · ~${countedMinutes} min`
+        : `${habitCount} ${habitCount === 1 ? "habit" : "habits"} · ` +
+          `${formatDurationMinutes(countedMinutes)} counted`,
   };
 }
 

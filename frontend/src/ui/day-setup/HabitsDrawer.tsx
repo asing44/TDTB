@@ -57,7 +57,8 @@ function HabitRowView({
   onFieldError: (message: string) => void;
 }) {
   const [text, setText] = useState(String(row.minutes));
-  const off = !row.on;
+  const done = row.done;
+  const off = !row.on || done;
   const open = editing && !off;
   function commit(raw: string) {
     const value = parseHabitMinutes(raw);
@@ -71,11 +72,18 @@ function HabitRowView({
   const step = (delta: number) =>
     onPatch({ minutes: Math.max(0, Math.min(HABIT_MINUTES_MAX, row.minutes + delta)) });
   return (
-    <li class={`habits-drawer__row${off ? " habits-drawer__row--off" : ""}`}>
+    <li class={`habits-drawer__row${off ? " habits-drawer__row--off" : ""}${done ? " habits-drawer__row--done" : ""}`}>
       <div class="habits-drawer__main">
         <div class="habits-drawer__name">
           <span class="habits-drawer__label">{row.label}</span>
-          {off ? (
+          {done ? (
+            <span class="habits-drawer__meta">
+              <span class="habits-drawer__chip habits-drawer__chip--done">
+                {row.status === "failed" ? "Missed" : "Done"}
+              </span>{" "}
+              finished in Grit · not counted
+            </span>
+          ) : off ? (
             <span class="habits-drawer__meta">
               <span class="habits-drawer__chip">Off</span> not counted today
             </span>
@@ -90,7 +98,7 @@ function HabitRowView({
             aria-label={`Decrease ${row.label} minutes by ${HABIT_STEP_MINUTES}`}
             onClick={() => { if (row.minutes > 0) step(-HABIT_STEP_MINUTES); }}>−</button>
           <button type="button" class="habits-drawer__value" disabled={off} aria-expanded={open}
-            aria-label={`${row.label}: ${row.minutes} minutes. ${off ? "Turned off" : "Edit minutes"}`}
+            aria-label={`${row.label}: ${row.minutes} minutes. ${done ? "Done today" : off ? "Turned off" : "Edit minutes"}`}
             onClick={() => { setText(String(row.minutes)); onEdit(!open); }}>
             {row.minutes}<small>min</small>
           </button>
@@ -99,8 +107,9 @@ function HabitRowView({
             onClick={() => { if (row.minutes < HABIT_MINUTES_MAX) step(HABIT_STEP_MINUTES); }}>+</button>
         </div>
         <button type="button" role="switch" class="anchor-popover__switch all-blocks__switch"
-          aria-checked={row.on} aria-label={`Count ${row.label} today`}
-          onClick={() => onPatch({ on: !row.on })} />
+          aria-checked={row.on && !done} aria-label={`Count ${row.label} today`}
+          aria-disabled={ariaOff(done)}
+          onClick={() => { if (!done) onPatch({ on: !row.on }); }} />
       </div>
       {open && (
         <div class="habits-drawer__editor">
@@ -148,10 +157,11 @@ export function HabitsDrawer({
   }, [onClose]);
   const [editing, setEditing] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState("");
-  const off = view.rows.filter((r) => !r.on);
+  const live = view.rows.filter((r) => !r.done);
+  const off = live.filter((r) => !r.on);
   const offMinutes = off.reduce((sum, r) => sum + r.minutes, 0);
   const changed = view.rows.filter((r) => r.edited).length;
-  const allOff = view.rows.length > 0 && off.length === view.rows.length;
+  const allOff = live.length > 0 && off.length === live.length;
   const busy = status === "saving";
 
   function patch(row: HabitRow, p: { on?: boolean; minutes?: number }) {
@@ -162,7 +172,7 @@ export function HabitsDrawer({
   function bulk() {
     if (busy) return;
     setEditing(null); setFieldError("");
-    onSave(view.rows.reduce(
+    onSave(live.reduce(
       (acc, r) => withHabitEntry(acc, r.key, { on: allOff }, r.defaultMinutes), overrides ?? { items: {}, total: null }));
   }
   function resetAll() {
@@ -181,6 +191,7 @@ export function HabitsDrawer({
             <h2>Habits</h2>
             <p class="habits-drawer__sub">
               Today only · {dateLabel} · {view.countedMinutes} min counted · {blocksText(view.countedMinutes)}
+              {view.doneCount > 0 && ` · ${view.doneCount} done`}
             </p>
           </div>
           <button type="button" class="btn habits-drawer__close" aria-label="Close habits drawer" onClick={onClose}>✕</button>
@@ -189,10 +200,10 @@ export function HabitsDrawer({
           <section aria-labelledby="habits-drawer-today">
             <div class="habits-drawer__group-head">
               <h3 id="habits-drawer-today">Today <span>{view.habitCount}</span></h3>
-              <button type="button" class="btn" disabled={view.rows.length === 0} aria-disabled={ariaOff(busy)} onClick={bulk}>
+              <button type="button" class="btn" disabled={live.length === 0} aria-disabled={ariaOff(busy)} onClick={bulk}>
                 {allOff
-                  ? `Turn on all ${view.rows.length} ${view.rows.length === 1 ? "habit" : "habits"}`
-                  : `Turn off all ${view.rows.length} habits`}
+                  ? `Turn on all ${live.length} ${live.length === 1 ? "habit" : "habits"}`
+                  : `Turn off all ${live.length} habits`}
               </button>
             </div>
             <ul class="habits-drawer__list">
