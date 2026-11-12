@@ -89,7 +89,7 @@ describe("habits items projection", () => {
     const view = habitsView(inputs.habits, undefined);
     expect(view.habitCount).toBe(3);
     expect(view.countedMinutes).toBe(55);
-    expect(view.summary).toBe("3 habits · 55min counted");
+    expect(view.summary).toBe("3 due · 0 done · ~55 min");
   });
 
   it("projects a block that omits done and outstanding entirely", () => {

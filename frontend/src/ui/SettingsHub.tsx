@@ -321,7 +321,8 @@ export function SettingsHub() {
             live
             openState={[missingOpen, setMissingOpen]}
           >
-            {() => (
+            {(foldOpen) =>
+              foldOpen && (
               <div class="settings-hub__missing">
                 <h4 class="settings-hub__sub">Check these in order</h4>
                 <ol>
@@ -349,7 +350,8 @@ export function SettingsHub() {
                   </li>
                 </ol>
               </div>
-            )}
+              )
+            }
           </Fold>
         </>,
       )}
