@@ -96,11 +96,21 @@ import todoist_exclusions  # noqa: E402
 import app_config  # noqa: E402
 import config_write  # noqa: E402
 import artifact_source  # noqa: E402
+import grit_habits  # noqa: E402
+import habit_settings  # noqa: E402
 import untimed_lane  # noqa: E402
 
 #: Sentinel distinguishing "no coordinator built yet" from a built-but-
 #: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
 _REFRESH_COORDINATOR_UNSET = object()
+
+#: Bounded, content-free Settings warning for the habit inventory. Like the
+#: ``grit_habits`` warnings, it carries no habit name, minutes, or Shortcut
+#: output, so it is safe in a response and in a log.
+HABIT_INVENTORY_STALE = (
+    "Grit inventory comes from an earlier Grit read; refresh Grit to "
+    "reconcile today's habits"
+)
 
 #: The counts a schema-change notice carries, in the order its own document
 #: writes them. The status route republishes these keys and nothing else from
@@ -2392,6 +2402,49 @@ class CalendarSettingsSaveRequest(BaseModel):
         return value
 
 
+class HabitSettingEntryRequest(BaseModel):
+    """One requested habit row for POST /settings/habits/save.
+
+    Closed and strictly typed at the boundary (unknown keys rejected, ``name``
+    a string, ``minutes`` an int, ``weekdays`` ints or null). The VALUE rules —
+    trimmed identity, the ``0..480`` minutes bound, the non-empty weekday
+    vocabulary, duplicate names — belong to ``habit_settings`` and are applied
+    by the store, so a semantic violation answers 422 naming the offending row
+    ``index`` and ``field`` instead of a body-wide message.
+
+    ``weekdays`` may be omitted (``null`` = every day). An EMPTY list is a
+    store-level 422 rather than a synonym for ``null``: widening it would
+    over-plan. Numbers use ``datetime.date.weekday()`` (Monday = 0).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: StrictStr
+    minutes: StrictInt
+    weekdays: list[StrictInt] | None = None
+
+
+class HabitSettingsSaveRequest(BaseModel):
+    """Full-replacement body for POST /settings/habits/save.
+
+    ``expected_revision`` drives the server-side stale-write check; ``version``
+    and the new ``revision`` are server-owned and deliberately absent, so a
+    body that carries them is rejected before any file access.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    habits: list[HabitSettingEntryRequest]
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
 class CapacitiesSourceSaveRequest(BaseModel):
     """Full-replacement body for POST /settings/capacities/source/save.
 
@@ -3918,6 +3971,12 @@ def create_app() -> FastAPI:
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
+    # U3: the Grit habits read seam. ``POST /habits/grit/refresh`` takes its
+    # runner from here when set (tests inject a fake so no test ever spawns
+    # ``shortcuts``); None (the default) means the module's own
+    # ``grit_habits.run_shortcut``. The GET route never runs a Shortcut at all:
+    # it reconciles against the stored cache only.
+    app.state.grit_runner = None
 
     def require_token(x_tdtb_token: str | None = Header(default=None)) -> None:
         if not x_tdtb_token or not secrets.compare_digest(x_tdtb_token, app.state.token):
@@ -5508,6 +5567,267 @@ def create_app() -> FastAPI:
                 },
             ) from exc
         return {"settings": saved.as_dict(), "persisted": True}
+
+    # -- habit settings + Grit refresh (U3 of the Grit-habits work) -----------
+
+    def _habit_inventory_view(
+        settings: habit_settings.HabitSettings,
+    ) -> tuple[list[dict[str, Any]], str, str | None, list[str]]:
+        """(inventory rows, inventory_status, grit_read_at, warnings).
+
+        Read-only and Shortcut-free: a GET never runs ``shortcuts run``; the
+        inventory comes from the CACHE only. :func:`grit_habits.read_today`
+        decides availability under U1's own logical-day rule (so this route
+        never re-derives the 2am boundary), and ``load_cache`` supplies the two
+        facts that read gives back but does not carry: the read timestamp and,
+        for an earlier-day cache, the names.
+
+        - ``ok`` — a same-logical-day cache: rows are
+          :func:`habit_settings.inventory` rows (``configured`` /
+          ``unconfigured`` / ``missing``).
+        - ``stale`` — a cache from an earlier logical day. Grit habit NAMES are
+          identity rather than a day-scoped fact, so the names still reconcile
+          the saved plan; the status, ``grit_read_at``, and one warning say the
+          read is old.
+        - ``unavailable`` — no usable cache. Nothing is known about Grit yet, so
+          the saved rows are returned with the distinct status ``unverified``
+          rather than pretending they are ``missing`` (absent from a read that
+          never happened) or ``configured`` (present in one). The Settings UI
+          renders ``unverified`` as "Grit not read yet" and enables Refresh.
+
+        Two fail-closed local reads (both return "no cache" instead of raising)
+        keep this helper total: a cache that vanishes between them degrades to
+        ``unavailable``.
+        """
+        read = grit_habits.read_today()
+        cache = (
+            None
+            if read.reason == grit_habits.REASON_NO_CACHE
+            else grit_habits.load_cache()
+        )
+        if cache is not None:
+            rows = habit_settings.inventory(
+                settings, [habit.name for habit in cache.habits]
+            )
+            read_at = cache.generated_at or None
+            if read.reason == grit_habits.REASON_OK:
+                return rows, "ok", read_at, []
+            return rows, "stale", read_at, [HABIT_INVENTORY_STALE]
+        rows = [
+            {
+                "name": entry.name,
+                "status": "unverified",
+                "minutes": entry.minutes,
+                "weekdays": entry.weekday_list(),
+            }
+            for entry in settings.habits
+        ]
+        return rows, "unavailable", None, []
+
+    def _habit_settings_view() -> dict[str, Any]:
+        """The ONE payload every habit-settings surface answers.
+
+        ``GET /settings/habits``, ``POST /settings/habits/save``, and
+        ``POST /habits/grit/refresh`` all return this shape so the Settings UI
+        has a single parse path. Habit names and minutes are the owner's own
+        settings data, shown to the settings UI that owns them; they are never
+        logged — the only log lines on these routes carry bounded storage
+        messages that contain no habit content and no absolute path.
+
+        Raises the store's own typed errors (malformed → 409 on a save, 500 on
+        a read); callers map them.
+        """
+        result = habit_settings.load()
+        rows, status, read_at, warnings = _habit_inventory_view(result.settings)
+        return {
+            "settings": result.settings.as_dict(),
+            "persisted": result.persisted,
+            "inventory": rows,
+            "inventory_status": status,
+            "grit_read_at": read_at,
+            "warnings": warnings,
+        }
+
+    @app.get("/settings/habits")
+    def get_habit_settings() -> dict:
+        """Tokenless local read of the per-habit duration / weekday policy.
+
+        Reads exactly one state file (or reports the empty plan when it is
+        absent) and writes nothing — a GET can never create state as a side
+        effect. Inventory comes from the GRIT CACHE ONLY: this route never runs
+        the operator's Shortcut. Malformed/unsupported storage fails closed with
+        a bounded 500 and leaves the bytes untouched.
+        """
+        try:
+            return _habit_settings_view()
+        except (habit_settings.HabitSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute path.
+            print(f"habit settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "habit_settings_storage_error",
+                    "message": (
+                        "Habit settings storage could not be read; the "
+                        "existing file was preserved."
+                    ),
+                },
+            ) from exc
+
+    @app.post("/settings/habits/save", dependencies=[Depends(require_token)])
+    def post_habit_settings_save(body: HabitSettingsSaveRequest) -> dict:
+        """Explicit, full-replacement save of the per-habit policy.
+
+        The complete list is supplied; ``version`` and the new ``revision`` are
+        server-owned. A stale ``expected_revision`` is a 409
+        ``habit_settings_conflict``, malformed existing storage is a 409
+        ``habit_settings_storage_error``, an invalid row is a 422
+        ``habit_settings_invalid`` naming its ``index`` and ``field``, and a
+        lock/read/write failure is a 500 — every failure path preserves the
+        original bytes. Conflict and format errors SUBCLASS the store error, so
+        they are caught first. Answers the same payload as the GET.
+        """
+        try:
+            habit_settings.save_full_replace(
+                [
+                    {
+                        "name": entry.name,
+                        "minutes": entry.minutes,
+                        "weekdays": entry.weekdays,
+                    }
+                    for entry in body.habits
+                ],
+                expected_revision=body.expected_revision,
+            )
+        except habit_settings.HabitSettingsConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "habit_settings_conflict",
+                    "message": (
+                        "Habit settings changed since they were read; "
+                        "reload and retry."
+                    ),
+                },
+            ) from exc
+        except habit_settings.HabitSettingsFormatError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "habit_settings_storage_error",
+                    "message": (
+                        "Habit settings storage is malformed or unsupported; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        except habit_settings.HabitSettingsInvalidRowError as exc:
+            # The row/field identity is the whole point: the UI highlights one
+            # input. The offending VALUE is never echoed in the message.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "habit_settings_invalid",
+                    "message": "Habit settings payload is invalid.",
+                    "index": exc.index,
+                    "field": exc.field,
+                },
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "habit_settings_invalid",
+                    "message": "Habit settings payload is invalid.",
+                    "index": None,
+                    "field": None,
+                },
+            ) from exc
+        except (habit_settings.HabitSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute path.
+            print(f"habit settings save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "habit_settings_storage_error",
+                    "message": (
+                        "Habit settings could not be saved; the existing "
+                        "file was preserved."
+                    ),
+                },
+            ) from exc
+        try:
+            return _habit_settings_view()
+        except (habit_settings.HabitSettingsStoreError, OSError) as exc:
+            print(f"habit settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "habit_settings_storage_error",
+                    "message": (
+                        "Habit settings storage could not be read; the "
+                        "existing file was preserved."
+                    ),
+                },
+            ) from exc
+
+    @app.post("/habits/grit/refresh", dependencies=[Depends(require_token)])
+    def post_habits_grit_refresh() -> dict:
+        """Token-guarded read of Grit through the operator's Shortcut.
+
+        Runs exactly one read, stores the cache on success, and answers the
+        SAME payload as the GET plus ``refresh: {ok, reason?}``. A failed read
+        is a **200 with ``refresh.ok: false``** and its typed ``reason``
+        constant: it reports the status of a READ (the convention
+        ``GET /capacities/refresh/status`` also follows — an unavailable source
+        is a reported status, not an error), it is neither a client mistake nor
+        a server fault, and it leaves the stored cache untouched. Only a
+        failure to touch the cache itself is a 500.
+
+        The runner comes from ``app.state.grit_runner`` when set (tests inject a
+        fake), else ``grit_habits.run_shortcut``. The route blocks no longer
+        than the Shortcut's own timeout: it is a sync route, so FastAPI runs it
+        on the threadpool, and ``grit_habits.refresh`` single-flights concurrent
+        callers.
+        """
+        runner = app.state.grit_runner
+        try:
+            result = grit_habits.refresh(runner=runner)
+        except OSError as exc:
+            # Only the cache/lock plumbing can raise here (the read itself is
+            # total). Bounded message: no timeout, argv, or path detail.
+            print(f"grit habits refresh failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "grit_refresh_storage_error",
+                    "message": (
+                        "The Grit read could not be stored; the existing "
+                        "cache was preserved."
+                    ),
+                },
+            ) from exc
+        refresh: dict[str, Any] = {"ok": bool(result.ok)}
+        if not result.ok:
+            refresh["reason"] = str(
+                result.reason or grit_habits.REASON_RUNNER_ERROR
+            )
+        try:
+            payload = _habit_settings_view()
+        except (habit_settings.HabitSettingsStoreError, OSError) as exc:
+            print(f"habit settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "habit_settings_storage_error",
+                    "message": (
+                        "Habit settings storage could not be read; the "
+                        "existing file was preserved."
+                    ),
+                },
+            ) from exc
+        payload["refresh"] = refresh
+        return payload
 
     @app.get("/plan-inputs")
     def get_plan_inputs() -> dict:
