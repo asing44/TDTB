@@ -7,9 +7,8 @@ import {
 } from "./habits";
 import type { HabitOverrides, HabitsInfo } from "./types";
 
-/* Habits are an ACTIVE list: the artifact lists every habit in the Todoist
-   Habits project and completion lives in Grit, so nothing here derives
-   done/outstanding counts from the wire. */
+/* Habits are an ACTIVE list. A Grit-sourced item carries the server's `done`
+   verdict (done or failed); a legacy block carries none, so nothing is done. */
 
 const info: HabitsInfo = {
   total: 3,
@@ -107,13 +106,58 @@ describe("habitsView", () => {
     expect(habitsView(undefined, none).mode).toBe("hidden");
   });
 
-  it("summarises the habit count and counted time, never completion", () => {
-    expect(habitsView(info, none).summary).toBe("3 habits · 45min counted");
-    const one: HabitsInfo = { total: 1, estMinutes: 30, items: [{ id: "a", name: "A", minutes: 30 }] };
-    expect(habitsView(one, none).summary).toBe("1 habit · 30min counted");
+  it("summarises items as due, done and counted minutes", () => {
+    expect(habitsView(info, none).summary).toBe("3 due · 0 done · ~45 min");
     const big: HabitsInfo = { total: 2, estMinutes: 75, items: [{ id: "a", name: "A", minutes: 75 }, { id: "b", name: "B", minutes: 0 }] };
+    expect(habitsView(big, none).summary).toBe("2 due · 0 done · ~75 min");
+  });
+
+  it("keeps the total row's habit-count summary", () => {
+    expect(habitsView(aggregateOnly, none).summary).toBe("3 habits · 45min counted");
+    const one: HabitsInfo = { total: 1, estMinutes: 30, items: [] };
+    expect(habitsView(one, none).summary).toBe("1 habit · 30min counted");
+    const big: HabitsInfo = { total: 2, estMinutes: 75, items: [] };
     expect(habitsView(big, none).summary).toBe("2 habits · 1hr 15min counted");
-    expect(habitsView(info, none).summary).not.toMatch(/outstanding|done|left/i);
+  });
+});
+
+describe("habitsView done habits", () => {
+  const grit: HabitsInfo = {
+    total: 4,
+    done: 2,
+    estMinutes: 60,
+    items: [
+      { id: "a", name: "Stretch", minutes: 25, done: true, status: "done" },
+      { id: "b", name: "Read", minutes: 20, done: false, status: "partial" },
+      { id: "c", name: "Water", minutes: 10, done: true, status: "failed" },
+      { id: "d", name: "Walk", minutes: 5, done: false, status: "none" },
+    ],
+  };
+
+  it("excludes done and failed habits from the counted minutes", () => {
+    const v = habitsView(grit, none);
+    expect(v.countedMinutes).toBe(25);
+    expect(v.rows.map((r) => [r.key, r.done, r.status])).toEqual([
+      ["a", true, "done"],
+      ["b", false, "partial"],
+      ["c", true, "failed"],
+      ["d", false, "none"],
+    ]);
+    expect(v.doneCount).toBe(2);
+    expect(v.dueCount).toBe(2);
+    expect(v.summary).toBe("2 due · 2 done · ~25 min");
+  });
+
+  it("keeps done rows listed and an off habit out of the count", () => {
+    const v = habitsView(grit, { items: { b: { on: false } }, total: null });
+    expect(v.rows).toHaveLength(4);
+    expect(v.countedMinutes).toBe(5);
+  });
+
+  it("never marks a legacy block's habits done", () => {
+    const v = habitsView({ ...info, done: 3 }, none);
+    expect(v.doneCount).toBe(0);
+    expect(v.rows.every((r) => !r.done)).toBe(true);
   });
 });
 

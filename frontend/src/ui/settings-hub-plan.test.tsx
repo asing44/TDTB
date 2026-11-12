@@ -217,8 +217,10 @@ describe("hub · Tasks I hid", () => {
     await waitFor(() => expect(within(list).queryAllByText("New")).toHaveLength(0));
   });
 
-  it("the plan entry hint mentions calendars", () => {
-    expect(HUB_ENTRIES.find((e) => e.id === "plan")!.hint).toMatch(/calendars/);
+  it("the Plan contents section hosts the calendar defaults", () => {
+    expect(HUB_ENTRIES.find((e) => e.id === "plan")!.label).toBe("Plan contents");
+    const { rendered } = openPlan({});
+    expect(rendered.getAllByText(/calendar/i).length).toBeGreaterThan(0);
   });
 
   it("a tag edit preserves the hidden-task list in the saved body", async () => {

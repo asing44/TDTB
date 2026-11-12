@@ -7,7 +7,7 @@ const two = { total: 2, estMinutes: 40, items: [{id:'a',name:'Reading',minutes:3
 const open = (r: ReturnType<typeof render>) => fireEvent.click(r.getByRole('button', {name:/Pick habits/}));
 it('card shows a one-line summary and unfolds the habit pills inline', () => {
  const r = render(<HabitsCard info={two} onSave={vi.fn()} />);
- expect(r.getByText('2 of 2 on · 40m')).toBeTruthy();
+ expect(r.getByText('2 due · 0 done · ~40 min')).toBeTruthy();
  expect(r.queryByRole('button',{name:/Count Reading today/})).toBeNull(); // folded
  expect(r.queryByRole('dialog')).toBeNull();
  open(r);
@@ -17,7 +17,7 @@ it('card shows a one-line summary and unfolds the habit pills inline', () => {
 });
 it('card summary counts off habits', () => {
  const r = render(<HabitsCard info={two} overrides={{items:{b:{on:false}},total:null}} onSave={vi.fn()} />);
- expect(r.getByText('1 of 2 on · 30m')).toBeTruthy();
+ expect(r.getByText('2 due · 0 done · ~30 min')).toBeTruthy();
 });
 it('a pill saves a skip', () => {
  const save = vi.fn().mockResolvedValue(undefined);
@@ -40,16 +40,34 @@ it('total fallback rejects empty minutes without saving', () => {
  fireEvent.input(input,{target:{value:''}}); fireEvent.blur(input);
  expect(save).not.toHaveBeenCalled(); expect(r.getByRole('alert')).toBeTruthy();
 });
-it('a legacy artifact keeps every habit and never shows completion', () => {
- // Old contract: `done` > 0 and `outstanding` < `total`. Grit owns completion
- // now, so the whole list stays switchable and no wording mentions it.
+it('a legacy artifact keeps every habit switchable with nothing done', () => {
+ // Old contract: `done` > 0 and `outstanding` < `total`. A legacy block carries no completion, so
+ // nothing is done and the whole list stays switchable.
  const legacy = { total: 3, done: 2, outstanding: 1, estMinutes: 25,
    items: [{id:'a',name:'Reading',minutes:10},{id:'b',name:'Walk',minutes:10},{id:'c',name:'Water',minutes:5}] };
  const r = render(<HabitsCard info={legacy} onSave={vi.fn()} />);
- expect(r.getByText('3 of 3 on · 25m')).toBeTruthy();
+ expect(r.getByText('3 due · 0 done · ~25 min')).toBeTruthy();
  open(r);
  expect(r.getAllByRole('button',{name:/^Count .* today$/}).length).toBe(3);
  expect(r.queryByText(/outstanding/i)).toBeNull();
  expect(r.queryByText(/Done today/)).toBeNull();
+ expect(r.queryByText(/habits? done$/)).toBeNull();
  expect(r.getByRole('button',{name:'all off'})).toBeTruthy();
+});
+it('Grit done and failed habits stay listed as done rows, uncounted and not switchable', () => {
+ const grit = { total: 3, estMinutes: 40, items: [
+   {id:'a',name:'Reading',minutes:30,done:true,status:'done' as const},
+   {id:'b',name:'Walk',minutes:10,done:true,status:'failed' as const},
+   {id:'c',name:'Water',minutes:5}] };
+ const save = vi.fn().mockResolvedValue(undefined);
+ const r = render(<HabitsCard info={grit} onSave={save} />);
+ expect(r.getByText('1 due · 2 done · ~5 min')).toBeTruthy();
+ open(r);
+ expect(r.getByLabelText('Reading: done today, not counted')).toBeTruthy();
+ expect(r.getByLabelText('Walk: missed today, not counted')).toBeTruthy();
+ expect(r.queryByRole('button',{name:'Count Reading today'})).toBeNull();
+ expect(r.getByRole('button',{name:'Count Water today'})).toBeTruthy();
+ // "all off" only touches the one habit still due.
+ fireEvent.click(r.getByRole('button',{name:'all off'}));
+ expect(save).toHaveBeenCalledWith({items:{c:{on:false}},total:null});
 });

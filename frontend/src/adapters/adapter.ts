@@ -29,6 +29,10 @@ import type {
   SequenceRow,
   CalendarSettings,
   CalendarSettingsDraft,
+  HabitGritRefreshResult,
+  HabitSettings,
+  HabitSettingsDraft,
+  HabitSettingsSaveOutcome,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
@@ -257,6 +261,17 @@ export interface Adapter {
   /** POST /settings/calendars/save — one token-guarded non-billed full
       replacement of the per-calendar policy; a stale revision is a 409. */
   saveCalendarSettings(draft: CalendarSettingsDraft): Promise<CalendarSettings>;
+  /** GET /settings/habits — tokenless local read of the per-habit minutes and
+      weekday policy plus the advisory Grit inventory (cache only; no Grit
+      read). */
+  loadHabitSettings(): Promise<HabitSettings>;
+  /** POST /settings/habits/save — one token-guarded non-billed full
+      replacement. A stale revision, a rejected row and malformed storage are
+      typed outcomes; anything else rejects. */
+  saveHabitSettings(draft: HabitSettingsDraft): Promise<HabitSettingsSaveOutcome>;
+  /** POST /habits/grit/refresh — one token-guarded read of Grit; a failed
+      read is a reported outcome, not an error. */
+  refreshGritHabits(): Promise<HabitGritRefreshResult>;
   /** POST /duration-memory/save — one token-guarded non-billed mutation
       (duration-memory MVP). Strict value validation happens BEFORE the call;
       the adapter never rounds, truncates, snaps, or coerces. */

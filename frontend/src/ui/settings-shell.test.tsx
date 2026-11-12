@@ -1,9 +1,10 @@
 /* settings-shell.test.tsx — the Settings dialog chrome around the hub. One
-   dialog; entries open their panels in place; every panel stays mounted for
-   the life of the shell so drafts survive switches, and the shell unmounting
-   on close re-initializes each panel from current state on reopen. The
-   cockpit shortcuts (rail Settings/Captures chips, ActionDock) all land in
-   the same host. Entry structure itself is covered in settings-hub.test.tsx. */
+   dialog holding one scrolling page; jump buttons move between sections;
+   every section stays mounted for the life of the shell so drafts survive
+   jumps, and the shell unmounting on close re-initializes each section from
+   current state on reopen. The cockpit shortcuts (rail Settings/Captures
+   chips, ActionDock) all land in the same host. Page structure itself is
+   covered in settings-hub.test.tsx. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -80,33 +81,33 @@ const hubCss = readFileSync(resolve(process.cwd(), "src/ui/settings-hub.css"), "
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** A jump-bar button by its label (Day, Habits, Plan contents, Sources, Advanced). */
 const entry = (r: ReturnType<Harness["ui"]>, name: string) =>
-  r.getByRole("button", { name: new RegExp(name, "i") });
+  r.getByRole("button", { name: new RegExp(`^${name}`, "i") });
 
-/** Open Repair connections > Repair tools > Show technical details. */
+/** Advanced > Repair tools > Show technical details. */
 function openTechnical(r: ReturnType<Harness["ui"]>) {
-  const repair = entry(r, "Repair connections");
-  if (repair.getAttribute("aria-expanded") !== "true") fireEvent.click(repair);
   fireEvent.click(r.getByRole("button", { name: /repair tools/i }));
   fireEvent.click(r.getByRole("button", { name: /show technical details/i }));
 }
 
 describe("SettingsShell", () => {
-  it("mounts exactly one dialog and switches panels in place", async () => {
+  it("mounts exactly one dialog with every section on one page", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadTagExclusionSettings").mockResolvedValue(tagFixture());
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     const rendered = h.ui(<SettingsShell />);
 
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
-    expect(rendered.queryByText("Frame")).toBeNull();
-
-    fireEvent.click(entry(rendered, "What shows up in my plan"));
+    // Nothing hides behind a tab: Day and Plan contents render beside Sources.
     await waitFor(() => expect(rendered.getByText("Excluded tags")).toBeTruthy());
+    expect(rendered.getByText("Frame")).toBeTruthy();
+    expect(rendered.getByText("Capacities refresh")).toBeTruthy();
 
-    fireEvent.click(entry(rendered, "Change my day setup"));
-    await waitFor(() => expect(rendered.getByText("Frame")).toBeTruthy());
-    expect(rendered.queryByText("Excluded tags")).toBeNull();
+    fireEvent.click(entry(rendered, "Plan contents"));
+    fireEvent.click(entry(rendered, "Day"));
+    expect(rendered.getByText("Frame")).toBeTruthy();
+    expect(rendered.getByText("Excluded tags")).toBeTruthy();
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
   });
 
@@ -133,11 +134,13 @@ describe("SettingsShell", () => {
     });
     expect(horizon()).toBe("5");
 
-    // Switching away and back keeps the shell mounted: the unsaved draft stays.
-    fireEvent.click(entry(rendered, "Change my day setup"));
-    fireEvent.click(entry(rendered, "Repair connections"));
+    // Jumping away and back keeps the shell mounted: the unsaved draft stays
+    // and nothing reloads.
+    const loadsBeforeJump = load.mock.calls.length;
+    fireEvent.click(entry(rendered, "Day"));
+    fireEvent.click(entry(rendered, "Advanced"));
     expect(horizon()).toBe("5");
-    expect(load).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledTimes(loadsBeforeJump);
 
     // Closing unmounts the shell; reopening loads current state fresh.
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
@@ -148,7 +151,7 @@ describe("SettingsShell", () => {
     await waitFor(() => rendered.getByRole("dialog", { name: "Settings" }));
     openTechnical(rendered);
     await waitFor(() => expect(horizon()).toBe("2"));
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load.mock.calls.length).toBeGreaterThan(loadsBeforeJump);
   });
 
   it("reopens from current state rather than the discarded draft", async () => {
@@ -203,7 +206,7 @@ describe("SettingsShell", () => {
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
     expect(h.store.getState().ui.settingsPanel).toBe("day");
 
-    fireEvent.click(entry(rendered, "Repair connections"));
+    fireEvent.click(entry(rendered, "Advanced"));
     expect(h.store.getState().ui.settingsPanel).toBe("repair");
 
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
@@ -226,34 +229,37 @@ describe("SettingsShell", () => {
     expect(dockSetup).toBeTruthy();
 
     fireEvent.click(dockSetup);
-    const frame = await waitFor(() =>
-      rendered.getByRole("heading", { name: "Frame" }),
+    const dayHeading = await waitFor(() =>
+      rendered.getByRole("heading", { name: "Day" }),
     );
-    await waitFor(() => expect(document.activeElement).toBe(frame));
+    await waitFor(() => expect(document.activeElement).toBe(dayHeading));
     expect(h.store.getState().ui.settingsPanel).toBe("day");
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
   });
 });
 
 describe("SettingsShell accessibility", () => {
-  it("exposes the entries as buttons with aria-expanded/aria-controls and one open region", () => {
+  it("exposes a named jump nav of five buttons and five labelled sections", () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
     const rendered = h.ui(<SettingsShell />);
 
-    const toggles = Array.from(
-      rendered.container.querySelectorAll<HTMLElement>(".settings-hub__toggle"),
+    const nav = rendered.getByRole("navigation", { name: "Jump to a section" });
+    const buttons = Array.from(nav.querySelectorAll<HTMLElement>(".settings-hub__jump-btn"));
+    expect(buttons.length).toBe(5);
+    for (const btn of buttons) {
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn.getAttribute("aria-current") === "location").toBe(
+        btn.getAttribute("data-entry") === "day",
+      );
+    }
+    const sections = Array.from(
+      rendered.container.querySelectorAll<HTMLElement>(".settings-hub > section"),
     );
-    expect(toggles.length).toBe(5);
-    for (const toggle of toggles) {
-      const expanded = toggle.getAttribute("aria-expanded") === "true";
-      expect(expanded).toBe(toggle.getAttribute("data-entry") === "day");
-      const region = rendered.container.querySelector(
-        `#${toggle.getAttribute("aria-controls")}`,
-      ) as HTMLElement;
-      expect(region.getAttribute("role")).toBe("region");
-      expect(region.getAttribute("aria-labelledby")).toBe(toggle.id);
-      expect(region.hasAttribute("hidden")).toBe(!expanded);
+    expect(sections.length).toBe(5);
+    for (const section of sections) {
+      const label = section.getAttribute("aria-labelledby")!;
+      expect(rendered.container.querySelector(`#${label}`), section.id).toBeTruthy();
     }
   });
 
@@ -264,10 +270,10 @@ describe("SettingsShell accessibility", () => {
     const settingsChip = rendered.getByRole("button", { name: "Open settings" });
     settingsChip.focus();
     fireEvent.click(settingsChip);
-    const frame = await waitFor(() =>
-      rendered.getByRole("heading", { name: "Frame" }),
+    const dayHeading = await waitFor(() =>
+      rendered.getByRole("heading", { name: "Day" }),
     );
-    await waitFor(() => expect(document.activeElement).toBe(frame));
+    await waitFor(() => expect(document.activeElement).toBe(dayHeading));
 
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBeNull());
@@ -288,19 +294,19 @@ describe("SettingsShell accessibility", () => {
     expect(h.store.getState().ui.settingsSection).toBe("captures");
   });
 
-  it("keeps focus on a pressed entry instead of jumping to the heading", async () => {
+  it("keeps focus on a pressed jump button instead of moving to the heading", async () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
     const rendered = h.ui(<SettingsShell />);
-    const plan = entry(rendered, "What shows up in my plan");
+    const plan = entry(rendered, "Plan contents");
     plan.focus();
     fireEvent.click(plan);
     await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBe("plan"));
     expect(document.activeElement).toBe(plan);
-    expect(plan.getAttribute("aria-expanded")).toBe("true");
+    expect(plan.getAttribute("aria-current")).toBe("location");
   });
 
-  it("lands focus on an async panel's heading when its load resolves", async () => {
+  it("lands focus on the destination heading at once, even while a panel still loads", async () => {
     const h = makeHarness("ready");
     let resolveLoad: (value: TagExclusionSettings) => void = () => {};
     vi.spyOn(h.controller, "loadTagExclusionSettings").mockImplementation(
@@ -312,15 +318,13 @@ describe("SettingsShell accessibility", () => {
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "plan" } });
     const rendered = h.ui(<SettingsShell />);
 
-    const activePanel = () =>
-      rendered.container.querySelector(".settings-hub__panel:not([hidden])") as HTMLElement;
-    expect(document.activeElement).toBe(activePanel());
+    const heading = rendered.getByRole("heading", { name: "Plan contents" });
+    expect(document.activeElement).toBe(heading);
 
+    // The late load fills the section in without stealing focus back.
     act(() => resolveLoad(tagFixture()));
-    const heading = await waitFor(() =>
-      rendered.getByRole("heading", { name: "Excluded tags" }),
-    );
-    await waitFor(() => expect(document.activeElement).toBe(heading));
+    await waitFor(() => rendered.getByRole("heading", { name: "Excluded tags" }));
+    expect(document.activeElement).toBe(heading);
   });
 
   it("closes on Escape and restores focus to the original opener", async () => {
@@ -333,7 +337,7 @@ describe("SettingsShell accessibility", () => {
       rendered.getByRole("dialog", { name: "Settings" }),
     );
 
-    fireEvent.click(entry(rendered, "What shows up in my plan"));
+    fireEvent.click(entry(rendered, "Plan contents"));
     await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBe("plan"));
 
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -403,7 +407,7 @@ describe("SettingsShell accessibility", () => {
       const dialog = await waitFor(() =>
         rendered.getByRole("dialog", { name: "Settings" }),
       );
-      expect(dialog.querySelectorAll(".settings-hub__toggle").length).toBe(5);
+      expect(dialog.querySelectorAll(".settings-hub__jump-btn").length).toBe(5);
       rendered.unmount();
     }
   });

@@ -11,6 +11,8 @@ import { canonicalSettingsPanel, type SettingsPanel } from "../store/store";
 
 export const SETTINGS_PARAM = "settings";
 export const SETTINGS_SECTION_PARAM = "section";
+/** `?settings=habits` deep-links the Habits section (Day panel, section `habits`). */
+export const HABITS_URL_ID = "habits";
 
 export interface SettingsUrlState {
   panel: SettingsPanel | null;
@@ -20,6 +22,8 @@ export interface SettingsUrlState {
 export function parseSettingsSearch(search: string): SettingsUrlState {
   const params = new URLSearchParams(search);
   const rawPanel = params.get(SETTINGS_PARAM);
+  // `habits` is a section of the Day destination, not a store panel.
+  if (rawPanel === HABITS_URL_ID) return { panel: "day", section: HABITS_URL_ID };
   // Legacy ids (capacities, tags) map to their hub entry; unknown opens nothing.
   const panel = canonicalSettingsPanel(rawPanel);
   const rawSection = params.get(SETTINGS_SECTION_PARAM);
@@ -37,7 +41,9 @@ export function serializeSettingsSearch(
   const params = new URLSearchParams(search);
   params.delete(SETTINGS_PARAM);
   params.delete(SETTINGS_SECTION_PARAM);
-  if (state.panel !== null) {
+  if (state.panel === "day" && state.section === HABITS_URL_ID) {
+    params.set(SETTINGS_PARAM, HABITS_URL_ID);
+  } else if (state.panel !== null) {
     params.set(SETTINGS_PARAM, state.panel);
     if (state.section) {
       params.set(SETTINGS_SECTION_PARAM, state.section);

@@ -764,7 +764,7 @@ describe("CapacitiesSettingsPanel", () => {
     const h = makeHarness("ready");
     const load = vi
       .spyOn(h.controller, "loadCapacitiesSettings")
-      .mockRejectedValueOnce(new Error("local settings unavailable"));
+      .mockRejectedValue(new Error("local settings unavailable"));
     const rendered = mountDrawer(h);
 
     await waitFor(() => expect(rendered.getByRole("alert")).toBeTruthy());

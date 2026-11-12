@@ -31,6 +31,23 @@ function mountRoot() {
 }
 
 describe("settings URL parsing", () => {
+  it("maps ?settings=habits to the Day panel's habits section, and back", () => {
+    expect(parseSettingsSearch("?settings=habits")).toEqual({ panel: "day", section: "habits" });
+    expect(parseSettingsSearch("?settings=day&section=habits")).toEqual({
+      panel: "day",
+      section: "habits",
+    });
+    expect(serializeSettingsSearch("", { panel: "day", section: "habits" })).toBe(
+      "?settings=habits",
+    );
+    expect(serializeSettingsSearch("?x=1", { panel: "day", section: "captures" })).toBe(
+      "?x=1&settings=day&section=captures",
+    );
+    expect(serializeSettingsSearch("?settings=habits&x=1", { panel: null, section: null })).toBe(
+      "?x=1",
+    );
+  });
+
   it("reads known panels and the optional day section", () => {
     expect(parseSettingsSearch("")).toEqual({ panel: null, section: null });
     expect(parseSettingsSearch("?settings=day")).toEqual({ panel: "day", section: null });
@@ -194,5 +211,21 @@ describe("settings URL sync alongside the cockpit", () => {
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day", approvalOpen: true } });
     expect(h.store.getState().ui.approvalOpen).toBe(true);
     expect(h.store.getState().ui.settingsPanel).toBe("day");
+  });
+});
+
+describe("settings URL habits deep link", () => {
+  it("opens the Habits section from ?settings=habits and writes the same URL back", async () => {
+    window.history.replaceState(null, "", "/?settings=habits");
+    const { store, r } = mountRoot();
+    await waitFor(() => expect(store.getState().ui.settingsSection).toBe("habits"));
+    expect(store.getState().ui.settingsPanel).toBe("day");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(r.getByRole("heading", { name: "Habits" })),
+    );
+    expect(window.location.search).toBe("?settings=habits");
+    // Jumping to Plan contents rewrites the destination in place.
+    act(() => store.dispatch({ type: "UI", patch: { settingsPanel: "plan", settingsSection: null } }));
+    await waitFor(() => expect(window.location.search).toBe("?settings=plan"));
   });
 });

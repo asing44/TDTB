@@ -1,5 +1,7 @@
 /* Settings hub — status line, five entries, calm folds. Theme tokens only. */
-.settings-hub { --hub-gap: 8px; --hub-pad: 12px 14px; display: grid; gap: var(--hub-gap); }
+.settings-hub { --hub-gap: 8px; --hub-pad: 12px 14px; display: grid; gap: 16px; min-width: 0; }
+.settings-hub > * { min-width: 0; }
+.settings-hub__panel, .hb { scroll-margin-top: 96px; }
 .settings-hub__summary {
   display: flex; align-items: center; gap: 8px; margin: 0;
   padding: 10px 12px; border: 1px solid var(--t-border); border-radius: 10px;
@@ -7,20 +9,29 @@
 }
 .settings-hub__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--t-accent); flex: none; }
 .settings-hub__dot--warn { background: var(--t-muted); outline: 2px solid var(--t-text); outline-offset: 1px; }
-/* Five compact entry buttons in a grid; the open panel sits below the grid so
-   the other entries never scroll away behind it. */
-.settings-hub__entries { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-.settings-hub__entry { display: grid; }
-.settings-hub__toggle {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; min-height: 44px; padding: 6px 12px; text-align: left;
-  border: 1px solid var(--t-border); border-radius: 10px;
-  background: var(--t-surface); color: var(--t-text); font-size: 14px; cursor: pointer;
+/* Sticky jump bar: one row of section buttons that stays under the dialog
+   top while the one-page settings scroll. Wraps (never scrolls sideways) at
+   the narrow width. */
+.settings-hub__jump {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0; padding: 6px 0; background: var(--t-surface);
+  border-bottom: 1px solid var(--t-border);
 }
-.settings-hub__toggle > span:first-child { display: grid; gap: 2px; }
-.settings-hub__toggle:hover { border-color: color-mix(in srgb, var(--t-accent) 65%, var(--t-border)); }
-.settings-hub__toggle[aria-expanded="true"] { background: var(--t-surface-2); border-color: var(--t-accent); box-shadow: inset 0 -3px 0 var(--t-accent); }
-.settings-hub__toggle:focus-visible,
+/* Narrow: keep the bar one row (scrolls sideways) so the 64px scroll margin
+   always clears it and a jump never hides the target heading. */
+@media (max-width: 560px) {
+  .settings-hub__jump { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .settings-hub__jump-btn { flex: 0 0 auto; white-space: nowrap; }
+}
+.settings-hub__jump-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; justify-content: center;
+  min-height: 44px; padding: 6px 12px; border: 1px solid var(--t-border); border-radius: 999px;
+  background: var(--t-surface); color: var(--t-text); font: inherit; font-size: 14px; cursor: pointer;
+}
+.settings-hub__jump-btn:hover { border-color: color-mix(in srgb, var(--t-accent) 65%, var(--t-border)); }
+.settings-hub__jump-btn[aria-current="location"] { background: var(--t-surface-2); border-color: var(--t-accent); box-shadow: inset 0 -3px 0 var(--t-accent); }
+.settings-hub__title { margin: 0; font-size: 16px; font-weight: 600; }
+.settings-hub__jump-btn:focus-visible,
 .settings-hub__link:focus-visible,
 .settings-fold__toggle:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
 .settings-hub__muted { color: var(--t-muted); font-size: 12px; font-weight: 400; }
