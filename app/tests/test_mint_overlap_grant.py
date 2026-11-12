@@ -72,7 +72,11 @@ def _granted_warnings(result):
 # ---------------------------------------------------------------------------
 
 class TestValidatorMintOverlapGrant:
-    def test_granted_row_inside_mint_is_ok_with_one_named_warning(self):
+    def test_granted_row_inside_mint_is_placed_without_a_defect_warning(self):
+        # Owner decision 2026-11-15: a granted row with room in a selected
+        # Mint session is PLACED there deterministically, so the overlap is the
+        # grant working — it is no longer reported as an acceptable defect the
+        # operator must acknowledge (the card note still names the partner).
         mint = _mint_item()
         result = _run(
             [_seq_row("Backpack", "15:00", "15:30")],
@@ -81,10 +85,32 @@ class TestValidatorMintOverlapGrant:
         )
         assert result.ok is True
         assert result.hard_errors == []
+        assert _granted_warnings(result) == []
+
+    def test_unplaceable_granted_overlap_keeps_the_named_warning(self):
+        # #18 stays honest: a granted row that could NOT be placed in a free
+        # session (here the session is taken by a fixed event) still overlaps
+        # Mint, so the overlap is reported by name — never silently.
+        mint = _mint_item()
+        busy = {
+            "Block": "Standup", "Type": "hard", "Start": "15:00",
+            "End": "15:30", "source": "calendar", "capacity_class": "fixed",
+        }
+        result = validate_sequence(
+            {"sequence": [_seq_row("Backpack", "15:00", "15:30")],
+             "overlap_grants": []},
+            [{"id": "Backpack", "zone": "any", "may_overlap_mint": True}],
+            [busy],
+            CFG,
+            optional_items=[mint],
+        )
+        assert result.ok is True
         [warning] = _granted_warnings(result)
         assert "Backpack" in warning["detail"]
         assert "Mint Afternoon · 15:00" in warning["detail"]
         assert "May overlap Mint (operator)" in warning["detail"]
+        assert [w for w in result.warnings
+                if w.get("rule") == "mint_grant_unplaced"]
 
     def test_same_row_without_the_flag_stays_hard(self):
         mint = _mint_item()
@@ -178,6 +204,10 @@ class TestSequencePromptGrant:
             "may_overlap_mint: true is explicitly operator-granted"
             in captured["system"]
         )
+        # The prompt now states that the APP places granted rows into Mint, so
+        # the model neither works around Mint nor tries to place them itself.
+        assert "the APP places each such row inside a selected Mint session" \
+            in captured["system"]
         assert "the overlap is always reported" in captured["system"]
         # prompt_assigned spreads the whole item, so the flag reaches the model.
         assert '"may_overlap_mint": true' in captured["user"]
@@ -258,7 +288,10 @@ class TestValidateSequenceRouteGrant:
             "config": _cfg_body(),
         })
 
-    def test_matched_flagged_row_is_ok_with_the_grant_warning(self, client, vault):
+    def test_matched_flagged_row_is_ok_and_placed_in_the_session(self, client, vault):
+        # The granted row is already at the selected session, so the
+        # deterministic placement leaves it there and reports no defect: the
+        # grant was applied, not merely tolerated.
         _write_cfg(vault)
         _seed_mint_and_index()
         r = self._post(client, [{
@@ -269,11 +302,10 @@ class TestValidateSequenceRouteGrant:
         body = r.json()
         assert body["ok"] is True
         assert body["hard_errors"] == []
-        [warning] = [
+        assert [
             w for w in body["warnings"]
             if w.get("rule") == "mint_overlap_granted"
-        ]
-        assert "May overlap Mint (operator)" in warning["detail"]
+        ] == []
 
     def test_matched_unflagged_row_is_hard(self, client, vault):
         _write_cfg(vault)

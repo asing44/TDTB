@@ -93,6 +93,12 @@ class ManifestEntry:
     is_recurring: bool = False
     native_start: str | None = None
     retiming_authorized: bool | None = None
+    # True when the row carries an ADMITTED per-row Mint overlap grant
+    # (``may_overlap_mint``, #18). The operator's grant authorizes moving the
+    # row into a selected Mint session, which is a retime of its own due time,
+    # so it retires native protection for that row exactly like
+    # ``allow_time_adjustment``. Kept out of ``as_dict``.
+    may_overlap_mint: bool = False
     # True when the row's identity came from a Capacities assigned row (S6b).
     # ``build_plan_manifest`` no longer emits it (a Capacities row is now a
     # PHEP Todoist mirror only, never a calendar entry); retained as a
@@ -489,6 +495,7 @@ def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
             "is_recurring": False,
             "native_start": None,
             "retiming_authorized": None,
+            "may_overlap_mint": False,
         }
     native_start = time_engine.to_hhmm(item.get("scheduled_start"))
     # ``native_blocks`` is server-only provenance.  The effective ``blocks``
@@ -502,12 +509,22 @@ def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
             and isinstance(native_blocks, (int, float)) and native_blocks == 0):
         native_start = None
     authorized = item.get("allow_time_adjustment") is True
+    # Owner decision 2026-11-15: an admitted Mint overlap grant authorizes
+    # placing this row inside a selected Mint session, i.e. retiming it. It is
+    # read with the same weight as ``allow_time_adjustment`` — the canonical
+    # "this row may be retimed" opt-in — so the pinned-native NOOP branch
+    # cannot swallow the grant's update.
+    mint_granted = item.get("may_overlap_mint") is True
+    native_source = (
+        {**item, "allow_time_adjustment": True} if mint_granted else item
+    )
     return {
-        "native_protected": bool(sequence_module.timed_auto_pins([item])),
+        "native_protected": bool(sequence_module.timed_auto_pins([native_source])),
         "allow_time_adjustment": item.get("allow_time_adjustment"),
         "is_recurring": bool(item.get("is_recurring")),
         "native_start": native_start,
-        "retiming_authorized": authorized,
+        "retiming_authorized": authorized or mint_granted,
+        "may_overlap_mint": mint_granted,
     }
 
 
@@ -862,6 +879,13 @@ def _retiming_authorized(
     manifest: ManifestEntry, is_recurring: bool,
 ) -> bool:
     """Return only the internal authorization that can permit a retime."""
+    if manifest.may_overlap_mint is True:
+        # Owner decision 2026-11-15: an admitted per-row Mint grant IS the
+        # authorization — the operator said this row belongs inside a selected
+        # Mint session today, so the app's placement of it is a sanctioned
+        # retime. No other row or flag is affected: the field is only set from
+        # an admitted grant.
+        return True
     if manifest.retiming_authorized is not None:
         return bool(manifest.retiming_authorized)
     if manifest.allow_time_adjustment is True:

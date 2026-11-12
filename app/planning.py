@@ -622,6 +622,21 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
         _id(pin): sequence.canonicalize_pinned_row(pin)
         for pin in prepared.effective_pins
     }
+    # Owner decision 2026-11-15: an ADMITTED Mint grant authorizes placing that
+    # row INSIDE a selected Mint session — a retime even of a native due time.
+    # The waiver is exactly the set the server can see inside a server-selected
+    # session run, so a granted row the client dragged anywhere else, and every
+    # ungranted native row, still fails the comparison below.
+    mint_placed = sequence.mint_grant_covered_row_ids(
+        {
+            _id(item) for item in prepared.assigned
+            if isinstance(item, dict) and item.get("may_overlap_mint") is True
+        },
+        prepared.sequence,
+        prepared.blocks,
+    )
+    for row_id in mint_placed:
+        expected.pop(row_id, None)
     actual = {
         _id(row): sequence.canonicalize_pinned_row(row)
         for row in prepared.sequence if _id(row) in expected

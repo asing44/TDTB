@@ -28,6 +28,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from typing import Any
 
 import placement_rules
@@ -297,6 +298,7 @@ def verify_native_pins_in_sequence(
     assigned: list[dict[str, Any]],
     sequence_rows: list[dict[str, Any]],
     pinned_rows: list[dict[str, Any]],
+    mint_granted_ids: set[str] | None = None,
 ) -> list[str]:
     """Verify that a sequence still carries every protected native pin.
 
@@ -304,8 +306,17 @@ def verify_native_pins_in_sequence(
     trusted from client ``pinned_rows`` or a snapshot. This makes omission of
     the client pin list unable to bypass protection. The supplied pin list is
     still checked for an unauthorized moved native pin when present.
+
+    ``mint_granted_ids`` names the rows an ADMITTED Mint grant placed inside a
+    selected Mint session (owner decision 2026-11-15). The grant authorizes
+    moving that row into Mint time, so the native pin is waived for exactly
+    those rows. The caller derives the set from the server's own selected
+    sessions — never from client metadata — so a granted row moved anywhere
+    else keeps its pin and is still refused here.
     """
-    native, native_errors = _derive_timed_auto_pins(assigned)
+    native, native_errors = _derive_timed_auto_pins(
+        assigned, exclude_ids=mint_granted_ids or None
+    )
     errors = _native_conflicts_for_pins(native, pinned_rows)
     errors.extend(native_errors)
     by_id = {str(row.get("id")): row for row in sequence_rows}
@@ -1734,6 +1745,290 @@ def reseat_work_wall_rows(
     return reseated
 
 
+# ---------------------------------------------------------------------------
+# Mint grant placement (2026-11-15, owner decision): a granted row goes INSIDE
+# Mint when a selected session has room
+# ---------------------------------------------------------------------------
+
+# Soft warning raised for an operator-granted row this pass could NOT put into
+# a selected Mint session. Content-free: row id, duration, and why.
+MINT_GRANT_UNPLACED = "mint_grant_unplaced"
+
+
+def _busy_placement_spans(
+    anchored_blocks: list[dict[str, Any]] | None,
+) -> list[tuple[int, int]]:
+    """Anchored spans that occupy REAL time inside a placement window.
+
+    Same reading as ``reseat_work_wall_rows``: a ``Type: window`` block is a
+    floating placement window, ``overlap_allowed`` is permeable, and an
+    excluded calendar class (contract 17) is no wall at all. Everything else
+    — a fixed or work calendar event, a config-backed block — is busy time a
+    granted row may not be dropped into.
+    """
+    spans: list[tuple[int, int]] = []
+    for block in anchored_blocks or []:
+        if not isinstance(block, dict) or block.get("overlap_allowed"):
+            continue
+        if str(block.get("Type") or block.get("type") or "").strip().lower() \
+                == "window":
+            continue
+        if str(block.get("source") or "").strip().casefold() == "calendar" \
+                and str(block.get("capacity_class") or "fixed").strip().casefold() \
+                in _CALENDAR_EXCLUDED_CLASSES:
+            continue
+        span = _anchored_span(block)
+        if span and span[1] > span[0]:
+            spans.append(span)
+    return spans
+
+
+def _first_session_run(
+    sessions: list[tuple[int, int]], duration: int
+) -> tuple[int, int] | None:
+    """Earliest run of back-to-back sessions that holds ``duration`` minutes.
+
+    ``sessions`` is sorted by start. A run is consecutive only when each
+    session begins exactly where the previous one ended, so two Mint sessions
+    separated by a gap never host one longer row. Returns
+    ``(run_start_min, sessions_used)`` or ``None``.
+    """
+    if duration <= 0:
+        return None
+    for index, (start, _end) in enumerate(sessions):
+        cursor, used = start, 0
+        for span in sessions[index:]:
+            if span[0] != cursor:
+                break
+            cursor = span[1]
+            used += 1
+            if cursor - start >= duration:
+                return start, used
+    return None
+
+
+def place_granted_mint_rows(
+    proposal: dict[str, Any],
+    assigned: list[dict[str, Any]] | None,
+    anchored_blocks: list[dict[str, Any]] | None = None,
+    optional_items: list[dict[str, Any]] | None = None,
+) -> tuple[set[str], list[dict[str, str]]]:
+    """Place operator-granted rows INSIDE selected Mint sessions.
+
+    Owner decision (2026-11-15): the per-row ``may_overlap_mint`` grant says
+    the row BELONGS in Mint today, so the day's selected Mint sessions are
+    filled deterministically instead of being left to the judgment model:
+
+    - one granted row per 30-minute session — two granted rows never share a
+      session;
+    - a longer granted row spans CONSECUTIVE free sessions (90 min = three
+      back-to-back 30-minute sessions);
+    - a session is free when no other placed row and no busy anchored block
+      occupies it;
+    - granted rows are assigned in the model's original order (id as the
+      stable tie-break) to the EARLIEST run that fits their duration, which
+      also makes Mint time beat a row's native source time.
+
+    Rows this pass moves leave a gap at their old slot: the day is never
+    re-compacted, so no unrelated row changes time. Rows that keep their
+    placement are exempt by contract:
+
+    - selected Mint session rows themselves, ``backdrop`` framing rows, and
+      anchored passthrough rows (walls, not movable work);
+    - rows the pipeline already owns: ``overflow_park`` and
+      ``work_wall_reseat`` markers, plus ``pinned``/explicit pins.
+
+    A server-authoritative NATIVE timed row (``timed_auto_pins``) IS moved: the
+    grant authorizes a retime into Mint time (owner decision 2026-11-15), and
+    the commit lane waives that row's native pin only while it sits inside a
+    server-derived selected session, so a granted row dragged anywhere else is
+    still refused. The write lane retimes it because the grant is an
+    authorization, not merely an overlap tolerance.
+
+    Mutates ``proposal`` rows (and any overlap grant carrying their interval)
+    in place and re-sorts the sequence chronologically, stably. Returns
+    ``(placed_ids, unplaced)`` where ``placed_ids`` are the rows the pass put
+    inside Mint and ``unplaced`` is one soft ``mint_grant_unplaced``
+    descriptor per granted row it could not place.
+    """
+    sequence = proposal.get("sequence") if isinstance(proposal, dict) else None
+    if not isinstance(sequence, list):
+        return set(), []
+    items = [
+        item for item in list(optional_items or []) + list(assigned or [])
+        if isinstance(item, dict)
+    ]
+    granted_ids = {
+        str(item.get("id")) for item in items
+        if item.get("may_overlap_mint") is True
+    }
+    sessions = selected_mint_walls(items)
+    if not granted_ids or not sessions:
+        return set(), []
+    session_ids = {session_id for session_id, _span in sessions}
+    session_spans = sorted({span for _session_id, span in sessions})
+    durations = _assigned_durations([
+        item for item in (assigned or []) if isinstance(item, dict)
+    ])
+    anchored_ids = {
+        str(_anchored_block_id(block))
+        for block in (anchored_blocks or [])
+        if isinstance(block, dict) and _anchored_block_id(block) is not None
+    }
+
+    # Candidacy: the granted rows this pass owns.
+    moving: list[tuple[int, dict[str, Any], int, int]] = []
+    for index, row in enumerate(sequence):
+        if not isinstance(row, dict) or row.get("backdrop"):
+            continue
+        row_id = str(row.get("id"))
+        if row_id not in granted_ids or row_id in session_ids:
+            continue
+        if row_id in anchored_ids or row.get("pinned") is True:
+            continue
+        if row.get(OVERFLOW_PARK_KEY) is not None:
+            continue
+        if row.get(WORK_WALL_RESEAT_KEY) is not None:
+            continue
+        span = _row_span(row)
+        if span is None or span[1] <= span[0]:
+            continue
+        moving.append((index, row, span[0], span[1]))
+    if not moving:
+        return set(), []
+
+    moving_ids = {str(row.get("id")) for _index, row, _start, _end in moving}
+    obstacles = _busy_placement_spans(anchored_blocks)
+    for row in sequence:
+        if not isinstance(row, dict) or row.get("backdrop"):
+            continue
+        row_id = str(row.get("id"))
+        # The Mint sessions are the target space, not an obstacle; the moving
+        # rows are re-assigned from scratch.
+        if row_id in session_ids or row_id in moving_ids:
+            continue
+        span = _row_span(row)
+        if span and span[1] > span[0]:
+            obstacles.append(span)
+
+    def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
+        return left[0] < right[1] and right[0] < left[1]
+
+    available = [
+        span for span in session_spans
+        if not any(_overlaps(span, obstacle) for obstacle in obstacles)
+    ]
+
+    placed_ids: set[str] = set()
+    unplaced: list[dict[str, str]] = []
+    for _index, row, old_start, old_end in sorted(
+        moving,
+        key=lambda entry: (entry[0], str(entry[1].get("id") or "").casefold(),
+                           str(entry[1].get("id") or "")),
+    ):
+        row_id = str(row.get("id"))
+        duration = durations.get(row_id, old_end - old_start)
+        if duration is None or duration <= 0:
+            continue
+        target = _first_session_run(available, duration)
+        if target is None:
+            unplaced.append({
+                "id": row_id,
+                "rule": MINT_GRANT_UNPLACED,
+                "detail": (
+                    f"{row_id!r} ({row['start']}-{row['end']}) — no free "
+                    f"consecutive Mint session holds {duration} min; left "
+                    f"where it was placed"
+                ),
+                "start": str(row.get("start")),
+                "end": str(row.get("end")),
+            })
+            continue
+        new_start = target[0]
+        new_end = new_start + duration
+        old_interval = {
+            "start": placement_rules.canonical_time(row.get("start")) or "",
+            "end": placement_rules.canonical_time(row.get("end")) or "",
+        }
+        row["start"] = _minutes_to_hhmm(new_start)
+        row["end"] = _minutes_to_hhmm(new_end)
+        _repair_reseated_grant_intervals(
+            proposal.get("overlap_grants"), row_id, old_interval,
+            {"start": row["start"], "end": row["end"]},
+        )
+        available = [
+            span for span in available
+            if not _overlaps(span, (new_start, new_end))
+        ]
+        placed_ids.add(row_id)
+
+    if placed_ids:
+        # Placed rows move EARLIER in the day; re-sort so the returned sequence
+        # (and the structural chronological-order check) stays consistent.
+        sequence.sort(key=_row_start_sort_key)
+    return placed_ids, unplaced
+
+
+def mint_grant_covered_row_ids(
+    granted_ids: Iterable[str],
+    sequence_rows: list[dict[str, Any]] | None,
+    mint_items: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Granted rows whose row interval sits FULLY inside selected Mint time.
+
+    Owner decision (2026-11-15): an ADMITTED ``may_overlap_mint`` grant
+    authorizes moving that row into a selected Mint session, so the two
+    downstream pin gates (the planning pin-snapshot comparison and the commit
+    lane's immutable-pin 409) must waive the native pin for exactly that row.
+
+    The waiver is deliberately narrow and evidence-based:
+
+    - ``granted_ids`` are the rows whose grant was ADMITTED by the server (a
+      server-matched row carrying the literal ``True``) — never a raw client
+      flag;
+    - ``mint_items`` are the SERVER's own selected sessions (today's config and
+      dated setup), so a row dragged anywhere else is absent from the result
+      and keeps its pin;
+    - consecutive selected sessions form one run, because a longer granted row
+      spans several back-to-back sessions (``place_granted_mint_rows``).
+
+    Returns the granted row ids the server can see sitting inside a selected
+    session run. Everything else keeps its pin and its old hard error.
+    """
+    granted = {
+        str(row_id).strip() for row_id in granted_ids or []
+        if str(row_id).strip()
+    }
+    if not granted or not isinstance(mint_items, list):
+        return set()
+    sessions = sorted(
+        span for _session_id, span in selected_mint_walls(
+            [item for item in mint_items if isinstance(item, dict)]
+        )
+    )
+    if not sessions:
+        return set()
+    runs: list[tuple[int, int]] = []
+    for start, end in sessions:
+        if runs and start <= runs[-1][1]:
+            runs[-1] = (runs[-1][0], max(runs[-1][1], end))
+        else:
+            runs.append((start, end))
+    covered: set[str] = set()
+    for row in sequence_rows or []:
+        if not isinstance(row, dict):
+            continue
+        row_id = str(row.get("id") or "").strip()
+        if row_id not in granted:
+            continue
+        span = _row_span(row)
+        if span is None or span[1] <= span[0]:
+            continue
+        if any(run[0] <= span[0] and span[1] <= run[1] for run in runs):
+            covered.add(row_id)
+    return covered
+
+
 def _row_start_sort_key(row: Any) -> int:
     if isinstance(row, dict):
         start = placement_rules.canonical_time(row.get("start"))
@@ -2012,6 +2307,22 @@ def validate_sequence(
     for item in reseat_work_wall_rows(
         proposal, assigned, anchored_blocks, time_frame
     ):
+        add_warning(
+            {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
+            affected_rows=[item["id"]],
+            intervals=[interval_for(item["id"], item["start"], item["end"])],
+        )
+    # Mint grant placement (owner decision 2026-11-15): an operator-granted row
+    # belongs INSIDE Mint today, so the selected sessions are filled
+    # deterministically instead of left to the model's discretion. Runs AFTER
+    # the overflow park and the work-wall re-seat so those keep precedence
+    # (#18), and BEFORE validation/warnings so every check sees the final
+    # times.
+    mint_placed_ids, mint_unplaced = place_granted_mint_rows(
+        proposal, assigned, anchored_blocks, optional_items
+    )
+    sequence = proposal.get("sequence") or []
+    for item in mint_unplaced:
         add_warning(
             {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
             affected_rows=[item["id"]],
@@ -2424,10 +2735,18 @@ def validate_sequence(
                             span_interval(wall_id, (w_start, w_end)),
                         ],
                     )
+                elif row_id in mint_placed_ids:
+                    # The deterministic Mint placement put this granted row
+                    # inside a FREE selected session on purpose, so the
+                    # overlap is the grant working, not a defect to
+                    # acknowledge. The cockpit's row note still names the Mint
+                    # partner ("Shares time with … May overlap Mint
+                    # (operator)"), so nothing is hidden.
+                    continue
                 elif row_id in granted_ids:
-                    # #18: an operator-granted row may overlap a selected Mint
-                    # session, but never silently — the overlap is always
-                    # reported as a soft named warning.
+                    # #18: a granted row that could NOT be placed in a free
+                    # session but still overlaps Mint is never silent — the
+                    # overlap is reported as a soft named warning.
                     add_warning(
                         {"id": row_id, "rule": "mint_overlap_granted",
                          "detail": f"{detail} — May overlap Mint (operator)"},
