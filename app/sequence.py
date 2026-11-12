@@ -1845,11 +1845,22 @@ def place_granted_mint_rows(
     still refused. The write lane retimes it because the grant is an
     authorization, not merely an overlap tolerance.
 
+    The pass is a FIXED POINT on its own output, because ``/sequence``'s
+    layout is revalidated before every commit: a granted row whose current
+    span sits FULLY inside a selected session run has ALREADY been placed
+    (exactly the geometry of ``mint_grant_covered_row_ids``), so it is exempt
+    from candidacy and its span counts as occupied for the rows still
+    competing. Candidacy order is the row's own start time, then id — never
+    the list index, because the pass re-sorts its own output chronologically
+    and the revalidation lane receives that re-sorted list. Running the pass
+    on its own output therefore returns the identical layout and warnings.
+
     Mutates ``proposal`` rows (and any overlap grant carrying their interval)
     in place and re-sorts the sequence chronologically, stably. Returns
-    ``(placed_ids, unplaced)`` where ``placed_ids`` are the rows the pass put
-    inside Mint and ``unplaced`` is one soft ``mint_grant_unplaced``
-    descriptor per granted row it could not place.
+    ``(placed_ids, unplaced)`` where ``placed_ids`` are the granted rows now
+    sitting inside Mint — both the ones this call moved and the ones an
+    earlier call had already seated — and ``unplaced`` is one soft
+    ``mint_grant_unplaced`` descriptor per granted row it could not place.
     """
     sequence = proposal.get("sequence") if isinstance(proposal, dict) else None
     if not isinstance(sequence, list):
@@ -1876,13 +1887,51 @@ def place_granted_mint_rows(
         if isinstance(block, dict) and _anchored_block_id(block) is not None
     }
 
-    # Candidacy: the granted rows this pass owns.
-    moving: list[tuple[int, dict[str, Any], int, int]] = []
-    for index, row in enumerate(sequence):
+    def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
+        return left[0] < right[1] and right[0] < left[1]
+
+    # Already placed: a granted row fully inside a selected session run keeps
+    # its slot. Re-placing it is what made an earlier pass non-idempotent (its
+    # own chronological re-sort then fed a different candidacy order back in,
+    # and two granted rows ended up in one session).
+    busy_spans = _busy_placement_spans(anchored_blocks)
+    covered_ids = mint_grant_covered_row_ids(granted_ids, sequence, items)
+    exempt_ids: set[str] = set()
+    owned_spans: list[tuple[int, int]] = []
+    for row in sorted(
+        (
+            row for row in sequence
+            if isinstance(row, dict) and not row.get("backdrop")
+            and str(row.get("id")) in covered_ids
+        ),
+        key=lambda row: (
+            _row_start_sort_key(row),
+            str(row.get("id") or "").casefold(),
+            str(row.get("id") or ""),
+        ),
+    ):
+        span = _row_span(row)
+        if span is None or span[1] <= span[0]:
+            continue
+        # An already-seated row holds its slot only while the slot is
+        # uncontested: a stale placement on top of busy time, or a second
+        # granted row sharing the session, is still this pass's to repair.
+        if any(_overlaps(span, busy) for busy in busy_spans):
+            continue
+        if any(_overlaps(span, owned) for owned in owned_spans):
+            continue
+        exempt_ids.add(str(row.get("id")))
+        owned_spans.append(span)
+
+    # Candidacy: the granted rows this pass owns, as (start, row, end).
+    moving: list[tuple[int, dict[str, Any], int]] = []
+    for row in sequence:
         if not isinstance(row, dict) or row.get("backdrop"):
             continue
         row_id = str(row.get("id"))
         if row_id not in granted_ids or row_id in session_ids:
+            continue
+        if row_id in exempt_ids:
             continue
         if row_id in anchored_ids or row.get("pinned") is True:
             continue
@@ -1893,35 +1942,37 @@ def place_granted_mint_rows(
         span = _row_span(row)
         if span is None or span[1] <= span[0]:
             continue
-        moving.append((index, row, span[0], span[1]))
+        moving.append((span[0], row, span[1]))
     if not moving:
-        return set(), []
+        # Nothing left to place. Already-seated rows are still reported as
+        # placed so the caller's warnings match the placing pass exactly.
+        return exempt_ids, []
 
-    moving_ids = {str(row.get("id")) for _index, row, _start, _end in moving}
-    obstacles = _busy_placement_spans(anchored_blocks)
+    moving_ids = {str(row.get("id")) for _start, row, _end in moving}
+    obstacles = list(busy_spans)
     for row in sequence:
         if not isinstance(row, dict) or row.get("backdrop"):
             continue
         row_id = str(row.get("id"))
         # The Mint sessions are the target space, not an obstacle; the moving
-        # rows are re-assigned from scratch.
+        # rows are re-assigned from scratch. An already-placed granted row is
+        # neither, so its span below occupies its session for everyone else.
         if row_id in session_ids or row_id in moving_ids:
             continue
         span = _row_span(row)
         if span and span[1] > span[0]:
             obstacles.append(span)
 
-    def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
-        return left[0] < right[1] and right[0] < left[1]
-
     available = [
         span for span in session_spans
         if not any(_overlaps(span, obstacle) for obstacle in obstacles)
     ]
 
-    placed_ids: set[str] = set()
+    placed_ids: set[str] = set(exempt_ids)
     unplaced: list[dict[str, str]] = []
-    for _index, row, old_start, old_end in sorted(
+    # Candidate order is (own start, id): a row's own start survives the
+    # pass's chronological re-sort, a list index does not.
+    for old_start, row, old_end in sorted(
         moving,
         key=lambda entry: (entry[0], str(entry[1].get("id") or "").casefold(),
                            str(entry[1].get("id") or "")),

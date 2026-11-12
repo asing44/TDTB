@@ -714,3 +714,135 @@ class TestSharedCoverageHelper:
         assert sequence_module.mint_grant_covered_row_ids(
             {"Errand"}, rows, [],
         ) == set()
+
+
+# ---------------------------------------------------------------------------
+# The pass is a FIXED POINT on its own output
+# ---------------------------------------------------------------------------
+#
+# /sequence's layout is revalidated before every commit, so the pass runs
+# again on its own output. It therefore must not move a granted row that is
+# already seated inside a selected session (same geometry as
+# ``mint_grant_covered_row_ids``), order its candidates by the row's own start
+# rather than a list index it rewrites, and never leave two granted rows in
+# one session.
+
+def _layout(proposal):
+    return [
+        (row["id"], row["start"], row["end"])
+        for row in proposal if isinstance(row, dict) and not row.get("backdrop")
+    ]
+
+
+def _warning_signature(result):
+    return [
+        (w.get("rule"), w.get("id"), w.get("detail")) for w in result.warnings
+    ]
+
+
+def _rows_in(proposal, start, end):
+    """Rows overlapping [start, end); canonical HH:MM compares lexically."""
+    return [
+        row["id"] for row in proposal
+        if isinstance(row, dict) and not row.get("backdrop")
+        and row["start"] < end and start < row["end"]
+    ]
+
+
+class TestGrantedPlacementIsIdempotent:
+    def test_one_session_two_grants_repeats_itself(self):
+        proposal = [
+            _seq_row("Alpha", "09:00", "09:30"),
+            _seq_row("Beta", "10:00", "10:30"),
+        ]
+        assigned = [
+            _assigned("Alpha", 1, may_overlap_mint=True),
+            _assigned("Beta", 1, may_overlap_mint=True),
+        ]
+        sessions = _sessions(("13:00", "13:30"))
+        first = _run(proposal, assigned=assigned, optional_items=sessions)
+        layout, warnings = _layout(proposal), _warning_signature(first)
+        assert layout == [
+            ("Beta", "10:00", "10:30"), ("Alpha", "13:00", "13:30"),
+        ]
+        assert _rows_in(proposal, "13:00", "13:30") == ["Alpha"]
+        second = _run(proposal, assigned=assigned, optional_items=sessions)
+        assert _layout(proposal) == layout
+        assert _warning_signature(second) == warnings
+        # Still exactly one row in the session, and the same one.
+        assert _rows_in(proposal, "13:00", "13:30") == ["Alpha"]
+        assert len(_unplaced_warnings(second)) == 1
+
+    def test_ample_sessions_repeat_themselves(self):
+        proposal = [
+            _seq_row("Alpha", "09:00", "09:30"),
+            _seq_row("Beta", "10:00", "10:30"),
+            _seq_row("Gamma", "11:00", "11:30"),
+        ]
+        assigned = [
+            _assigned("Alpha", 1, may_overlap_mint=True),
+            _assigned("Beta", 1, may_overlap_mint=True),
+            _assigned("Gamma", 1, may_overlap_mint=True),
+        ]
+        sessions = _sessions(
+            ("13:00", "13:30"), ("13:30", "14:00"), ("14:00", "14:30"),
+        )
+        first = _run(proposal, assigned=assigned, optional_items=sessions)
+        layout, warnings = _layout(proposal), _warning_signature(first)
+        assert layout == [
+            ("Alpha", "13:00", "13:30"),
+            ("Beta", "13:30", "14:00"),
+            ("Gamma", "14:00", "14:30"),
+        ]
+        assert warnings == []
+        second = _run(proposal, assigned=assigned, optional_items=sessions)
+        assert _layout(proposal) == layout
+        assert _warning_signature(second) == []
+
+    def test_ninety_and_thirty_competing_for_three_sessions_repeat(self):
+        proposal = [
+            _seq_row("Deep Work", "09:00", "10:30"),
+            _seq_row("Errand", "11:00", "11:30"),
+        ]
+        assigned = [
+            _assigned("Deep Work", 3, may_overlap_mint=True),
+            _assigned("Errand", 1, may_overlap_mint=True),
+        ]
+        sessions = _sessions(
+            ("13:00", "13:30"), ("13:30", "14:00"), ("14:00", "14:30"),
+        )
+        first = _run(proposal, assigned=assigned, optional_items=sessions)
+        layout, warnings = _layout(proposal), _warning_signature(first)
+        # The longer row wins the earliest run; the 30-minute row cannot fit.
+        assert layout == [
+            ("Errand", "11:00", "11:30"), ("Deep Work", "13:00", "14:30"),
+        ]
+        [first_unplaced] = _unplaced_warnings(first)
+        assert first_unplaced["id"] == "Errand"
+        second = _run(proposal, assigned=assigned, optional_items=sessions)
+        assert _layout(proposal) == layout
+        assert _warning_signature(second) == warnings
+        assert _rows_in(proposal, "13:00", "14:30") == ["Deep Work"]
+
+    def test_two_rows_already_sharing_a_session_are_separated(self):
+        # Bug residue from an earlier pass: two granted rows stacked in one
+        # session. The seat is won by the canonically first row; the other is
+        # re-placed into the free session and the second pass then holds.
+        proposal = [
+            _seq_row("Alpha", "13:00", "13:30"),
+            _seq_row("Beta", "13:00", "13:30"),
+        ]
+        assigned = [
+            _assigned("Alpha", 1, may_overlap_mint=True),
+            _assigned("Beta", 1, may_overlap_mint=True),
+        ]
+        sessions = _sessions(("13:00", "13:30"), ("13:30", "14:00"))
+        first = _run(proposal, assigned=assigned, optional_items=sessions)
+        layout, warnings = _layout(proposal), _warning_signature(first)
+        assert layout == [
+            ("Alpha", "13:00", "13:30"), ("Beta", "13:30", "14:00"),
+        ]
+        second = _run(proposal, assigned=assigned, optional_items=sessions)
+        assert _layout(proposal) == layout
+        assert _warning_signature(second) == warnings
+        assert _rows_in(proposal, "13:00", "13:30") == ["Alpha"]
