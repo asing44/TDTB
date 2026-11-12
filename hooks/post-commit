@@ -14,7 +14,11 @@
 # EVERY guard below must hold, otherwise the restart is skipped:
 #   1. stderr is a terminal      — an agent or scripted commit never fires it;
 #   2. no agent marker           — PI_CODING_AGENT, PI_SESSION_ID,
-#                                  CLAUDE_AGENT_SDK_VERSION, OPENCODE_*;
+#                                  CLAUDE_AGENT_SDK_VERSION. Ambient OPENCODE_*
+#                                  configuration knobs are NOT markers: this
+#                                  machine's ~/.zshenv and ~/.zshrc export them
+#                                  for every shell, so treating them as agent
+#                                  sessions would skip every commit;
 #   3. main checkout             — hooks are shared by every linked worktree
 #                                  (~30 of them); only the main checkout's own
 #                                  commits restart the live seat;
@@ -59,12 +63,6 @@ agent_marker() {
   # when the marker is unset, which would silently disable the guard.
   for name in PI_CODING_AGENT PI_SESSION_ID CLAUDE_AGENT_SDK_VERSION; do
     if [[ -n "${(P)name-}" ]]; then
-      print -- "$name"
-      return 0
-    fi
-  done
-  for name in ${(k)parameters}; do
-    if [[ "$name" == OPENCODE_* && -n "${(P)name-}" ]]; then
       print -- "$name"
       return 0
     fi

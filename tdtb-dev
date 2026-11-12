@@ -49,19 +49,14 @@ refuse() {
 
 # --- attended-only guards ---------------------------------------------------
 # The same marker set the post-commit restart hook skips on: an agent session
-# must never pause, bind, or restart the live seat.
+# must never pause, bind, or restart the live seat. Ambient OPENCODE_* knobs are
+# not markers (this machine's shell config exports them for every shell).
 agent_marker() {
   local name
   # `${(P)name-}` rather than `${(P)name}`: the latter aborts under `set -u`
   # when a marker is unset, which would silently disable the guard.
   for name in PI_CODING_AGENT PI_SESSION_ID CLAUDE_AGENT_SDK_VERSION; do
     if [[ -n "${(P)name-}" ]]; then
-      print -- "$name"
-      return 0
-    fi
-  done
-  for name in ${(k)parameters}; do
-    if [[ "$name" == OPENCODE_* && -n "${(P)name-}" ]]; then
       print -- "$name"
       return 0
     fi

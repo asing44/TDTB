@@ -124,9 +124,10 @@ stop_status_server() {
 
 # run_hook <cwd> <status-url> [extra env assignments...]
 #
-# `zsh -df` skips the startup files, so this machine's ~/.zshenv and ~/.zshrc
-# exports (each sets an OPENCODE_* knob) cannot make every run look like an
-# agent session. `env -i` clears the caller's own PI_*/OPENCODE_* markers.
+# `env -i` clears the caller's own PI_*/OPENCODE_* markers so each case tests
+# the guard it names. The startup files are deliberately NOT skipped: this
+# machine's ~/.zshenv exports an OPENCODE_* knob and the hook must not treat
+# that ambient configuration as an agent session.
 run_hook() {
   hook_cwd=$1
   hook_url=$2
@@ -140,7 +141,7 @@ run_hook() {
     TDTB_AUTORESTART_STATUS_URL="$hook_url" \
     TDTB_TEST_CWD="$hook_cwd" \
     "$@" \
-    /bin/zsh -df -c 'cd "$TDTB_TEST_CWD" && exec /bin/zsh -df "$0"' "$HOOK" 2>&1
+    /bin/zsh -c 'cd "$TDTB_TEST_CWD" && exec /bin/zsh "$0"' "$HOOK" 2>&1
 }
 
 DEAD_URL="http://127.0.0.1:9/commit/status"
@@ -155,8 +156,6 @@ check "linked worktree skips before any probe" "$output" "linked worktree"
 # --- 2-3. agent markers skip ------------------------------------------------
 output=$(run_hook "$MAIN" "$DEAD_URL" PI_CODING_AGENT=1)
 check "PI_CODING_AGENT skips" "$output" "agent session (PI_CODING_AGENT)"
-output=$(run_hook "$MAIN" "$DEAD_URL" OPENCODE_TEST_MARKER=1)
-check "OPENCODE_* skips" "$output" "agent session (OPENCODE_TEST_MARKER)"
 output=$(run_hook "$MAIN" "$DEAD_URL" CLAUDE_AGENT_SDK_VERSION=9.9.9)
 check "CLAUDE_AGENT_SDK_VERSION skips" "$output" "agent session (CLAUDE_AGENT_SDK_VERSION)"
 
@@ -203,6 +202,35 @@ if start_status_server "$IDLE_JSON"; then
   stop_status_server
 else
   bad "could not start the idle status stub server"
+fi
+
+# --- 7b. ambient OPENCODE_* knobs are NOT agent markers ----------------------
+# ~/.zshenv exports OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 and ~/.zshrc exports
+# two more for every shell on this machine. Treating them as agent sessions
+# would skip every commit, so with all other guards satisfied the restart must
+# still be scheduled and run.
+if start_status_server "$IDLE_JSON"; then
+  output=$(run_hook "$MAIN" "$STATUS_URL" \
+    OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 \
+    OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true \
+    OPENCODE_ENABLE_EXA=1)
+  check "ambient OPENCODE_* does not skip" "$output" "scheduled"
+  case "$output" in
+    (*"agent session"*) bad "ambient OPENCODE_* must not read as an agent session" ;;
+    (*) ok "ambient OPENCODE_* is not an agent marker" ;;
+  esac
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do
+    [ -f "$FIRED" ] && break
+    sleep 0.1
+  done
+  if [ -f "$FIRED" ]; then
+    ok "the stub restart ran with ambient OPENCODE_* set"
+  else
+    bad "the stub restart did not run with ambient OPENCODE_* set (log: $(cat "$LOG" 2>/dev/null))"
+  fi
+  stop_status_server
+else
+  bad "could not start the idle status stub server for the OPENCODE case"
 fi
 
 # --- 8. a commit that misses app/ and frontend/ skips -----------------------
