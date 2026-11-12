@@ -41,19 +41,30 @@ CAL_IDS = {"⬜ Blocks": "cal-blocks-1"}
 # ---------------------------------------------------------------------------
 
 class FakeTodoist:
-    """In-memory Todoist. Tasks are dicts with id/content/due; create/reschedule
-    mutate the store, get_task/get_filter_tasks read it back."""
+    """In-memory Todoist. Tasks are dicts with id/content/due/duration;
+    create/reschedule mutate the store, get_task/get_filter_tasks read it
+    back. ``update_calls`` records the fields each retime actually emitted, so
+    tests can prove the due and the planned length travel in ONE call."""
 
     def __init__(self, tasks: list[dict] | None = None):
         self._tasks: dict[str, dict] = {t["id"]: t for t in (tasks or [])}
         self._seq = 1000
         self.created_calls = 0
+        self.update_calls: list[dict] = []
 
     def get_filter_tasks(self, filter_id_or_query, limit=None):
         return list(self._tasks.values())
 
     def get_task(self, task_id):
         return self._tasks[task_id]
+
+    def _land_duration(self, task_id, duration, duration_unit):
+        """Model the provider: a sent length replaces the stored one, an
+        omitted length leaves the task's existing duration alone."""
+        if duration is None:
+            return
+        self._tasks[task_id]["duration"] = {
+            "amount": duration, "unit": duration_unit or "minute"}
 
     def create_task(self, content, project_id=None, due_string=None,
                     duration=None, duration_unit=None, **_):
@@ -66,15 +77,31 @@ class FakeTodoist:
                {"date": TODAY.isoformat()} if due_string == "today" else None)
         self._tasks[tid] = {"id": tid, "content": content, "due": due,
                             "project_id": project_id}
+        self._land_duration(tid, duration, duration_unit)
         self.created_calls += 1
         return self._tasks[tid]
 
-    def reschedule_task(self, task_id, due_string):
+    def reschedule_task(self, task_id, due_string, **fields):
+        self.update_calls.append(
+            {"task_id": task_id, "due_string": due_string, **fields})
         hhmm = due_string.split("at ", 1)[1].strip() if "at " in due_string else None
         if hhmm:
             self._tasks[task_id]["due"] = {"date":f"{TODAY.isoformat()}T{hhmm}:00"}
         elif due_string == "today":
             self._tasks[task_id]["due"] = {"date": TODAY.isoformat()}
+        self._land_duration(task_id, fields.get("duration"),
+                            fields.get("duration_unit"))
+        return self._tasks[task_id]
+
+    def reschedule_task_datetime(self, task_id, due_datetime, **fields):
+        # The datetime form preserves an existing recurrence marker (T27).
+        self.update_calls.append(
+            {"task_id": task_id, "due_datetime": due_datetime, **fields})
+        was_recurring = bool((self._tasks[task_id].get("due") or {}).get("is_recurring"))
+        self._tasks[task_id]["due"] = {
+            "date": due_datetime, "is_recurring": was_recurring}
+        self._land_duration(task_id, fields.get("duration"),
+                            fields.get("duration_unit"))
         return self._tasks[task_id]
 
 
@@ -331,14 +358,151 @@ class TestWriteTodoist:
                                "due": {"date":f"{TODAY}T08:00:00"}}
 
         class NoOpReschedule(FakeTodoist):
-            def reschedule_task(self, task_id, due_string):
+            def reschedule_task(self, task_id, due_string, **fields):
                 return self._tasks[task_id]  # ignores the retime
 
-        client2 = NoOpReschedule()
-        client2._tasks["t1"] = {"id": "t1", "content": "Garage",
+        client = NoOpReschedule()
+        client._tasks["t1"] = {"id": "t1", "content": "Garage",
                                 "due": {"date":f"{TODAY}T08:00:00"}}
-        r = commit.write_todoist(intents, client2)
+        r = commit.write_todoist(intents, client)
         assert not r.ok and "due mismatch" in r.error
+
+
+# ---------------------------------------------------------------------------
+# UPDATE-path duration — a retime must carry the planned length, not only the
+# due. Confirmed live bug: a 90-min plan retimed "Packing" to 20:30 while
+# Todoist kept the task's old duration, so the calendar block stayed wrong
+# even though the due verified clean (reconciliation checked time only).
+# ---------------------------------------------------------------------------
+
+class TestUpdateCarriesPlannedDuration:
+    def _live(self, duration=None):
+        task = {"id": "t42", "content": "Packing",
+                "due": {"date": f"{TODAY.isoformat()}T20:00:00"}}
+        if duration is not None:
+            task["duration"] = duration
+        return task
+
+    def test_update_sends_due_and_duration_in_one_call(self):
+        client = FakeTodoist([self._live({"amount": 30, "unit": "minute"})])
+        intents = [commit.WriteIntent(
+            "A", "todoist", "update", "Packing", task_id="t42",
+            due_time="20:30", duration_min=90)]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok, result.error
+        # ONE provider call carrying both the due and the planned length
+        assert len(client.update_calls) == 1
+        [call] = client.update_calls
+        assert call["due_string"] == "today at 20:30"
+        assert call["duration"] == 90
+        assert call["duration_unit"] == "minute"
+        live = client.get_task("t42")
+        assert live["duration"] == {"amount": 90, "unit": "minute"}
+        assert commit._todoist_due_hhmm(live) == "20:30"
+
+    def test_update_without_planned_duration_sends_no_duration(self):
+        client = FakeTodoist([self._live({"amount": 45, "unit": "minute"})])
+        intents = [commit.WriteIntent(
+            "A", "todoist", "update", "Packing", task_id="t42",
+            due_time="20:30")]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok, result.error
+        [call] = client.update_calls
+        assert "duration" not in call and "duration_unit" not in call
+        # an omitted duration leaves the task's own length untouched
+        assert client.get_task("t42")["duration"] == {"amount": 45, "unit": "minute"}
+
+    def test_recurring_datetime_update_carries_duration(self):
+        client = FakeTodoist([{
+            "id": "t42", "content": "Upper",
+            "due": {"date": f"{TODAY.isoformat()}T11:00:00",
+                    "is_recurring": True}}])
+        intents = [commit.WriteIntent(
+            "A", "todoist", "update", "Upper", task_id="t42",
+            due_time="09:00", duration_min=30, is_recurring=True,
+            due_datetime=f"{TODAY.isoformat()}T09:00:00")]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok, result.error
+        [call] = client.update_calls
+        assert call["due_datetime"] == f"{TODAY.isoformat()}T09:00:00"
+        assert call["duration"] == 30 and call["duration_unit"] == "minute"
+        live = client.get_task("t42")
+        assert live["duration"] == {"amount": 30, "unit": "minute"}
+        assert live["due"]["is_recurring"] is True
+
+    def test_readback_duration_mismatch_fails_reconciliation(self):
+        class DurationDropping(FakeTodoist):
+            """Provider accepts the retime but keeps the old length."""
+
+            def reschedule_task(self, task_id, due_string, **fields):
+                landed = dict(fields)
+                landed.pop("duration", None)
+                landed.pop("duration_unit", None)
+                return super().reschedule_task(task_id, due_string, **landed)
+
+        client = DurationDropping([self._live({"amount": 30, "unit": "minute"})])
+        intents = [commit.WriteIntent(
+            "A", "todoist", "update", "Packing", task_id="t42",
+            due_time="20:30", duration_min=90)]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok is False
+        assert "duration mismatch" in (result.error or "")
+        assert any("duration mismatch" in f for f in result.verify_failures)
+        # the due itself landed clean — only the length is reported
+        assert commit._todoist_due_hhmm(client.get_task("t42")) == "20:30"
+
+    def test_readback_missing_duration_fails_when_plan_has_one(self):
+        class DurationIgnoring(FakeTodoist):
+            def reschedule_task(self, task_id, due_string, **fields):
+                landed = dict(fields)
+                landed.pop("duration", None)
+                landed.pop("duration_unit", None)
+                return super().reschedule_task(task_id, due_string, **landed)
+
+        client = DurationIgnoring([self._live(None)])
+        client._tasks["t42"]["duration"] = None  # provider reports "no length"
+        intents = [commit.WriteIntent(
+            "A", "todoist", "update", "Packing", task_id="t42",
+            due_time="20:30", duration_min=90)]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok is False
+        assert any("duration mismatch" in f for f in result.verify_failures)
+        assert "live none" in (result.error or "")
+
+    def test_noop_rows_do_not_assert_duration(self):
+        # The planned length is asserted for writes only: an already-scheduled
+        # row keeps whatever length its source owns.
+        client = FakeTodoist([self._live({"amount": 30, "unit": "minute"})])
+        intents = [commit.WriteIntent(
+            "A", "todoist", "noop", "Packing", task_id="t42",
+            due_time="20:00", duration_min=90)]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok, result.error
+        assert client.update_calls == []
+
+    def test_create_path_still_sends_duration(self):
+        client = FakeTodoist()
+        intents = [commit.WriteIntent("A", "todoist", "create", "Garage",
+                                      project_id="P", due_time="09:00",
+                                      duration_min=60)]
+
+        result = commit.write_todoist(intents, client)
+
+        assert result.ok, result.error
+        assert client.get_task(result.created[0])["duration"] == {
+            "amount": 60, "unit": "minute"}
 
 
 # ---------------------------------------------------------------------------
@@ -659,15 +823,15 @@ class RecurrenceFakeTodoist(FakeTodoist):
         self.due_string_calls = 0
         self._date_only_left = date_only_first_n
 
-    def reschedule_task(self, task_id, due_string):
+    def reschedule_task(self, task_id, due_string, **fields):
         self.due_string_calls += 1
-        t = super().reschedule_task(task_id, due_string)
+        t = super().reschedule_task(task_id, due_string, **fields)
         due = t.get("due")
         if due:
             due["is_recurring"] = False  # due_string wipes recurrence
         return t
 
-    def reschedule_task_datetime(self, task_id, due_datetime):
+    def reschedule_task_datetime(self, task_id, due_datetime, **fields):
         self.datetime_calls += 1
         was_recurring = bool((self._tasks[task_id].get("due") or {}).get("is_recurring"))
         if self._date_only_left > 0:
@@ -676,6 +840,8 @@ class RecurrenceFakeTodoist(FakeTodoist):
         else:
             landed = due_datetime
         self._tasks[task_id]["due"] = {"date": landed, "is_recurring": was_recurring}
+        self._land_duration(task_id, fields.get("duration"),
+                            fields.get("duration_unit"))
         return self._tasks[task_id]
 
 
@@ -888,8 +1054,9 @@ class TestNativeProtectionWriteBoundary:
         # Contract: a timed recurrence retime is successful only when both the
         # canonical local time and recurrence marker read back intact.
         class MissingRecurrence(RecurrenceFakeTodoist):
-            def reschedule_task_datetime(self, task_id, due_datetime):
-                result = super().reschedule_task_datetime(task_id, due_datetime)
+            def reschedule_task_datetime(self, task_id, due_datetime, **fields):
+                result = super().reschedule_task_datetime(
+                    task_id, due_datetime, **fields)
                 result["due"].pop("is_recurring", None)
                 return result
 
@@ -911,7 +1078,7 @@ class TestNativeProtectionWriteBoundary:
     def test_recurring_readback_missing_time_is_not_success(self):
         # Contract: a provider response without a comparable time fails closed.
         class MissingTime(RecurrenceFakeTodoist):
-            def reschedule_task_datetime(self, task_id, due_datetime):
+            def reschedule_task_datetime(self, task_id, due_datetime, **fields):
                 self.datetime_calls += 1
                 self._tasks[task_id]["due"] = {"is_recurring": True}
                 return self._tasks[task_id]
