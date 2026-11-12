@@ -63,9 +63,18 @@ Todoist, Calendar, or other source state from a scratch walkthrough.
 
 Restarting `:8746` is an attended deployment action. It is allowed only when
 the `tdtb-continue` standing decision makes backend/frontend version skew the
-reason, never during a commit, and must be followed by GET-only proof of the
-expected contract. Any live source write, billed judgment call, commit, or
-machine-local projection change has its own explicit approval boundary.
+reason, or through the operator post-commit hook below; never while a plan
+commit (`POST /commit`) is in flight; and must be followed by GET-only proof
+of the expected contract. Any live source write, billed judgment call, commit,
+or machine-local projection change has its own explicit approval boundary.
+
+The operator post-commit hook (`hooks/post-commit`) runs `restart-live.sh` in
+the background only when every guard holds: the commit is on `main` in the
+main checkout; it touches `app/` or `frontend/`; stderr is a terminal; no
+agent marker (`PI_CODING_AGENT`, `PI_SESSION_ID`, `CLAUDE_AGENT_SDK_VERSION`)
+is set; and no plan commit is in flight. It logs the restart and health result
+to `~/Library/Logs/tdtb-autorestart.log`. Agents must not install, invoke, or
+bypass the hook, and must not run `tdtb-dev`.
 
 If host-port visibility is unavailable, report server state as unknown and
 apply LIVE rules. Preserve concurrent work; do not restart, kill, or repair a
