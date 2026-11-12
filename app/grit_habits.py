@@ -62,6 +62,13 @@ through the same strict parser as a live one.
 
 The module is pure local-state Python: no route, no server, no credential, and
 no network. It never mutates Grit.
+
+A **plan read** (``/plan-inputs`` and the capacity segment) is cache-only and
+never spawns the Shortcut: :func:`needs_refresh` tells it when the cached read
+is missing, from an earlier logical day, or older than
+:data:`CACHE_MAX_AGE_S`, and the caller kicks ONE detached :func:`refresh`
+while serving what it has. :func:`failed_since_cache` is how a caller labels a
+cached read that a later failed refresh attempt could not improve.
 """
 from __future__ import annotations
 
@@ -145,9 +152,21 @@ GRIT_READ_FAILED = (
 )
 GRIT_UNCONFIGURED = "Grit habits without minutes — using the default habit minutes"
 
+#: What an unconfigured Grit habit costs: the habit exists in Grit, the owner
+#: has saved no duration for it. Deliberately a module constant rather than the
+#: legacy ``habits.fallback_minutes_per_habit`` config (4): that knob tunes the
+#: Todoist path's per-habit fallback, and the Grit path owns its own default
+#: instead of silently inheriting a number chosen for another source.
+GRIT_UNCONFIGURED_MINUTES = 15
+
 #: A concurrent caller that arrives within this window of a completed refresh
 #: reuses that result instead of running the Shortcut a second time.
 SINGLE_FLIGHT_WINDOW_S = 5.0
+
+#: How old a stored cache may be before a plan read kicks a background refresh.
+#: A plan read never runs the Shortcut itself: past this age it serves the
+#: cached read it has and asks for a detach-refresh.
+CACHE_MAX_AGE_S = 600.0
 
 
 class GritFormatError(Exception):
@@ -430,8 +449,13 @@ def lock_path() -> Path:
 
 Runner = Callable[..., RunResult]
 
-#: Process-local single-flight record: ``(monotonic_ts, logical_day, read)``.
+#: Process-local single-flight record: ``(wall_ts, logical_day, read)``.
 _RECENT_SUCCESS: tuple[float, str, GritRead] | None = None
+
+#: Process-local record of the last FAILED refresh: ``(wall_ts, logical_day)``.
+#: It is how a plan read tells "today's read is simply old" from "today's
+#: refresh already failed after this cache was stored" (``GRIT_READ_STALE``).
+_LAST_FAILURE: tuple[float, str] | None = None
 
 
 def _now() -> datetime.datetime:
@@ -605,6 +629,53 @@ def read_today(now: datetime.datetime | None = None) -> TodayRead:
     return TodayRead(cache.habits, False, REASON_OK)
 
 
+def cache_age_seconds(now: datetime.datetime | None = None) -> float | None:
+    """Seconds since the stored cache was written, or ``None`` when absent.
+
+    The cache file's own ``mtime`` is the local write time of the read, which
+    is the only clock a plan read may use: ``generated_at`` is the Shortcut's
+    own timestamp and is not guaranteed to describe this machine's now.
+    """
+    moment = _now() if now is None else now
+    try:
+        mtime = cache_path().stat().st_mtime
+    except OSError:
+        return None
+    return max(0.0, moment.timestamp() - mtime)
+
+
+def needs_refresh(now: datetime.datetime | None = None) -> bool:
+    """Whether a plan read should ask for ONE detached refresh.
+
+    True when no cache is usable for the current logical day (missing, or an
+    earlier day's read) or when the stored cache is older than
+    :data:`CACHE_MAX_AGE_S`. The caller serves the cache regardless and must
+    never block on the refresh itself.
+    """
+    moment = _now() if now is None else now
+    if read_today(moment).habits is None:
+        return True
+    age = cache_age_seconds(moment)
+    return age is None or age > CACHE_MAX_AGE_S
+
+
+def failed_since_cache(now: datetime.datetime | None = None) -> bool:
+    """True when today's refresh attempt failed AFTER the cache was stored.
+
+    That is the only case where serving the cached read needs the
+    ``GRIT_READ_STALE`` label: an older failure the cache has since outlived is
+    history, and a failure with no cache at all is the caller's harder step.
+    """
+    moment = _now() if now is None else now
+    failure = _LAST_FAILURE
+    if failure is None or failure[1] != _logical_day(moment):
+        return False
+    age = cache_age_seconds(moment)
+    if age is None:
+        return False
+    return failure[0] > (moment.timestamp() - age)
+
+
 # ---------------------------------------------------------------------------
 # Single-flight refresh
 # ---------------------------------------------------------------------------
@@ -622,7 +693,7 @@ def refresh(
     same-day refresh reuses that result rather than running the Shortcut again.
     A failed read never touches the stored cache.
     """
-    global _RECENT_SUCCESS
+    global _RECENT_SUCCESS, _LAST_FAILURE
     moment = _now() if now is None else now
     today = _logical_day(moment)
     with capacities_cache_io.store_lock(cache_path()):
@@ -639,6 +710,8 @@ def refresh(
             if result.ok:
                 _store_cache_locked(result, moment)
                 _RECENT_SUCCESS = (moment.timestamp(), today, result)
+            else:
+                _LAST_FAILURE = (moment.timestamp(), today)
             return result
         finally:
             capacities_cache_io.release_lock_file(handle)
