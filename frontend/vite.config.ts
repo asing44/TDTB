@@ -41,8 +41,14 @@ const API_PREFIXES = [
   "/runtime-batches",
 ];
 
-const DEV_BACKEND = "http://127.0.0.1:8746";
-const DEV_PORT = 5273;
+const DEV_PORT = Number(process.env.TDTB_DEV_PORT ?? "") || 5273;
+// The backend port `tdtb-dev` binds (TDTB_PORT there, default 8746), so a dev
+// loop on a non-default port still proxies to the right place. An unparseable
+// value falls back to the default rather than producing a broken target.
+const BACKEND_PORT = /^\d+$/.test(process.env.TDTB_PORT ?? "")
+  ? process.env.TDTB_PORT
+  : "8746";
+const DEV_BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 
 export default defineConfig(({ command, mode }) => {
   // `vite dev` runs in "development" mode, so `mode !== "production"` makes a

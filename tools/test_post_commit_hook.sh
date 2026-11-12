@@ -20,6 +20,7 @@ HOOK="$REPO_ROOT/hooks/post-commit"
 WORK=$(mktemp -d)
 LOG="$WORK/autorestart.log"
 LOCK="$WORK/autorestart.lock"
+DEV_PID_FILE="$WORK/tdtb-dev.pid"
 FIRED="$WORK/fired"
 SERVER_PID=""
 FAILURES=0
@@ -80,6 +81,29 @@ echo "y = 2" > "$ROOT_REPO/app/y.py"
 git -C "$ROOT_REPO" add -A
 git -C "$ROOT_REPO" -c user.email=t@example.com -c user.name=t commit -qm "only commit"
 
+# A repo whose HEAD is a --no-ff merge commit. `git diff-tree -r HEAD` reports
+# nothing for a merge, so this shape is the regression the first-parent diff
+# exists for. $2 is the path the merged side branch adds.
+make_merge_repo() { # $1 path, $2 side path
+  git init -q -b main "$1"
+  mkdir -p "$1/docs"
+  echo seed > "$1/docs/readme.md"
+  git -C "$1" add -A
+  git -C "$1" -c user.email=t@example.com -c user.name=t commit -qm "seed"
+  git -C "$1" checkout -q -b side
+  mkdir -p "$(dirname "$1/$2")"
+  echo side > "$1/$2"
+  git -C "$1" add -A
+  git -C "$1" -c user.email=t@example.com -c user.name=t commit -qm "side change"
+  git -C "$1" checkout -q main
+  git -C "$1" -c user.email=t@example.com -c user.name=t merge -q --no-ff -m "merge side" side
+}
+
+MERGE_APP="$WORK/merge-app"
+make_merge_repo "$MERGE_APP" "app/merged.py"
+MERGE_DOCS="$WORK/merge-docs"
+make_merge_repo "$MERGE_DOCS" "docs/merged.md"
+
 start_status_server() { # $1 raw response body -> STATUS_URL
   STATUS_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
   cat > "$WORK/status_server.py" <<'PY'
@@ -139,9 +163,23 @@ run_hook() {
     TDTB_AUTORESTART_LOG="$LOG" \
     TDTB_AUTORESTART_LOCK="$LOCK" \
     TDTB_AUTORESTART_STATUS_URL="$hook_url" \
+    TDTB_AUTORESTART_DEV_PID_FILE="$DEV_PID_FILE" \
     TDTB_TEST_CWD="$hook_cwd" \
     "$@" \
     /bin/zsh -c 'cd "$TDTB_TEST_CWD" && exec /bin/zsh "$0"' "$HOOK" 2>&1
+}
+
+# wait_fired <description> — the detached restart is asynchronous.
+wait_fired() {
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do
+    [ -f "$FIRED" ] && break
+    sleep 0.1
+  done
+  if [ -f "$FIRED" ]; then
+    ok "$1"
+  else
+    bad "$1 (log: $(cat "$LOG" 2>/dev/null))"
+  fi
 }
 
 DEAD_URL="http://127.0.0.1:9/commit/status"
@@ -153,11 +191,34 @@ output=$(run_hook "$LINKED" "$DEAD_URL")
 check "linked worktree skips before any probe" "$output" "linked worktree"
 [ -f "$FIRED" ] && bad "linked worktree must not restart" || ok "linked worktree ran no restart"
 
-# --- 2-3. agent markers skip ------------------------------------------------
+# --- 2. agent markers skip --------------------------------------------------
 output=$(run_hook "$MAIN" "$DEAD_URL" PI_CODING_AGENT=1)
 check "PI_CODING_AGENT skips" "$output" "agent session (PI_CODING_AGENT)"
 output=$(run_hook "$MAIN" "$DEAD_URL" CLAUDE_AGENT_SDK_VERSION=9.9.9)
 check "CLAUDE_AGENT_SDK_VERSION skips" "$output" "agent session (CLAUDE_AGENT_SDK_VERSION)"
+
+# --- 3. a tdtb-dev session skips --------------------------------------------
+output=$(run_hook "$MAIN" "$DEAD_URL" TDTB_DEV=1)
+check "TDTB_DEV=1 skips" "$output" "tdtb-dev session active (TDTB_DEV is set)"
+
+printf '%s\n' "$$" > "$DEV_PID_FILE" # this test script is a live pid
+output=$(run_hook "$MAIN" "$DEAD_URL")
+check "a live dev pid file skips" "$output" "tdtb-dev session active (pid $$"
+rm -f "$DEV_PID_FILE"
+
+sleep 0.1 &
+dead_pid=$!
+wait "$dead_pid" 2>/dev/null
+printf '%s\n' "$dead_pid" > "$DEV_PID_FILE" # stale: that pid is gone
+if start_status_server "$IDLE_JSON"; then
+  output=$(run_hook "$MAIN" "$STATUS_URL")
+  check "a stale dev pid file is ignored" "$output" "scheduled"
+  wait_fired "a stale dev pid file still runs the restart"
+  stop_status_server
+  rm -f "$DEV_PID_FILE"
+else
+  bad "could not start the idle status stub server for the stale pid case"
+fi
 
 # --- 4. unreachable commit status fails closed ------------------------------
 output=$(run_hook "$MAIN" "$DEAD_URL")
@@ -187,15 +248,7 @@ fi
 if start_status_server "$IDLE_JSON"; then
   output=$(run_hook "$MAIN" "$STATUS_URL")
   check "idle commit status schedules the restart" "$output" "scheduled"
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do
-    [ -f "$FIRED" ] && break
-    sleep 0.1
-  done
-  if [ -f "$FIRED" ]; then
-    ok "the stub restart ran"
-  else
-    bad "the stub restart did not run (log: $(cat "$LOG" 2>/dev/null))"
-  fi
+  wait_fired "the stub restart ran"
   check "the log records the run" "$(cat "$LOG" 2>/dev/null)" "auto-restart after"
   check "the log records the exit status" "$(cat "$LOG" 2>/dev/null)" "exit 0"
   [ -d "$LOCK" ] && bad "the auto-restart lock was not released" || ok "the auto-restart lock was released"
@@ -204,7 +257,7 @@ else
   bad "could not start the idle status stub server"
 fi
 
-# --- 7b. ambient OPENCODE_* knobs are NOT agent markers ----------------------
+# --- 8. ambient OPENCODE_* knobs are NOT agent markers ----------------------
 # ~/.zshenv exports OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 and ~/.zshrc exports
 # two more for every shell on this machine. Treating them as agent sessions
 # would skip every commit, so with all other guards satisfied the restart must
@@ -219,21 +272,30 @@ if start_status_server "$IDLE_JSON"; then
     (*"agent session"*) bad "ambient OPENCODE_* must not read as an agent session" ;;
     (*) ok "ambient OPENCODE_* is not an agent marker" ;;
   esac
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do
-    [ -f "$FIRED" ] && break
-    sleep 0.1
-  done
-  if [ -f "$FIRED" ]; then
-    ok "the stub restart ran with ambient OPENCODE_* set"
-  else
-    bad "the stub restart did not run with ambient OPENCODE_* set (log: $(cat "$LOG" 2>/dev/null))"
-  fi
+  wait_fired "the stub restart ran with ambient OPENCODE_* set"
   stop_status_server
 else
   bad "could not start the idle status stub server for the OPENCODE case"
 fi
 
-# --- 8. a commit that misses app/ and frontend/ skips -----------------------
+# --- 9. a --no-ff merge onto main still counts as an app change -------------
+# `git diff-tree -r HEAD` reports NOTHING for a merge commit, which is why the
+# hook compares HEAD^ HEAD instead. This case is that regression.
+if start_status_server "$IDLE_JSON"; then
+  output=$(run_hook "$MERGE_APP" "$STATUS_URL")
+  check "a --no-ff merge touching app/ schedules the restart" "$output" "scheduled"
+  wait_fired "a --no-ff merge touching app/ ran the restart"
+  stop_status_server
+else
+  bad "could not start the idle status stub server for the merge case"
+fi
+
+# --- 10. a merge that brings in nothing under app/ or frontend/ skips -------
+output=$(run_hook "$MERGE_DOCS" "$DEAD_URL")
+check "a --no-ff merge touching only docs/ skips" "$output" "does not touch app/ or frontend/"
+[ -f "$FIRED" ] && bad "a docs-only merge must not restart" || ok "a docs-only merge ran no restart"
+
+# --- 11. a commit that misses app/ and frontend/ skips ----------------------
 echo more >> "$MAIN/docs/readme.md"
 git -C "$MAIN" add -A
 git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -qm "docs only"
@@ -241,13 +303,13 @@ output=$(run_hook "$MAIN" "$DEAD_URL")
 check "a commit outside app/ and frontend/ skips" "$output" "does not touch app/ or frontend/"
 [ -f "$FIRED" ] && bad "a docs-only commit must not restart" || ok "a docs-only commit ran no restart"
 
-# --- 9. a branch other than main skips --------------------------------------
+# --- 12. a branch other than main skips -------------------------------------
 git -C "$MAIN" checkout -q -b feature
 output=$(run_hook "$MAIN" "$DEAD_URL")
 check "a non-main branch skips" "$output" "branch feature is not main"
 git -C "$MAIN" checkout -q main
 
-# --- 10. a root commit skips ------------------------------------------------
+# --- 13. a root commit skips ------------------------------------------------
 output=$(run_hook "$ROOT_REPO" "$DEAD_URL")
 check "a root commit skips" "$output" "root commit"
 

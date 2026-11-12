@@ -19,18 +19,23 @@
 #                                  machine's ~/.zshenv and ~/.zshrc export them
 #                                  for every shell, so treating them as agent
 #                                  sessions would skip every commit;
-#   3. main checkout             — hooks are shared by every linked worktree
+#   3. no tdtb-dev session     — TDTB_DEV is set, or the dev loop's pid file
+#                                  names a live process. tdtb-dev binds :8746
+#                                  itself and restores live on exit, so a
+#                                  commit landing mid-session must not fight it;
+#   4. main checkout             — hooks are shared by every linked worktree
 #                                  (~30 of them); only the main checkout's own
 #                                  commits restart the live seat;
-#   4. branch is `main`          — worktree/topic branches never restart it;
-#   5. non-root commit;
-#   6. the commit touches app/ or frontend/;
-#   7. no plan commit in flight  — GET /commit/status must say in_flight false.
+#   5. branch is `main`          — worktree/topic branches never restart it;
+#   6. non-root commit;
+#   7. the commit touches app/ or frontend/ (first-parent diff, so a --no-ff
+#                                  merge onto main counts);
+#   8. no plan commit in flight  — GET /commit/status must say in_flight false.
 #                                  Fail closed: an unreachable, unparseable, or
 #                                  non-false answer also skips. Until the live
 #                                  app is restarted onto the code that serves
 #                                  that route, it 404s and every commit skips;
-#   8. no concurrent auto-restart (mkdir lock with stale cleanup).
+#   9. no concurrent auto-restart (mkdir lock with stale cleanup).
 #
 # Log: ~/Library/Logs/tdtb-autorestart.log — one timestamped block per run with
 # restart-live.sh's full output and its final exit status.
@@ -41,6 +46,7 @@
 #   TDTB_AUTORESTART_STATUS_URL  — commit-status URL to probe
 #   TDTB_AUTORESTART_LOG         — log path
 #   TDTB_AUTORESTART_LOCK        — lock directory
+#   TDTB_AUTORESTART_DEV_PID_FILE — the dev loop's pid file
 
 set -u
 setopt pipefail
@@ -48,6 +54,7 @@ setopt pipefail
 readonly LOG="${TDTB_AUTORESTART_LOG:-$HOME/Library/Logs/tdtb-autorestart.log}"
 readonly LOCK="${TDTB_AUTORESTART_LOCK:-$HOME/Library/Logs/tdtb-autorestart.lock}"
 readonly STATUS_URL="${TDTB_AUTORESTART_STATUS_URL:-http://127.0.0.1:8746/commit/status}"
+readonly DEV_PID_FILE="${TDTB_AUTORESTART_DEV_PID_FILE:-$HOME/Library/Caches/tdtb-dev.pid}"
 readonly LOCK_STALE_MINUTES=30
 
 # One short stderr line, then a successful exit: a hook must never break a
@@ -76,7 +83,22 @@ if marker="$(agent_marker)"; then
   skip "agent session ($marker)"
 fi
 
-# --- 3. main checkout only ---------------------------------------------------
+# --- 3. no attended tdtb-dev session ---------------------------------------
+# tdtb-dev boots the launchd job out, binds :8746 itself, and restores live on
+# exit, so a commit made during a session must not race it. The env marker
+# covers the dev loop's own children; the pid file covers any commit typed in
+# ANOTHER terminal, since the operator's other shells never see TDTB_DEV. A
+# stale pid file (dead pid, or a pid reused by an unrelated process) is ignored.
+[[ -n "${TDTB_DEV-}" ]] && skip "tdtb-dev session active (TDTB_DEV is set)"
+if [[ -f "$DEV_PID_FILE" ]]; then
+  dev_pid="$(<"$DEV_PID_FILE")"
+  dev_pid="${dev_pid//[^0-9]/}"
+  if [[ -n "$dev_pid" ]] && kill -0 "$dev_pid" 2>/dev/null; then
+    skip "tdtb-dev session active (pid $dev_pid from $DEV_PID_FILE)"
+  fi
+fi
+
+# --- 4. main checkout only ---------------------------------------------------
 # `--git-common-dir` points at the MAIN checkout's .git even inside a linked
 # worktree, so this comparison is exactly "am I in the main checkout?".
 common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
@@ -87,14 +109,19 @@ main_root="${common:h}"
 [[ "${toplevel:A}" == "${main_root:A}" ]] \
   || skip "linked worktree ($toplevel) — only the main checkout auto-restarts"
 
-# --- 4-5. main branch, non-root commit --------------------------------------
+# --- 5-6. main branch, non-root commit --------------------------------------
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || skip "no current branch"
 [[ "$branch" == "main" ]] || skip "branch $branch is not main"
 git rev-parse --verify -q HEAD^ >/dev/null || skip "root commit (no parent to diff against)"
 
-# --- 6. the commit must touch app/ or frontend/ -----------------------------
+# --- 7. the commit must touch app/ or frontend/ -----------------------------
+# First-parent diff rather than `git diff-tree -r HEAD`: diff-tree reports
+# NOTHING for a merge commit (it has to be asked about the merge's parents),
+# so every --no-ff merge landing on main would have been skipped. `HEAD^ HEAD`
+# is the merge's first-parent diff — exactly what the merge brought in — and is
+# the ordinary single-parent diff for a normal commit.
 touched=0
-for changed in "${(@f)$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)}"; do
+for changed in "${(@f)$(git diff --name-only HEAD^ HEAD 2>/dev/null)}"; do
   if [[ "$changed" == app/* || "$changed" == frontend/* ]]; then
     touched=1
     break
@@ -102,7 +129,7 @@ for changed in "${(@f)$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/
 done
 (( touched )) || skip "commit does not touch app/ or frontend/"
 
-# --- 7. no plan commit in flight --------------------------------------------
+# --- 8. no plan commit in flight --------------------------------------------
 # The projection is the app's own GET /commit/status (app/main.py). Fail closed:
 # only an explicit `"in_flight": false` lets the restart through.
 if ! status_body="$(curl -sf -m 2 "$STATUS_URL" 2>/dev/null)" || [[ -z "$status_body" ]]; then
@@ -120,7 +147,7 @@ case "$status_body" in
     ;;
 esac
 
-# --- 8. no concurrent auto-restart ------------------------------------------
+# --- 9. no concurrent auto-restart ------------------------------------------
 # Advisory pre-check so the common case skips before scheduling anything. The
 # authoritative lock is the atomic mkdir inside the detached run below, which
 # is why a launch that never starts cannot leak a lock and block the next
@@ -137,22 +164,21 @@ sha="$(git rev-parse --short HEAD 2>/dev/null)"
 subject="$(git log -1 --format='%s' 2>/dev/null | cut -c1-100)"
 print -u2 -- "tdtb-autorestart: scheduled $restart_cmd for $sha"
 
-# Detached so the commit returns immediately. Ignoring SIGHUP in the subshell
-# (inherited across exec) is the nohup behaviour: closing the terminal does not
-# kill a rebuild mid-flight.
-{
-  trap '' HUP
+# Detached so the commit returns immediately. `nohup` sets SIGHUP to ignore
+# before the child execs, which a `trap` inside the child cannot do reliably:
+# the terminal can hang up in the window between fork and trap.
+nohup /bin/zsh -c '
   # The lock exists only while this run does: taken atomically here and
   # released last, so two commits cannot stack two bootout/bootstrap cycles.
-  if ! mkdir "$LOCK" 2>/dev/null; then
+  if ! mkdir "$4" 2>/dev/null; then
     print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) skipped — another auto-restart is running"
     exit 0
   fi
-  print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) auto-restart after $sha — $subject"
-  "$restart_cmd"
+  print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) auto-restart after $1 — $2"
+  "$3"
   restart_status=$?
   print -- "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) exit $restart_status"
-  rm -rf "$LOCK"
-} >>"$LOG" 2>&1 &
+  rm -rf "$4"
+' tdtb-autorestart "$sha" "$subject" "$restart_cmd" "$LOCK" >>"$LOG" 2>&1 &
 
 exit 0

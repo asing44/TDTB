@@ -26,6 +26,11 @@
 #   * It serves the MAIN checkout's code, venv, and state even when started
 #     from a linked worktree, because the venv and the machine-local state dir
 #     live in the main checkout.
+#   * It marks the session with TDTB_DEV=1 and $HOME/Library/Caches/tdtb-dev.pid
+#     so `hooks/post-commit` skips its auto-restart instead of fighting this
+#     loop for :8746. Both are cleared on exit.
+#   * It refuses to start when :$DEV_PORT is already taken, before pausing the
+#     live seat, so a stray dev server cannot leave the seat down.
 #   * EventKit/TCC attributes the calendar grant to the launching terminal, not
 #     to the launchd job, so calendar surfaces can degrade loudly here while
 #     Todoist-backed ones stay real. Restoration re-runs the launchd job, which
@@ -103,7 +108,7 @@ wait_port_free() {
 
 wait_port_busy() {
   local port=$1 i
-  for (( i = 0; i < 300; i++ )); do
+  for (( i = 0; i < 150; i++ )); do
     port_busy "$port" && return 0
     sleep 0.1
   done
@@ -124,17 +129,22 @@ stop_tree() {
 cleanup() {
   (( cleaning )) && return 0
   cleaning=1
-  trap - EXIT INT TERM
+  # Restoring live is the whole point of the exit path: from here on, a second
+  # Ctrl-C (or a terminal that closes) must not abort it half-way through two
+  # bundle builds and a launchd reload.
+  trap - EXIT INT TERM HUP
+  trap '' INT HUP
   print -u2 -- ""
   print -u2 -- "tdtb-dev: stopping the dev loop"
   stop_tree "$frontend_pid"
   stop_tree "$backend_pid"
   wait 2>/dev/null
-  if ! wait_port_free "$PORT"; then
+  rm -f "${DEV_PID_FILE:-}"
+  if [[ -n "$backend_pid" ]] && ! wait_port_free "$PORT"; then
     print -u2 -- "tdtb-dev: :$PORT is still held after stopping the dev backend"
     print -u2 -- "tdtb-dev:   $REPO/restart-live.sh will refuse to start a second writer"
   fi
-  wait_port_free "$DEV_PORT" >/dev/null 2>&1
+  [[ -n "$frontend_pid" ]] && wait_port_free "$DEV_PORT" >/dev/null 2>&1
 
   if (( live_paused )); then
     print -- ""
@@ -152,7 +162,22 @@ cleanup() {
   exit "$exit_status"
 }
 
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP
+
+# --- claim the session ------------------------------------------------------
+# TDTB_DEV marks every child of this loop as part of a dev session, and the pid
+# file marks the session for the OTHER terminals it does not share env with, so
+# the post-commit hook skips a restart instead of fighting this loop for :8746.
+TDTB_DEV=1
+readonly DEV_PID_FILE="${TDTB_DEV_PID_FILE:-$HOME/Library/Caches/tdtb-dev.pid}"
+export TDTB_DEV
+mkdir -p "${DEV_PID_FILE:h}" 2>/dev/null
+print -- "$$" > "$DEV_PID_FILE"
+
+# --- refuse early, before anything is paused --------------------------------
+if port_busy "$DEV_PORT"; then
+  refuse ":$DEV_PORT is already in use — stop the other Vite dev server (or set TDTB_DEV_PORT) first"
+fi
 
 # --- pause the live seat ----------------------------------------------------
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
@@ -204,7 +229,10 @@ frontend_pid=$!
 if wait_port_busy "$DEV_PORT"; then
   print -- "tdtb-dev: Vite dev server listening"
 else
-  print -u2 -- "tdtb-dev: the Vite dev server has not started listening on :$DEV_PORT yet"
+  # The port was free when this loop claimed it, so a failure to bind now is a
+  # real startup failure (bad node_modules, vite config, npm error) — fail loud
+  # rather than sitting in a loop that points at nothing. cleanup restores live.
+  refuse "the Vite dev server never listened on :$DEV_PORT"
 fi
 
 print -- ""
