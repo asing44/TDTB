@@ -1198,9 +1198,9 @@ def compute_habit_summary(
     """Compute the ``{total, done, outstanding, est_minutes}`` habit block.
 
     Habits are a manual toggle list, not a completion read: Adam tracks habit
-    completion in Grit, so the Todoist Habits project IS the active set and the
-    app's per-day overrides turn individual habits off. This block therefore
-    never reads completion data. ``total`` counts every admitted habit,
+    completion in Grit, so Grit's habit list IS the active set and the app's
+    per-day overrides turn individual habits off. This block therefore never
+    reads completion data. ``total`` counts every admitted habit,
     ``done`` is always ``0``, ``outstanding`` equals ``total``, and
     ``est_minutes`` sums the durations of ALL admitted habits (fallback
     ``fallback_minutes_per_habit`` where unset), rounded UP to the

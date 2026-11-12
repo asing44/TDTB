@@ -1,6 +1,7 @@
 /* habits.ts — today-only habit overrides on the Set up day screen.
 
-   Habits are an ACTIVE list. A Grit-sourced block marks each item `done`
+   Habits are an ACTIVE list kept in Grit. A Grit-sourced block marks each item
+   `done`
    (done or failed, from the server's classifier); such rows stay listed but
    stop counting. A legacy block carries no completion, so nothing there is
    done and nothing is derived here. An operator switches a habit off
@@ -8,7 +9,7 @@
    items only the aggregate exists, so a single "Habits (total)" row stands in
    for them — the backend ignores a total override once items exist. The
    capacity math itself is server-side; this module holds the pure view and
-   edit rules. Overrides never reach Todoist or the calendar. */
+   edit rules. Overrides never reach Grit or the calendar. */
 
 import { formatDurationMinutes } from "./time";
 import type { HabitOverride, HabitOverrides, HabitsInfo, HabitStatus } from "./types";

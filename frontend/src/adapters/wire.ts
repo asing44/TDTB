@@ -1828,18 +1828,6 @@ const advisoryCapacitiesReviewNotice =
 const advisorySelectionNotice =
   /^\s*Capacities selection \S+ was (?:not promoted: |promoted, but |removed: ).+$/;
 
-/** The two Todoist habit fallbacks the server words exactly ``Todoist habits
-    read failed — showing the last artifact habit list``
-    (``HABITS_READ_FAILED_WARNING``) and ``Todoist returned no habits — showing
-    the last artifact habit list`` (``HABITS_EMPTY_LIVE_WARNING``). Habits reach
-    the plan only as a capacity summary, never as rows, so the labelled stale
-    cached habit list cannot change what gets sequenced: the operator made this
-    fallback advisory on 2026-11-12. Because ``blockingWarnings`` also governs
-    commit, that is unblocked for these two notices as well. The match stays
-    anchored and closed — any other habit or Todoist failure still blocks. */
-const advisoryHabitsFallback =
-  /^\s*Todoist (?:habits read failed|returned no habits) — showing the last artifact habit list\s*$/;
-
 /** The three Grit-habit diagnostics, in the server's exact wording
     (``grit_habits.GRIT_READ_STALE``, ``GRIT_READ_FAILED``,
     ``GRIT_UNCONFIGURED``). Habits reach the plan only as a capacity summary,
@@ -1869,7 +1857,6 @@ const advisoryGritHabitWithoutMinutes = advisoryGritHabitWarnings[2];
 function isAdvisoryWarning(warning: string): boolean {
   return (
     advisoryReminderOmission.test(warning) ||
-    advisoryHabitsFallback.test(warning) ||
     advisoryGritHabitWarnings.some((pattern) => pattern.test(warning)) ||
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
@@ -1907,7 +1894,6 @@ export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
     value is unchanged by the retirement of the full-screen Connections page. */
 function advisoryFixOf(warning: string): AdvisoryNoteFix {
   if (advisoryTypeStaleness.test(warning)) return "refresh";
-  if (advisoryHabitsFallback.test(warning)) return "refresh";
   if (advisoryGritHabitRefresh.some((pattern) => pattern.test(warning))) {
     return "refresh";
   }
@@ -1929,22 +1915,20 @@ function advisoryFixOf(warning: string): AdvisoryNoteFix {
     commit (OQ-P1), so the advisory filter keeps them out of
     ``blockingWarnings``; they are attributed straight from
     ``calendarWarnings`` so the Calendar dot and its card still show a real read
-    problem without gating commit. The advisory habit fallbacks are attributed
-    straight from their own pattern for the same reason: the Todoist dot stays
-    visibly degraded while it shows a stale cached habit list. The Grit habit
-    diagnostics colour no dot: habits are projected as a capacity summary and
-    the model has no Grit source, so the note is the whole signal (inventing a
-    fourth dot for a source the Connections card cannot repair would be
-    worse). Other config,
+    problem without gating commit. The Grit habit diagnostics colour no dot:
+    habits are projected as a capacity summary and the model has no Grit
+    source, so the note is the whole signal (inventing a fourth dot for a
+    source the Connections card cannot repair would be worse). Unit U7 retired
+    the Todoist habit read, so no habit warning is attributed to the Todoist
+    dot any more: the two legacy habit-fallback sentences match no advisory
+    pattern and block. Other config,
     prompt, habit and artifact warnings match no source, so they colour no dot
     while still blocking commit through ``sourceHealthOf``. */
 export function sourceHealthBySource(
   warnings: readonly string[],
 ): SourceHealthBySource {
   const out: SourceHealthBySource = {
-    todoist: warnings.some((warning) => advisoryHabitsFallback.test(warning))
-      ? "degraded"
-      : "ok",
+    todoist: "ok",
     calendar: calendarWarnings(warnings).length > 0 ? "degraded" : "ok",
     capacities: "ok",
   };

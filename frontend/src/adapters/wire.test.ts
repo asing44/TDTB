@@ -399,29 +399,22 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
   });
 });
 
-describe("Todoist habit fallbacks (advisory, 2026-11-12)", () => {
-  const readFailed = "Todoist habits read failed — showing the last artifact habit list";
-  const emptyLive = "Todoist returned no habits — showing the last artifact habit list";
+describe("retired Todoist habit fallbacks (U7)", () => {
+  // Grit is the habit source, so the server no longer words these two legacy
+  // fallbacks. They are unrecognised again and stay on the blocking gate: a
+  // warning nobody recognises must never pass silently.
+  const retired = [
+    "Todoist habits read failed — showing the last artifact habit list",
+    "Todoist returned no habits — showing the last artifact habit list",
+  ];
 
-  it("does not let either habit fallback hold sequencing or commit", () => {
-    for (const warning of [readFailed, emptyLive]) {
-      expect(sourceHealthOf([warning])).toBe("ok");
-      expect(blockingWarnings([warning])).toEqual([]);
+  it("treats a retired habit fallback as an ordinary blocking warning", () => {
+    for (const warning of retired) {
+      expect(sourceHealthOf([warning])).toBe("degraded");
+      expect(blockingWarnings([warning])).toEqual([warning]);
+      expect(advisoryNotes([warning])).toEqual([]);
+      expect(sourceHealthBySource([warning]).todoist).toBe("degraded");
     }
-    expect(sourceHealthOf([readFailed, emptyLive])).toBe("ok");
-  });
-
-  it("still surfaces each fallback as an advisory note with a refresh fix", () => {
-    expect(advisoryNotes([readFailed])).toEqual([{ text: readFailed, fix: "refresh" }]);
-    expect(advisoryNotes([emptyLive])).toEqual([{ text: emptyLive, fix: "refresh" }]);
-  });
-
-  it("keeps the Todoist dot marked while the cached habit list is stale", () => {
-    expect(sourceHealthBySource([readFailed])).toEqual({
-      todoist: "degraded",
-      calendar: "ok",
-      capacities: "ok",
-    });
   });
 
   it("does not broaden to any other Todoist or habit warning", () => {
@@ -440,8 +433,8 @@ describe("Todoist habit fallbacks (advisory, 2026-11-12)", () => {
     );
   });
 
-  it("keeps a real warning blocking beside an advisory habit fallback", () => {
-    expect(sourceHealthOf([readFailed, "Todoist read failed (timeout)"])).toBe(
+  it("keeps a real warning blocking beside a retired habit fallback", () => {
+    expect(sourceHealthOf([retired[0]!, "Todoist read failed (timeout)"])).toBe(
       "degraded",
     );
   });

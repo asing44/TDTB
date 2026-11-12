@@ -1,8 +1,8 @@
 /* habitGroups.ts — the Set up habits rail's Morning / Afternoon / Evening /
    Anytime buckets.
 
-   Todoist hands the habits over as a flat active list (id, content, minutes);
-   it carries no time-of-day field, so the bucket for a habit is an explicit
+   Habits arrive as a flat active list from Grit (id, name, minutes); the
+   source carries no time-of-day field, so the bucket for a habit is an explicit
    owner decision recorded here. Add or move a habit by editing this map; a
    habit that is not listed lands in "Anytime", which keeps a brand-new habit
    visible instead of hiding it. */

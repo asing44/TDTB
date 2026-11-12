@@ -162,8 +162,11 @@ def test_non_string_project_name_becomes_null():
 # One project read per run
 # ---------------------------------------------------------------------------
 
-def test_projects_are_read_once_per_run_across_the_habit_and_row_reads():
-    """The habit scope read and the row read share ONE ``GET /projects``."""
+def test_projects_are_read_once_per_run_across_the_row_reads():
+    """One ``GET /projects`` answers both row reads in a run.
+
+    U7 retired the habit scope read, so this is now purely the row path: a run
+    spends exactly one project read."""
     habit_task = _task("2", "Messages", project_id=HABITS_PROJECT["id"])
     client = _CountingProjects(
         {ext.ASSIGNED_QUERY_FALLBACK: [_task(), habit_task]},
@@ -171,22 +174,24 @@ def test_projects_are_read_once_per_run_across_the_habit_and_row_reads():
     )
     catalog = ext.TodoistProjects(client)
 
-    ext.fetch_habits_items(client, {}, None, projects=catalog)
-    assert client.project_reads == 1
-
     assigned, _pool, warnings = ext.fetch_todoist_items(client, {}, projects=catalog)
 
     assert warnings == []
     assert client.project_reads == 1
-    assert assigned[0]["project_name"] == "Home"
-    # The cached project list also answered the habit scope: the habit
-    # project's task is still filtered out of the plan.
-    assert [row["name"] for row in assigned] == ["Fix the sink"]
+    # No habit-project exclusion any more: a project called "Habits" carries
+    # ordinary work, and both rows resolve their own project name.
+    assert [row["name"] for row in assigned] == ["Fix the sink", "Messages"]
+    assert {row["project_name"] for row in assigned} == {
+        "Home", HABITS_PROJECT["name"],
+    }
 
 
 def test_a_new_run_reads_the_projects_again():
     """Nothing is persisted: a fresh catalog is a fresh (single) read."""
-    client = _CountingProjects({ext.ASSIGNED_QUERY_FALLBACK: []}, projects=[HOME_PROJECT])
+    client = _CountingProjects(
+        {ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Ship it", project_id=HOME_PROJECT["id"])]},
+        projects=[HOME_PROJECT],
+    )
 
     ext.fetch_todoist_items(client, {}, projects=ext.TodoistProjects(client))
     ext.fetch_todoist_items(client, {}, projects=ext.TodoistProjects(client))

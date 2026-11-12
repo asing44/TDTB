@@ -1,19 +1,19 @@
-"""test_habit_capacity.py — habit time from the live read or the artifact.
+"""test_habit_capacity.py — habit time from the producer and the artifact.
 
 Obsidian is retired. The habit done/total split and the outstanding-minutes
-estimate come from the operator's Todoist Habits project in live source mode
-(``external_sources.fetch_habits_items``) and from the planning artifact's
-top-level ``habits`` block in artifact mode (the default here), computed by the
-producer (``producer_rules.compute_habit_summary``). This file pins the
-producer arithmetic (grain rounding, per-habit fallback) and the end-to-end
-capacity effect through /plan-inputs; the live Todoist read is pinned in
-``test_habits_live.py``.
+estimate come from the planning artifact's top-level ``habits`` block in
+artifact source mode (the default here), computed by the producer
+(``producer_rules.compute_habit_summary``). Live source mode reads habits from
+Grit (``grit_habits``, pinned in ``test_habits_grit_live.py``); unit U7 retired
+the Todoist habit read. This file pins the producer arithmetic (grain
+rounding, per-habit fallback) and the end-to-end capacity effect through
+/plan-inputs.
 
-Habit completion is NOT read: Adam tracks habits in Grit, so the Todoist
-Habits list is the active set and toggling happens in the app's per-day
-overrides. Every habit is therefore outstanding, every habit's minutes are
-reserved, and any completion data that reaches the producer (a legacy fetch,
-an old artifact) is ignored rather than honoured.
+Habit completion is NOT read by the producer: Adam tracks habits in Grit, so
+the habit source's list is the active set and toggling happens in the app's
+per-day overrides. Every habit is therefore outstanding, every habit's minutes
+are reserved, and any completion data that reaches the producer (a legacy
+fetch, an old artifact) is ignored rather than honoured.
 """
 from __future__ import annotations
 

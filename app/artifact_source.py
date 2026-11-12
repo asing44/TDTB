@@ -556,11 +556,12 @@ def _habit_item_of(entry: Any) -> dict[str, Any] | None:
 def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, Any], list[str]]:
     """Read ONLY the artifact's habit summary. Never raises.
 
-    Artifact source mode consumes this block directly. Live source mode reads
-    the operator's Habits project instead (``external_sources.fetch_habits_items``)
-    and lands here only as the FALLBACK for a failed live read, which labels
-    the cached list loudly. A missing/unreadable/malformed artifact degrades to
-    the zeroed block plus a warning — never a fallback to another source.
+    Grit is the habit source in live mode (``grit_habits`` via
+    ``main._grit_habits_source``); unit U7 retired the Todoist habit read this
+    block used to fall back from. Artifact source mode still consumes this
+    block directly, and the seam keeps its cached list readable. A
+    missing/unreadable/malformed artifact degrades to the zeroed block plus a
+    warning — never a fallback to another source.
     """
     target = Path(path) if path is not None else artifact_path()
     try:
