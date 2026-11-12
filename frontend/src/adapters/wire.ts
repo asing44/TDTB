@@ -66,9 +66,17 @@ import type {
   CommitReport,
   CommitSurface,
   DaySetup,
+  HabitGritRefreshResult,
+  HabitInventoryRow,
+  HabitInventoryRowStatus,
+  HabitInventoryStatus,
   HabitItem,
   HabitOverride,
   HabitOverrides,
+  HabitSetting,
+  HabitSettings,
+  HabitSettingsDraft,
+  HabitStatus,
   HabitsInfo,
   DaySetupSaveResult,
   DescriptionSkips,
@@ -1534,22 +1542,55 @@ function projectHabitOverrides(raw: unknown): HabitOverrides | undefined {
   return { items, total: projectHabitEntry(value.total) };
 }
 
+const HABIT_STATUSES: ReadonlySet<string> = new Set([
+  "done",
+  "failed",
+  "partial",
+  "none",
+]);
+
+/** The one verdict this habit carries today, or undefined when the block says
+    nothing about completion (a legacy Todoist/artifact item). */
+function projectHabitStatus(raw: unknown): HabitStatus | undefined {
+  return typeof raw === "string" && HABIT_STATUSES.has(raw)
+    ? (raw as HabitStatus)
+    : undefined;
+}
+
 function projectHabitsInfo(raw: unknown): HabitsInfo | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const value = raw as Wire;
   const items: HabitItem[] = [];
+  // A Grit block carries `status` on every item; a legacy artifact block
+  // carries none. That is the only signal for whether the block's `done` is
+  // today's Grit completion or the retired artifact-side count, so it decides
+  // whether the aggregate is projected at all.
+  let gritSourced = false;
   for (const row of Array.isArray(value.items) ? value.items : []) {
     if (!row || typeof row !== "object") continue;
     const name = String(row.content ?? "").trim();
     if (name === "" || !Number.isFinite(row.minutes)) continue;
-    items.push({ id: String(row.id ?? ""), name, minutes: Math.max(0, Math.trunc(row.minutes)) });
+    const item: HabitItem = {
+      id: String(row.id ?? ""),
+      name,
+      minutes: Math.max(0, Math.trunc(row.minutes)),
+    };
+    // Absent means "not done": a legacy item carries no completion at all.
+    if (typeof row.done === "boolean") item.done = row.done;
+    const status = projectHabitStatus(row.status);
+    if (status !== undefined) {
+      item.status = status;
+      gritSourced = true;
+    }
+    items.push(item);
   }
   const n = (v: unknown) => (Number.isFinite(v) ? Number(v) : 0);
-  // `done`/`outstanding` are legacy completion fields: habits are an active
-  // list and completion lives in Grit, so they are never projected (and
-  // never read) even when an older artifact still carries them.
+  const done = value.done;
   return {
     total: n(value.total),
+    ...(gritSourced && Number.isInteger(done) && (done as number) >= 0
+      ? { done: done as number }
+      : {}),
     estMinutes: n(value.est_minutes),
     items,
   };
@@ -1799,6 +1840,29 @@ const advisorySelectionNotice =
 const advisoryHabitsFallback =
   /^\s*Todoist (?:habits read failed|returned no habits) — showing the last artifact habit list\s*$/;
 
+/** The three Grit-habit diagnostics, in the server's exact wording
+    (``grit_habits.GRIT_READ_STALE``, ``GRIT_READ_FAILED``,
+    ``GRIT_UNCONFIGURED``). Habits reach the plan only as a capacity summary,
+    never as rows, so a stale read, a read that never happened, and a habit
+    with no saved minutes cannot change what gets sequenced: they cost
+    nothing but accuracy, so they are advisory for commit too. ``GRIT_READ_STALE``
+    is the same shape as the Todoist cached-list fallback it replaced;
+    ``GRIT_READ_FAILED`` plans the day pessimistically from the saved plan; and
+    an unconfigured habit costs the reader's own default minutes. Each match
+    stays anchored and closed — any other Grit failure still blocks. */
+const advisoryGritHabitWarnings = [
+  /^\s*Grit habits read failed — showing today's last Grit read\s*$/,
+  /^\s*Grit habits unavailable — counting every configured habit as not done\s*$/,
+  /^\s*Grit habits without minutes — using the default habit minutes\s*$/,
+];
+
+/** The Grit diagnostics that a Refresh clears: a fresh read replaces the stale
+    one and restores today's completion. A missing saved duration is not a read
+    problem, so it is excluded here (it opens Settings instead). */
+const advisoryGritHabitRefresh = advisoryGritHabitWarnings.slice(0, 2);
+
+const advisoryGritHabitWithoutMinutes = advisoryGritHabitWarnings[2];
+
 /** Every warning that does NOT block commit or sequence. The list is explicit
     and closed: an unrecognised warning stays blocking, so a future server
     diagnostic fails closed rather than passing silently (KTD6). */
@@ -1806,6 +1870,7 @@ function isAdvisoryWarning(warning: string): boolean {
   return (
     advisoryReminderOmission.test(warning) ||
     advisoryHabitsFallback.test(warning) ||
+    advisoryGritHabitWarnings.some((pattern) => pattern.test(warning)) ||
     advisorySkippedObject.test(warning) ||
     advisoryTypeStaleness.test(warning) ||
     advisoryCapacitiesReviewNotice.test(warning) ||
@@ -1843,6 +1908,13 @@ export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
 function advisoryFixOf(warning: string): AdvisoryNoteFix {
   if (advisoryTypeStaleness.test(warning)) return "refresh";
   if (advisoryHabitsFallback.test(warning)) return "refresh";
+  if (advisoryGritHabitRefresh.some((pattern) => pattern.test(warning))) {
+    return "refresh";
+  }
+  // A habit with no saved minutes is fixed by typing one in, not by reading
+  // Grit again: the Settings hub owns that row (the drawer maps
+  // ``connections`` to the hub entry that owns the problem).
+  if (advisoryGritHabitWithoutMinutes.test(warning)) return "connections";
   if (/Refresh to reconcile\.\s*$/.test(warning)) return "refresh";
   if (advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning))) {
     return "connections";
@@ -1859,7 +1931,11 @@ function advisoryFixOf(warning: string): AdvisoryNoteFix {
     ``calendarWarnings`` so the Calendar dot and its card still show a real read
     problem without gating commit. The advisory habit fallbacks are attributed
     straight from their own pattern for the same reason: the Todoist dot stays
-    visibly degraded while it shows a stale cached habit list. Other config,
+    visibly degraded while it shows a stale cached habit list. The Grit habit
+    diagnostics colour no dot: habits are projected as a capacity summary and
+    the model has no Grit source, so the note is the whole signal (inventing a
+    fourth dot for a source the Connections card cannot repair would be
+    worse). Other config,
     prompt, habit and artifact warnings match no source, so they colour no dot
     while still blocking commit through ``sourceHealthOf``. */
 export function sourceHealthBySource(
@@ -2597,8 +2673,13 @@ export function projectUnassignedToday(
 export function projectPlanInputs(wire: Wire): PlanInputs {
   const warnings = (wire.source_warnings ?? []).map(String);
   const habitsInfo = projectHabitsInfo(wire.habits);
-  // The active list, not a completion score: the count is the listed habits
-  // (every habit in the project), never a done/outstanding difference.
+  // The due list, not a completion score: the count is the listed habits (every
+  // habit in a legacy block, the habits due today in a Grit block), never a
+  // done/outstanding difference. Both block shapes therefore read the same
+  // way: a Grit block's `estMinutes` already excludes the habits that stopped
+  // consuming capacity, so the note says how many habits the day lists and
+  // what they still cost. Completion stays item-level (`done`/`status`); the
+  // note is not where it is reported.
   const habitCount = habitsInfo
     ? habitsInfo.items.length > 0
       ? habitsInfo.items.length
@@ -3418,4 +3499,189 @@ export function calendarSettingsToWire(draft: CalendarSettingsDraft): Wire {
     return { id: entry.id, title: entry.title, enabled: entry.enabled };
   });
   return { expected_revision: draft.expectedRevision, calendars };
+}
+
+// -- habit settings + Grit refresh (U5 of the Grit-habits work) --------------
+
+function habitSettingsError(detail: string): Error {
+  return new Error(`invalid habit settings response: ${detail}`);
+}
+
+const HABIT_INVENTORY_ROW_STATUSES: ReadonlySet<string> = new Set([
+  "configured",
+  "unconfigured",
+  "missing",
+  "unverified",
+]);
+
+const HABIT_INVENTORY_STATUSES: ReadonlySet<string> = new Set([
+  "ok",
+  "stale",
+  "unavailable",
+]);
+
+function isWeekday(value: unknown): boolean {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 6;
+}
+
+/** A weekday selection: `null` (every day) or a non-empty, unique list in the
+    store's own `date.weekday()` range. An empty list is rejected, never
+    widened to "every day" — the store answers it with a 422, so a response
+    that carries one is not a shape this client accepts. */
+function projectWeekdays(raw: unknown, error: (detail: string) => Error): number[] | null {
+  if (raw === null || raw === undefined) return null;
+  if (!Array.isArray(raw)) throw error("weekdays must be null or an array");
+  if (raw.length === 0) throw error("weekdays must not be empty");
+  const seen = new Set<number>();
+  for (const day of raw) {
+    if (!isWeekday(day)) throw error("weekdays must be integers 0..6");
+    if (seen.has(day as number)) throw error("duplicate weekday");
+    seen.add(day as number);
+  }
+  return raw as number[];
+}
+
+/** Project GET/POST `/settings/habits[/save]` and `POST /habits/grit/refresh`.
+    All three answer the SAME payload, so there is one parse path and no
+    inventory fallback: unlike the calendar save, a habit save re-reads the
+    inventory it just reconciled. Malformed input throws — the client never
+    turns a bad response into a plausible empty plan, and `unavailable` is
+    reported as such rather than derived from missing fields. */
+export function projectHabitSettings(wire: Wire): HabitSettings {
+  const raw = wire?.settings;
+  if (!isPlainObject(raw)) throw habitSettingsError("missing settings object");
+  if (typeof wire.persisted !== "boolean") {
+    throw habitSettingsError("persisted must be a boolean");
+  }
+  if (!exactKeys(raw, ["version", "revision", "habits"])) {
+    throw habitSettingsError("settings has unknown or missing keys");
+  }
+  if (raw.version !== 1) throw habitSettingsError("version is unsupported");
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
+    throw habitSettingsError("revision must be a nonnegative safe integer");
+  }
+  if (!Array.isArray(raw.habits)) throw habitSettingsError("habits must be an array");
+  const names = new Set<string>();
+  const habits: HabitSetting[] = raw.habits.map((entry: unknown) => {
+    if (!isPlainObject(entry) || !exactKeys(entry, ["name", "minutes", "weekdays"])) {
+      throw habitSettingsError("habit entries have unknown or missing keys");
+    }
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw habitSettingsError("habit entry name is malformed");
+    }
+    if (
+      !Number.isInteger(entry.minutes) ||
+      (entry.minutes as number) < 0 ||
+      (entry.minutes as number) > HABIT_MINUTES_MAX
+    ) {
+      throw habitSettingsError("habit entry minutes must be an integer 0..480");
+    }
+    if (names.has(entry.name)) throw habitSettingsError("duplicate habit name");
+    names.add(entry.name);
+    return {
+      name: entry.name,
+      minutes: entry.minutes as number,
+      weekdays: projectWeekdays(entry.weekdays, habitSettingsError),
+    };
+  });
+
+  if (typeof wire.inventory_status !== "string" || !HABIT_INVENTORY_STATUSES.has(wire.inventory_status)) {
+    throw habitSettingsError("inventory_status is unsupported");
+  }
+  if (!Array.isArray(wire.inventory)) throw habitSettingsError("inventory must be an array");
+  if (!Array.isArray(wire.warnings) || wire.warnings.some((w: unknown) => typeof w !== "string")) {
+    throw habitSettingsError("warnings must be an array of strings");
+  }
+  if (typeof wire.grit_read_at !== "string" && wire.grit_read_at !== null) {
+    throw habitSettingsError("grit_read_at must be a string or null");
+  }
+  const inventoryNames = new Set<string>();
+  const inventory: HabitInventoryRow[] = wire.inventory.map((row: unknown) => {
+    if (
+      !isPlainObject(row) ||
+      !exactKeys(row, ["name", "status", "minutes", "weekdays"])
+    ) {
+      throw habitSettingsError("inventory rows have unknown or missing keys");
+    }
+    if (typeof row.name !== "string" || row.name.trim() === "") {
+      throw habitSettingsError("inventory row name is malformed");
+    }
+    if (typeof row.status !== "string" || !HABIT_INVENTORY_ROW_STATUSES.has(row.status)) {
+      throw habitSettingsError("inventory row status is unsupported");
+    }
+    if (row.minutes !== null && (!Number.isInteger(row.minutes) || (row.minutes as number) < 0)) {
+      throw habitSettingsError("inventory row minutes must be null or a nonnegative integer");
+    }
+    if (inventoryNames.has(row.name)) throw habitSettingsError("duplicate inventory name");
+    inventoryNames.add(row.name);
+    return {
+      name: row.name,
+      status: row.status as HabitInventoryRowStatus,
+      minutes: row.minutes as number | null,
+      weekdays: projectWeekdays(row.weekdays, habitSettingsError),
+    };
+  });
+
+  return {
+    version: 1,
+    revision: raw.revision,
+    persisted: wire.persisted,
+    habits,
+    inventory,
+    inventoryStatus: wire.inventory_status as HabitInventoryStatus,
+    gritReadAt: (wire.grit_read_at as string | null) ?? null,
+    warnings: [...wire.warnings],
+  };
+}
+
+/** Build the full-replacement body for POST /settings/habits/save. Strict
+    client validation happens HERE so a row the store would answer with a 422
+    never reaches the wire: a blank name, a fractional or out-of-range minutes
+    value, an empty weekday list, or a duplicate name throws. */
+export function habitSettingsToWire(draft: HabitSettingsDraft): Wire {
+  if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
+    throw new Error("expectedRevision must be a nonnegative safe integer");
+  }
+  const names = new Set<string>();
+  const habits = draft.habits.map((entry) => {
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw new Error("habit name is malformed");
+    }
+    if (
+      !Number.isInteger(entry.minutes) ||
+      entry.minutes < 0 ||
+      entry.minutes > HABIT_MINUTES_MAX
+    ) {
+      throw new Error("habit minutes must be an integer 0..480");
+    }
+    const weekdays = projectWeekdays(entry.weekdays, habitSettingsDraftError);
+    if (names.has(entry.name)) throw new Error("duplicate habit name");
+    names.add(entry.name);
+    return { name: entry.name, minutes: entry.minutes, weekdays };
+  });
+  return { expected_revision: draft.expectedRevision, habits };
+}
+
+function habitSettingsDraftError(detail: string): Error {
+  return new Error(`invalid habit settings draft: ${detail}`);
+}
+
+/** `POST /habits/grit/refresh`: the settings payload plus the read outcome. A
+    completed HTTP call that reports `ok: false` is a reported STATUS, not an
+    error — the route answers 200 with the reader's typed `reason` constant. */
+export function projectHabitGritRefresh(wire: Wire): HabitGritRefreshResult {
+  const raw = wire?.refresh;
+  if (!isPlainObject(raw) || typeof raw.ok !== "boolean") {
+    throw habitSettingsError("refresh must carry a boolean ok");
+  }
+  if (raw.reason !== undefined && raw.reason !== null && typeof raw.reason !== "string") {
+    throw habitSettingsError("refresh reason must be a string");
+  }
+  return {
+    settings: projectHabitSettings(wire),
+    refresh: {
+      ok: raw.ok,
+      reason: typeof raw.reason === "string" ? raw.reason : null,
+    },
+  };
 }

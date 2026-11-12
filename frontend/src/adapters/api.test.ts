@@ -4,7 +4,8 @@
    fixed-input gate. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiAdapter, ApiError, ApiProtocolError, ApiTransportError, capacitiesSourceConflictOf, isNetworkError, SEQUENCE_NETWORK_ERROR_MESSAGE } from "./api";
+import { ApiAdapter, ApiError, ApiProtocolError, ApiTransportError, capacitiesSourceConflictOf, createHabitSettingsAutosave, isNetworkError, SEQUENCE_NETWORK_ERROR_MESSAGE } from "./api";
+import type { HabitSetting, HabitSettings } from "../model/types";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
 import planInputsDegraded from "./contract-fixtures/plan-inputs-degraded.json";
@@ -1431,5 +1432,262 @@ describe("calendar settings routes", () => {
   it("rejects a malformed load instead of defaulting", async () => {
     route("/settings/calendars", { persisted: true, settings: { version: 1, revision: 0 } });
     await expect(new ApiAdapter().loadCalendarSettings()).rejects.toThrow(/calendar settings/);
+  });
+});
+
+describe("habit settings routes", () => {
+  function habitWire(revision = 2, overrides: Record<string, any> = {}) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision,
+        habits: [{ name: "Walk", minutes: 30, weekdays: null }],
+      },
+      inventory: [
+        { name: "Walk", status: "configured", minutes: 30, weekdays: null },
+        { name: "Read", status: "unconfigured", minutes: null, weekdays: null },
+      ],
+      inventory_status: "ok",
+      grit_read_at: "2026-11-12T06:00:00Z",
+      warnings: [],
+      ...overrides,
+    };
+  }
+
+  const draftHabits: HabitSetting[] = [{ name: "Walk", minutes: 45, weekdays: [0, 2] }];
+
+  it("loads the policy and the Grit inventory with a plain tokenless GET", async () => {
+    route("/settings/habits", habitWire());
+    const a = new ApiAdapter();
+
+    const loaded = await a.loadHabitSettings();
+
+    expect(loaded.revision).toBe(2);
+    expect(loaded.inventoryStatus).toBe("ok");
+    expect(loaded.gritReadAt).toBe("2026-11-12T06:00:00Z");
+    expect(loaded.inventory.map((row) => row.status)).toEqual([
+      "configured",
+      "unconfigured",
+    ]);
+    expect(calls.map((c) => c.path)).toEqual(["/settings/habits"]);
+    expect(calls[0].init).toBeUndefined();
+  });
+
+  it("saves the full replacement with the token and reports success", async () => {
+    route("/settings/habits/save", habitWire(3));
+    const a = new ApiAdapter();
+
+    const outcome = await a.saveHabitSettings({ expectedRevision: 2, habits: draftHabits });
+
+    expect(outcome).toEqual({
+      ok: true,
+      settings: expect.objectContaining({ revision: 3, persisted: true }),
+    });
+    expect(postBody("/settings/habits/save")).toEqual({
+      expected_revision: 2,
+      habits: [{ name: "Walk", minutes: 45, weekdays: [0, 2] }],
+    });
+  });
+
+  it("turns a stale revision into a typed conflict outcome", async () => {
+    route(
+      "/settings/habits/save",
+      { detail: { code: "habit_settings_conflict", message: "changed since read" } },
+      409,
+    );
+    const a = new ApiAdapter();
+
+    const outcome = await a.saveHabitSettings({ expectedRevision: 1, habits: draftHabits });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: "conflict",
+      message: "changed since read",
+    });
+  });
+
+  it("turns malformed storage into a typed storage outcome, not a conflict", async () => {
+    route(
+      "/settings/habits/save",
+      {
+        detail: {
+          code: "habit_settings_storage_error",
+          message: "stored habit settings are unreadable",
+        },
+      },
+      409,
+    );
+    const a = new ApiAdapter();
+
+    const outcome = await a.saveHabitSettings({ expectedRevision: 1, habits: draftHabits });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: "storage",
+      message: "stored habit settings are unreadable",
+    });
+  });
+
+  it("maps a rejected row to the submitted index and field", async () => {
+    route(
+      "/settings/habits/save",
+      {
+        detail: {
+          code: "habit_settings_invalid",
+          message: "habit row 1 has an invalid minutes value",
+          index: 1,
+          field: "minutes",
+        },
+      },
+      422,
+    );
+    const a = new ApiAdapter();
+
+    const outcome = await a.saveHabitSettings({ expectedRevision: 1, habits: draftHabits });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: "invalid",
+      message: "habit row 1 has an invalid minutes value",
+      index: 1,
+      field: "minutes",
+    });
+  });
+
+  it("still rejects a failure that is none of the three expected outcomes", async () => {
+    route("/settings/habits/save", { detail: "judgment error: boom" }, 500);
+    const a = new ApiAdapter();
+
+    const err = await a
+      .saveHabitSettings({ expectedRevision: 1, habits: draftHabits })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(500);
+  });
+
+  it("reports a completed refresh whose Grit read failed as a status", async () => {
+    route("/habits/grit/refresh", {
+      ...habitWire(4, { inventory_status: "stale" }),
+      refresh: { ok: false, reason: "shortcut-not-found" },
+    });
+    const a = new ApiAdapter();
+
+    const result = await a.refreshGritHabits();
+
+    expect(result.refresh).toEqual({ ok: false, reason: "shortcut-not-found" });
+    expect(result.settings.inventoryStatus).toBe("stale");
+    expect(result.settings.revision).toBe(4);
+  });
+
+  it("reports a successful refresh beside the settings it re-read", async () => {
+    route("/habits/grit/refresh", {
+      ...habitWire(4),
+      refresh: { ok: true },
+    });
+    const a = new ApiAdapter();
+
+    const result = await a.refreshGritHabits();
+
+    expect(result.refresh).toEqual({ ok: true, reason: null });
+    expect(result.settings.revision).toBe(4);
+    expect(postBody("/habits/grit/refresh")).toEqual({});
+  });
+
+  it("sends the session token on both habit POSTs", async () => {
+    route("/settings/habits/save", habitWire(3));
+    route("/habits/grit/refresh", { ...habitWire(4), refresh: { ok: true } });
+    const a = new ApiAdapter();
+
+    await a.saveHabitSettings({ expectedRevision: 2, habits: draftHabits });
+    await a.refreshGritHabits();
+
+    const posts = calls.filter((c) => c.init?.method === "POST");
+    expect(posts.map((c) => c.path)).toEqual([
+      "/settings/habits/save",
+      "/habits/grit/refresh",
+    ]);
+    for (const post of posts) {
+      expect((post.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    }
+  });
+});
+
+describe("habit settings autosave", () => {
+  function settingsAt(revision: number): HabitSettings {
+    return {
+      version: 1,
+      revision,
+      persisted: true,
+      habits: [{ name: "Walk", minutes: 30, weekdays: null }],
+      inventory: [
+        { name: "Walk", status: "configured", minutes: 30, weekdays: null },
+      ],
+      inventoryStatus: "ok",
+      gritReadAt: "2026-11-12T06:00:00Z",
+      warnings: [],
+    };
+  }
+
+  it("chains two rapid saves onto the revision the first one returned", async () => {
+    const seen: number[] = [];
+    const save = vi.fn(async (draft: { expectedRevision: number }) => {
+      seen.push(draft.expectedRevision);
+      return { ok: true as const, settings: settingsAt(draft.expectedRevision + 1) };
+    });
+    const autosave = createHabitSettingsAutosave(save, settingsAt(2));
+
+    // Both calls are issued before either promise settles: the second may not
+    // reuse the revision the caller read (2) or it would 409 against the first.
+    const first = autosave.save([{ name: "Walk", minutes: 40, weekdays: null }]);
+    const second = autosave.save([{ name: "Walk", minutes: 50, weekdays: null }]);
+    const outcomes = await Promise.all([first, second]);
+
+    expect(seen).toEqual([2, 3]);
+    expect(outcomes.map((o) => (o.ok ? o.settings.revision : null))).toEqual([3, 4]);
+    expect(autosave.current().revision).toBe(4);
+    expect(autosave.blocked()).toBe(false);
+    // Every call is its own save: nothing is coalesced away.
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops the chain on a 409 and never issues another save", async () => {
+    const save = vi.fn(async () => ({
+      ok: false as const,
+      reason: "conflict" as const,
+      message: "changed since read",
+    }));
+    const autosave = createHabitSettingsAutosave(save, settingsAt(2));
+
+    const first = await autosave.save([{ name: "Walk", minutes: 40, weekdays: null }]);
+    const second = await autosave.save([{ name: "Walk", minutes: 50, weekdays: null }]);
+
+    expect(first).toEqual({ ok: false, reason: "conflict", message: "changed since read" });
+    expect(second).toEqual(first);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(autosave.blocked()).toBe(true);
+    expect(autosave.current().revision).toBe(2);
+  });
+
+  it("keeps the chain usable after a rejection that is not a conflict", async () => {
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        reason: "storage" as const,
+        message: "unreadable",
+      })
+      .mockResolvedValueOnce({ ok: true as const, settings: settingsAt(3) });
+    const autosave = createHabitSettingsAutosave(save, settingsAt(2));
+
+    const rejected = await autosave.save([{ name: "Walk", minutes: 40, weekdays: null }]);
+    const accepted = await autosave.save([{ name: "Walk", minutes: 50, weekdays: null }]);
+
+    expect(rejected).toEqual({ ok: false, reason: "storage", message: "unreadable" });
+    expect(accepted).toEqual({ ok: true, settings: settingsAt(3) });
+    // The revision was untouched by the rejection, so the retry still names 2.
+    expect((save.mock.calls[1][0] as { expectedRevision: number }).expectedRevision).toBe(2);
+    expect(autosave.blocked()).toBe(false);
   });
 });

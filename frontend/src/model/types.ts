@@ -508,23 +508,33 @@ export interface AnchoredOverride {
   calendarStartAtEdit?: string | null;
 }
 
-/** One habit on the active list the artifact supplied (wire
-    `habits.items`). Every habit in the Todoist Habits project is listed; an
-    operator switches it on or off for today. */
+/** The Grit read's per-habit verdict for today, from the ``grit_habits``
+    classifier and never re-derived here. ``done`` and ``failed`` stop costing
+    capacity; ``partial`` and ``none`` keep their full duration. */
+export type HabitStatus = "done" | "failed" | "partial" | "none";
+
+/** One habit on today's list (wire `habits.items`). Every habit in the Todoist
+    Habits project is listed for a legacy block; a Grit block lists only the
+    habits due today. An operator switches a habit on or off for today. */
 export interface HabitItem {
   id: string;
   name: string;
   minutes: number;
+  /** Whether this habit stopped consuming capacity today. Absent on a legacy
+      block, which carries no completion data at all — read that as not done. */
+  done?: boolean;
+  /** The classifier's verdict behind `done`; absent on a legacy block. */
+  status?: HabitStatus;
 }
 
 /** Server-verbatim `/plan-inputs` habits block. `items` is empty when the
     artifact only carries the aggregate. */
 export interface HabitsInfo {
   total: number;
-  /** Legacy wire field from when habits were read for completion. The adapter
-      no longer projects it and nothing here derives from it: completion is
-      tracked in Grit. Optional only so older payloads and fixtures stay
-      valid. */
+  /** How many habits stopped consuming capacity. Projected only for a
+      Grit-sourced block (one whose items carry `status`): a legacy artifact
+      block still carries a `done` from when habits were read for completion,
+      and that number is not today's Grit completion. */
   done?: number;
   /** Legacy companion of `done`; equals `total` on newer artifacts. Never
       read. */
@@ -547,6 +557,91 @@ export interface HabitOverride {
 export interface HabitOverrides {
   items: Record<string, HabitOverride>;
   total: HabitOverride | null;
+}
+
+/** One saved row of the per-habit plan (wire `settings.habits[]`). `name` is
+    the trimmed Grit habit name and is the row's identity: a rename is a new
+    habit. `weekdays` uses Python's `date.weekday()` numbering (Monday = 0);
+    `null` means every day and an empty list is never a valid value. */
+export interface HabitSetting {
+  name: string;
+  minutes: number;
+  weekdays: number[] | null;
+}
+
+/** How one habit reconciles against the Grit read: saved AND present, present
+    with no saved row, saved but absent from Grit, or unknown because Grit was
+    never read (`inventory_status` `unavailable`). */
+export type HabitInventoryRowStatus =
+  | "configured"
+  | "unconfigured"
+  | "missing"
+  | "unverified";
+
+/** One reconciled habit row. `minutes`/`weekdays` are saved values, and null
+    for a habit Grit reported that the plan has not configured. */
+export interface HabitInventoryRow {
+  name: string;
+  status: HabitInventoryRowStatus;
+  minutes: number | null;
+  weekdays: number[] | null;
+}
+
+/** Whether the inventory could be reconciled at all: a same-logical-day Grit
+    read, an earlier-day read (names are identity, so the plan still
+    reconciles), or no usable read (every saved row is `unverified`). */
+export type HabitInventoryStatus = "ok" | "stale" | "unavailable";
+
+/** The versioned per-habit duration/weekday policy plus the advisory Grit
+    inventory. `GET /settings/habits`, `POST /settings/habits/save`, and
+    `POST /habits/grit/refresh` all answer this one shape. */
+export interface HabitSettings {
+  version: number;
+  revision: number;
+  persisted: boolean;
+  habits: HabitSetting[];
+  inventory: HabitInventoryRow[];
+  inventoryStatus: HabitInventoryStatus;
+  /** When the Grit read behind the inventory was taken; null before any read. */
+  gritReadAt: string | null;
+  warnings: string[];
+}
+
+/** Full replacement body for the habit-settings save route. `version` and the
+    new revision are server-owned and deliberately absent. */
+export interface HabitSettingsDraft {
+  expectedRevision: number;
+  habits: HabitSetting[];
+}
+
+/** Typed outcome of `POST /settings/habits/save`. A stale revision is
+    `conflict` (the caller reloads and re-applies), a rejected row is
+    `invalid` (naming the submitted `index` and `field`), malformed storage is
+    `storage`. Anything else — transport, protocol, an unmapped status — still
+    rejects, so a failure is never quietly turned into an outcome. */
+export type HabitSettingsSaveOutcome =
+  | { ok: true; settings: HabitSettings }
+  | { ok: false; reason: "conflict"; message: string }
+  | {
+      ok: false;
+      reason: "invalid";
+      message: string;
+      index: number | null;
+      field: string | null;
+    }
+  | { ok: false; reason: "storage"; message: string };
+
+/** One Grit read's reported outcome. A failed read is a reported status, not
+    an error: `ok: false` carries the reader's typed `reason` constant. */
+export interface HabitGritRefresh {
+  ok: boolean;
+  reason: string | null;
+}
+
+/** `POST /habits/grit/refresh`: the settings payload plus the read outcome. */
+export interface HabitGritRefreshResult {
+  settings: HabitSettings;
+  refresh: HabitGritRefresh;
 }
 
 export interface Captures {

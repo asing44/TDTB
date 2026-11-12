@@ -48,6 +48,9 @@ import {
   to24h,
   projectCalendarSettings,
   calendarSettingsToWire,
+  projectHabitSettings,
+  habitSettingsToWire,
+  projectHabitGritRefresh,
 } from "./wire";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
@@ -3390,5 +3393,255 @@ describe("calendar settings", () => {
         ],
       }),
     ).toThrow(/duplicate/);
+  });
+});
+
+describe("Grit habit diagnostics (advisory, U4)", () => {
+  const stale = "Grit habits read failed — showing today's last Grit read";
+  const unavailable =
+    "Grit habits unavailable — counting every configured habit as not done";
+  const withoutMinutes =
+    "Grit habits without minutes — using the default habit minutes";
+
+  it("does not let any Grit diagnostic hold sequencing or commit", () => {
+    for (const warning of [stale, unavailable, withoutMinutes]) {
+      expect(sourceHealthOf([warning])).toBe("ok");
+      expect(blockingWarnings([warning])).toEqual([]);
+      expect(advisoryNotes([warning])).toHaveLength(1);
+    }
+    expect(sourceHealthOf([stale, unavailable, withoutMinutes])).toBe("ok");
+  });
+
+  it("offers Refresh for a read problem and Settings for a missing duration", () => {
+    expect(advisoryNotes([stale])).toEqual([{ text: stale, fix: "refresh" }]);
+    expect(advisoryNotes([unavailable])).toEqual([
+      { text: unavailable, fix: "refresh" },
+    ]);
+    // A habit with no saved minutes is fixed by typing one in, not by reading
+    // Grit again.
+    expect(advisoryNotes([withoutMinutes])).toEqual([
+      { text: withoutMinutes, fix: "connections" },
+    ]);
+  });
+
+  it("colours no source dot: habits ride the capacity summary", () => {
+    expect(sourceHealthBySource([stale, unavailable, withoutMinutes])).toEqual({
+      todoist: "ok",
+      calendar: "ok",
+      capacities: "ok",
+    });
+  });
+
+  it("keeps a near miss blocking", () => {
+    for (const nearMiss of [
+      "Grit habits read failed — showing yesterday's last Grit read",
+      "Grit habits read failed",
+      "Grit habits unavailable",
+      "Grit habits unavailable — counting every configured habit as not done (retry)",
+      "Grit habits without minutes",
+      "Grit shortcut failed",
+      "Grit habits read failed — showing today's last Grit read · retry",
+    ]) {
+      expect(sourceHealthOf([nearMiss])).toBe("degraded");
+      expect(blockingWarnings([nearMiss])).toEqual([nearMiss]);
+      expect(advisoryNotes([nearMiss])).toEqual([]);
+    }
+  });
+
+  it("keeps a real warning blocking beside an advisory Grit diagnostic", () => {
+    expect(sourceHealthOf([stale, "Grit shortcut failed"])).toBe("degraded");
+  });
+});
+
+describe("habit settings", () => {
+  function habitWire(overrides: Record<string, any> = {}) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 2,
+        habits: [{ name: "Walk", minutes: 30, weekdays: null }],
+      },
+      inventory: [
+        { name: "Walk", status: "configured", minutes: 30, weekdays: null },
+        { name: "Read", status: "unconfigured", minutes: null, weekdays: null },
+        { name: "Swim", status: "missing", minutes: 20, weekdays: [0, 2] },
+      ],
+      inventory_status: "ok",
+      grit_read_at: "2026-11-12T06:00:00Z",
+      warnings: [],
+      ...overrides,
+    };
+  }
+
+  it("projects the policy, the inventory, and the read timestamp", () => {
+    expect(projectHabitSettings(habitWire())).toEqual({
+      version: 1,
+      revision: 2,
+      persisted: true,
+      habits: [{ name: "Walk", minutes: 30, weekdays: null }],
+      inventory: [
+        { name: "Walk", status: "configured", minutes: 30, weekdays: null },
+        { name: "Read", status: "unconfigured", minutes: null, weekdays: null },
+        { name: "Swim", status: "missing", minutes: 20, weekdays: [0, 2] },
+      ],
+      inventoryStatus: "ok",
+      gritReadAt: "2026-11-12T06:00:00Z",
+      warnings: [],
+    });
+  });
+
+  it("projects every inventory row status", () => {
+    const projected = projectHabitSettings(
+      habitWire({
+        inventory: [
+          { name: "Walk", status: "configured", minutes: 30, weekdays: null },
+          { name: "Read", status: "unconfigured", minutes: null, weekdays: null },
+          { name: "Swim", status: "missing", minutes: 20, weekdays: [6] },
+          { name: "Lift", status: "unverified", minutes: 15, weekdays: null },
+        ],
+      }),
+    );
+    expect(projected.inventory.map((row) => row.status)).toEqual([
+      "configured",
+      "unconfigured",
+      "missing",
+      "unverified",
+    ]);
+  });
+
+  it("projects all three inventory_status values", () => {
+    const ok = projectHabitSettings(habitWire({ inventory_status: "ok" }));
+    expect(ok.inventoryStatus).toBe("ok");
+    expect(ok.warnings).toEqual([]);
+    const stale = projectHabitSettings(
+      habitWire({ inventory_status: "stale", warnings: ["stale read"] }),
+    );
+    expect(stale.inventoryStatus).toBe("stale");
+    expect(stale.warnings).toEqual(["stale read"]);
+    const unavailable = projectHabitSettings(
+      habitWire({
+        inventory_status: "unavailable",
+        grit_read_at: null,
+        inventory: [
+          { name: "Walk", status: "unverified", minutes: 30, weekdays: null },
+        ],
+      }),
+    );
+    expect(unavailable.inventoryStatus).toBe("unavailable");
+    expect(unavailable.gritReadAt).toBeNull();
+    expect(unavailable.inventory[0]?.status).toBe("unverified");
+  });
+
+  it("rejects malformed responses instead of defaulting to an empty plan", () => {
+    const bad = (o: Record<string, any>) => () => projectHabitSettings(habitWire(o));
+    const settings = (patch: Record<string, any>) => ({
+      settings: { version: 1, revision: 2, habits: [], ...patch },
+    });
+    expect(bad({ settings: undefined })).toThrow(/settings object/);
+    expect(bad({ persisted: "yes" })).toThrow(/persisted/);
+    expect(bad(settings({ version: 2 }))).toThrow(/version/);
+    expect(bad(settings({ revision: -1 }))).toThrow(/revision/);
+    expect(bad(settings({ extra: 1 }))).toThrow(/unknown or missing/);
+    expect(bad(settings({ habits: {} }))).toThrow(/array/);
+    expect(
+      bad(settings({ habits: [{ name: " ", minutes: 10, weekdays: null }] })),
+    ).toThrow(/name/);
+    expect(
+      bad(settings({ habits: [{ name: "A", minutes: 481, weekdays: null }] })),
+    ).toThrow(/minutes/);
+    expect(
+      bad(settings({ habits: [{ name: "A", minutes: 10, weekdays: [] }] })),
+    ).toThrow(/empty/);
+    expect(
+      bad(settings({ habits: [{ name: "A", minutes: 10, weekdays: [7] }] })),
+    ).toThrow(/weekdays/);
+    expect(
+      bad(
+        settings({
+          habits: [
+            { name: "A", minutes: 10, weekdays: null },
+            { name: "A", minutes: 5, weekdays: null },
+          ],
+        }),
+      ),
+    ).toThrow(/duplicate/);
+    expect(bad({ inventory_status: "weird" })).toThrow(/inventory_status/);
+    expect(bad({ inventory_status: undefined })).toThrow(/inventory_status/);
+    expect(bad({ inventory: "none" })).toThrow(/inventory/);
+    expect(bad({ inventory: [{ name: "A" }] })).toThrow(/inventory rows/);
+    expect(
+      bad({
+        inventory: [
+          { name: "A", status: "configured", minutes: 10, weekdays: null },
+          { name: "A", status: "missing", minutes: 10, weekdays: null },
+        ],
+      }),
+    ).toThrow(/duplicate/);
+    expect(bad({ warnings: [1] })).toThrow(/warnings/);
+    expect(bad({ grit_read_at: 5 })).toThrow(/grit_read_at/);
+  });
+
+  it("builds the full-replacement save body", () => {
+    expect(
+      habitSettingsToWire({
+        expectedRevision: 2,
+        habits: [
+          { name: "Walk", minutes: 30, weekdays: null },
+          { name: "Swim", minutes: 20, weekdays: [0, 2] },
+        ],
+      }),
+    ).toEqual({
+      expected_revision: 2,
+      habits: [
+        { name: "Walk", minutes: 30, weekdays: null },
+        { name: "Swim", minutes: 20, weekdays: [0, 2] },
+      ],
+    });
+    expect(() =>
+      habitSettingsToWire({ expectedRevision: -1, habits: [] }),
+    ).toThrow(/expectedRevision/);
+    // A row the store would answer with a 422 never reaches the wire.
+    expect(() =>
+      habitSettingsToWire({
+        expectedRevision: 0,
+        habits: [{ name: "", minutes: 10, weekdays: null }],
+      }),
+    ).toThrow(/name/);
+    expect(() =>
+      habitSettingsToWire({
+        expectedRevision: 0,
+        habits: [{ name: "A", minutes: 10, weekdays: [] }],
+      }),
+    ).toThrow(/empty/);
+    expect(() =>
+      habitSettingsToWire({
+        expectedRevision: 0,
+        habits: [
+          { name: "A", minutes: 10, weekdays: null },
+          { name: "A", minutes: 5, weekdays: null },
+        ],
+      }),
+    ).toThrow(/duplicate/);
+  });
+
+  it("projects the Grit refresh outcome beside the settings payload", () => {
+    const ok = projectHabitGritRefresh({
+      ...habitWire(),
+      refresh: { ok: true },
+    });
+    expect(ok.refresh).toEqual({ ok: true, reason: null });
+    expect(ok.settings.revision).toBe(2);
+    const failed = projectHabitGritRefresh({
+      ...habitWire(),
+      refresh: { ok: false, reason: "shortcut-not-found" },
+    });
+    expect(failed.refresh).toEqual({ ok: false, reason: "shortcut-not-found" });
+    // The failing read still answers the LAST cached inventory.
+    expect(failed.settings.inventory).toHaveLength(3);
+    expect(() =>
+      projectHabitGritRefresh({ ...habitWire(), refresh: { ok: "yes" } }),
+    ).toThrow(/boolean/);
+    expect(() => projectHabitGritRefresh(habitWire())).toThrow(/refresh/);
   });
 });

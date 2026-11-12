@@ -4,10 +4,11 @@ import { daySetupToWire, projectDaySetup, projectPlanInputs } from "./wire";
 import type { DaySetup } from "../model/types";
 import planInputs from "./contract-fixtures/plan-inputs.json";
 
-/* Habits are an ACTIVE list (Grit owns completion): the artifact lists every
-   habit in the Todoist Habits project and carries no completion accounting the
-   frontend reads. Legacy blocks that still carry `done`/`outstanding` project
-   fine and change nothing. */
+/* Habits are the day's habit list joined with the Grit read: a GRIT block
+   carries per-item `done`/`status` (the classifier's verdict) and an aggregate
+   `done`; a LEGACY Todoist/artifact block carries neither, so its items read
+   as not done and its retired `done`/`outstanding` pair is never mistaken for
+   today's completion. */
 
 const base: DaySetup = {
   anchor: null,
@@ -25,7 +26,7 @@ const LEGACY_ITEMS = [
 ];
 
 describe("habits items projection", () => {
-  it("projects every habit in the block and ignores completion", () => {
+  it("projects every habit in a legacy block and no completion at all", () => {
     const inputs = projectPlanInputs({
       ...(planInputs as object),
       habits: {
@@ -40,12 +41,49 @@ describe("habits items projection", () => {
     expect(habitsView(inputs.habits, undefined).rows.map((r) => r.key)).toEqual(["a", "b", "c"]);
   });
 
+  it("carries the Grit read's done and status per item", () => {
+    const inputs = projectPlanInputs({
+      ...(planInputs as object),
+      habits: {
+        total: 3, done: 2, outstanding: 1, est_minutes: 30,
+        items: [
+          { id: "Walk", content: "Walk", minutes: 30, done: true, status: "done" },
+          { id: "Read", content: "Read", minutes: 25, done: true, status: "failed" },
+          { id: "Write", content: "Write", minutes: 30, done: false, status: "partial" },
+        ],
+      },
+    });
+    expect(inputs.habits?.done).toBe(2);
+    expect(inputs.habits?.items).toEqual([
+      { id: "Walk", name: "Walk", minutes: 30, done: true, status: "done" },
+      { id: "Read", name: "Read", minutes: 25, done: true, status: "failed" },
+      { id: "Write", name: "Write", minutes: 30, done: false, status: "partial" },
+    ]);
+    // The capability note names what the day lists and what it still costs;
+    // completion stays item-level.
+    expect(inputs.habitsNote).toBe("3 habits · ~30min");
+  });
+
+  it("keeps an unknown status out and reads it as not done", () => {
+    const inputs = projectPlanInputs({
+      ...(planInputs as object),
+      habits: {
+        total: 1, done: 0, outstanding: 1, est_minutes: 15,
+        items: [{ id: "Walk", content: "Walk", minutes: 15, status: "skipped-ish" }],
+      },
+    });
+    expect(inputs.habits?.items).toEqual([{ id: "Walk", name: "Walk", minutes: 15 }]);
+    expect(inputs.habits?.items[0]?.done).toBeUndefined();
+    expect(inputs.habits?.done).toBeUndefined();
+  });
+
   it("keeps every item when a legacy block still reports done and outstanding", () => {
     const inputs = projectPlanInputs({
       ...(planInputs as object),
       habits: { total: 3, done: 2, outstanding: 1, est_minutes: 55, items: LEGACY_ITEMS },
     });
     expect(inputs.habits?.items).toHaveLength(3);
+    // The retired artifact count is not today's Grit completion.
     expect(inputs.habits?.done).toBeUndefined();
     expect(inputs.habits?.outstanding).toBeUndefined();
     const view = habitsView(inputs.habits, undefined);
@@ -72,6 +110,7 @@ describe("habits items projection", () => {
     });
     expect(inputs.habits?.items).toEqual([]);
     expect(inputs.habits?.estMinutes).toBe(45);
+    expect(inputs.habits?.done).toBeUndefined();
   });
 
   it("drops malformed item rows instead of failing the plan load", () => {
@@ -85,12 +124,29 @@ describe("habits items projection", () => {
     expect(inputs.habits?.items).toEqual([{ id: "ok", name: "Ok", minutes: 10 }]);
   });
 
-  it("writes a note about the active list, never completion", () => {
-    const three = projectPlanInputs({
+  it("writes one note for both block shapes, never a completion score", () => {
+    const legacy = projectPlanInputs({
       ...(planInputs as object),
       habits: { total: 3, done: 2, outstanding: 1, est_minutes: 55, items: LEGACY_ITEMS },
     });
-    expect(three.habitsNote).toBe("3 habits · ~55min");
+    expect(legacy.habitsNote).toBe("3 habits · ~55min");
+    const grit = projectPlanInputs({
+      ...(planInputs as object),
+      habits: {
+        total: 3, done: 1, outstanding: 2, est_minutes: 45,
+        items: [
+          { id: "Walk", content: "Walk", minutes: 30, done: true, status: "done" },
+          { id: "Read", content: "Read", minutes: 25, done: false, status: "none" },
+          { id: "Write", content: "Write", minutes: 20, done: false, status: "partial" },
+        ],
+      },
+    });
+    expect(grit.habitsNote).toBe("3 habits · ~45min");
+    expect(grit.habits?.done).toBe(1);
+    expect(legacy.habitsNote).toBe(grit.habitsNote?.replace("~45min", "~55min"));
+    for (const note of [legacy.habitsNote, grit.habitsNote]) {
+      expect(note).not.toMatch(/outstanding|active/i);
+    }
     const one = projectPlanInputs({
       ...(planInputs as object),
       habits: { total: 1, est_minutes: 10 },
@@ -98,7 +154,6 @@ describe("habits items projection", () => {
     expect(one.habitsNote).toBe("1 habit · ~10min");
     const none = projectPlanInputs({ ...(planInputs as object), habits: { total: 0 } });
     expect(none.habitsNote).toBeNull();
-    expect(three.habitsNote).not.toMatch(/outstanding|done/i);
   });
 });
 
