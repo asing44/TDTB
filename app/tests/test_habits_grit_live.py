@@ -555,3 +555,32 @@ class TestNeverBlocks:
             _wait_refresh_idle(client)
 
         assert statuses == [200, 200, 200]
+
+
+# ---------------------------------------------------------------------------
+# Regression: a usable Grit block must not short-circuit the live row read
+# ---------------------------------------------------------------------------
+
+class TestGritBlockKeepsLiveRowRead:
+    def test_live_mode_with_grit_cache_still_builds_todoist_rows(
+        self, client, live_sources_mode
+    ):
+        """Live 500 (2026-11-12): the Grit branch sat in the source-mode
+        if/elif chain, so the live branch never built the Todoist client or
+        its label catalogue and /plan-inputs raised UnboundLocalError."""
+        _save([{"name": "Read", "minutes": 10}])
+        _write_cache([("Read", 0.0, [])])
+        client.app.state.grit_runner = FakeRunner()
+        spy = SpyTodoist()
+        filter_reads: list[str] = []
+        spy.get_filter_tasks = lambda query, limit=None: (
+            filter_reads.append(query) or []
+        )
+        client.app.state.build_read_clients = lambda cfg: (spy, None)
+
+        body = _body(client)
+
+        assert _minutes(body) == {"Read": 10}
+        assert filter_reads, "the live Todoist row read did not run"
+        assert spy.project_task_reads == []
+        _wait_refresh_idle(client)

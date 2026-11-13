@@ -6294,10 +6294,13 @@ def create_app() -> FastAPI:
         grit_habits_block, grit_warnings = _grit_habits_source(app.state)
         if grit_habits_block is not None:
             # Grit is the source: no Todoist habit read and no artifact
-            # fallback happens on this path.
+            # fallback happens. The habit choice is independent of the
+            # source-mode branch below, which must still build the run's
+            # clients and rows (a Grit block once short-circuited it and left
+            # the Todoist client unbound).
             habits = grit_habits_block
             w_hab = grit_warnings
-        elif source_mode == app_config.SOURCES_MODE_ARTIFACT:
+        if source_mode == app_config.SOURCES_MODE_ARTIFACT:
             # The calendar store is NOT a live plan source the artifact
             # replaces: calendar, habits and anchored blocks keep their
             # current readers under the artifact seam (A1 fix). Obtain it
@@ -6309,8 +6312,9 @@ def create_app() -> FastAPI:
             artifact_block = artifact_result.as_digest_block()
             if artifact_result.status != artifact_source.STATUS_FRESH:
                 artifact_warnings = list(artifact_result.warnings)
-            habits = dict(artifact_result.habits)
-            w_hab = list(artifact_result.habit_warnings)
+            if grit_habits_block is None:
+                habits = dict(artifact_result.habits)
+                w_hab = list(artifact_result.habit_warnings)
             t_assigned = [
                 r for r in artifact_result.rows
                 if r.get("source") == "todoist" and r.get("assigned") is True
