@@ -572,6 +572,11 @@ function typeDeclarationToWire(
       throw new Error(`${key}.statuses contains an invalid value`);
     }
   }
+  // The union rule's status half needs its own names: the backend rejects
+  // "inherit" (null) and "off" ([]) here, so refuse before the round trip.
+  if (mode === "activeOrAssigned" && (statuses === null || statuses.length === 0)) {
+    throw new Error(`${key}.statuses must name at least one status for mode ${mode}`);
+  }
   return { mode, property: requiresProperty ? declaration.property : null, statuses };
 }
 

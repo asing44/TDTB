@@ -2461,8 +2461,12 @@ class CapacitiesAdapter:
         # The resolution needs the version-2 settings document, which is the
         # per-type declaration; the legacy mapping carrier keeps its shipped
         # review-candidate behaviour unchanged.
+        # The union mode (``activeOrAssigned``) has the same answer once its
+        # checkbox half is not set: status is then its only remaining signal,
+        # so an undecidable status is a drop for review, never a candidate an
+        # "Okay to plan all" could promote.
         status_only_undecidable = (
-            declared_mode == MODE_ACTIVE
+            declared_mode in (MODE_ACTIVE, MODE_ACTIVE_OR_ASSIGNED)
             and source_assigned is not True
             and vocabulary is not None
             and vocabulary.resolvable

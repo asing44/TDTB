@@ -2527,6 +2527,26 @@ describe("capacities settings schema v2 save body", () => {
     }
   });
 
+  it("requires named statuses for the status-or-Assigned mode", () => {
+    for (const statuses of [null, []]) {
+      expect(() =>
+        capacitiesSettingsToWire({
+          ...baseDraft(),
+          types: { s: { mode: "activeOrAssigned", property: "p1", statuses } },
+        }),
+      ).toThrow(/must name at least one status/);
+    }
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      types: { s: { mode: "activeOrAssigned", property: "p1", statuses: ["In Progress"] } },
+    }) as { types: Record<string, unknown> };
+    expect(wire.types.s).toEqual({
+      mode: "activeOrAssigned",
+      property: "p1",
+      statuses: ["In Progress"],
+    });
+  });
+
   it("rejects an unknown mode or an invalid structure id in the save draft", () => {
     expect(() =>
       capacitiesSettingsToWire({

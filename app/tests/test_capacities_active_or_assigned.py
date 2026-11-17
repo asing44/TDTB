@@ -452,3 +452,26 @@ def test_adapter_keeps_the_child_visible_when_the_project_is_not_admitted():
     )
     assert [row["name"] for row in result.items] == ["Above pegboard shelves"]
     assert ca.DROP_REASON_EMBEDDED_IN_PARENT not in result.drop_tally.get(ROOT_TASK, {})
+
+
+def _project_without_status(object_id: str, title: str, *, assigned):
+    obj = _project(object_id, title, assigned=bool(assigned), status="In Progress")
+    obj["properties"][STATUS_PROP] = _prop("label", "label", [])
+    if assigned is None:
+        del obj["properties"][ASSIGNED_PROP]
+    return obj
+
+
+def test_adapter_drops_an_unchecked_project_with_no_status_for_review():
+    # Same as ``active``: no status and no checkbox leaves no admission signal,
+    # so the row must never become a candidate "Okay to plan all" can promote.
+    for assigned in (False, None):
+        result = _read([_project_without_status(PARENT_ID, "Bedroom Upgrades", assigned=assigned)])
+        assert result.items == [], assigned
+        assert result.drop_tally[PROJECTS].get(ca.DROP_REASON_NO_ASSIGNMENT, 0) == 1, result.drop_tally
+        assert any("status_unknown" in line for line in result.warnings), result.warnings
+
+
+def test_adapter_admits_a_checked_project_with_no_status():
+    result = _read([_project_without_status(PARENT_ID, "Garage Buildout", assigned=True)])
+    assert [row["name"] for row in result.items] == ["Garage Buildout"]

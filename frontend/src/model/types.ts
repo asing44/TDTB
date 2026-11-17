@@ -23,9 +23,10 @@ export interface CapacitiesNativePolicy {
   deadlineHorizonDays: number;
 }
 
-/** The five admission modes, mirrored from the backend's `TYPE_MODES`.
+/** The admission modes, mirrored from the backend's `TYPE_MODES`.
     Exactly one mode per structure, which is why the old contradictory dual
-    declaration is no longer representable. */export type CapacitiesTypeMode =
+    declaration is no longer representable. */
+export type CapacitiesTypeMode =
   | "off"
   | "active"
   | "assigned"
