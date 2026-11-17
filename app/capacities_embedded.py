@@ -32,6 +32,18 @@ ENTITY_BLOCK = "entityblock"
 #: The fixed, content-free warning a failed page-body read contributes.
 BLOCKS_READ_WARNING = "page body unreadable"
 
+#: The two structures whose page bodies can embed a child task: Project and
+#: Continual. A refresh reads a page body for these structures only, because no
+#: other structure is an embedding parent in the owner's Capacities model; the
+#: ids are the live structure ids, the same way ``NATIVE_TASK_STRUCTURES`` names
+#: the native task structure by id rather than by display name.
+EMBEDDING_PARENT_STRUCTURES = frozenset(
+    {
+        "0d194525-c5a1-4af5-bb62-202b83006b5e",  # Project
+        "e16f8eeb-1d66-4f21-8d3a-adaeff0a75be",  # Continual
+    }
+)
+
 
 def _text(value: Any) -> str | None:
     """A trimmed string, or ``None`` for anything else."""
@@ -126,6 +138,22 @@ def embedded_child_map(
                 continue
             children[child] = (parent_id, title)
     return children
+
+
+def parent_pages_warning(count: int) -> str:
+    """One bounded line for the parent page bodies this refresh could not read.
+
+    Aggregated on purpose: a failed page-body read hides nothing, so the only
+    thing the operator must learn is how many parents kept their children
+    visible. No object id, title, or exception text is ever included, and the
+    line is empty when every read succeeded.
+    """
+    if count < 1:
+        return ""
+    noun = "parent page" if count == 1 else "parent pages"
+    return (
+        f"{count} {noun} could not be read; their child tasks were left visible."
+    )
 
 
 def read_blocks(
