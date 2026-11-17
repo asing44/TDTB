@@ -95,6 +95,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
 
 import capacities_adapter
 import capacities_cache_io
+import capacities_embedded
 import capacities_refresh_state as refresh_state
 import capacities_schema
 import capacities_tag_titles
@@ -1021,12 +1022,20 @@ class PacedProvider:
         """Forward the split provider's run reports, and only those.
 
         ``read_counts`` and ``read_source`` exist on the wrapped provider only
-        when it serves reads from more than one source. Forwarding them
-        unconditionally would make a plain REST provider look split; raising
-        ``AttributeError`` otherwise keeps the coordinator's ``getattr`` probe
-        falling back to the REST-only defaults.
+        when it serves reads from more than one source. The page-body seam is
+        forwarded the same way and for the same reason: a plain REST provider
+        cannot read a page body, so it must look like it has no such read at all
+        rather than answering for one. Forwarding unconditionally would make a
+        plain REST provider look split; raising ``AttributeError`` otherwise
+        keeps the coordinator's ``getattr`` probe falling back to the REST-only
+        defaults.
         """
-        if name in ("read_counts", "read_source"):
+        if name in (
+            "read_counts",
+            "read_source",
+            "get_object_blocks",
+            "supports_object_blocks",
+        ):
             return getattr(self.raw, name)
         raise AttributeError(name)
 
@@ -1456,6 +1465,10 @@ class RefreshCoordinator:
         #: per run, reported through the job's ``progress.metrics``.
         self._retried_reads = 0
         self._retry_recovered = 0
+        #: How many Project/Continual page bodies this run could not read. Each
+        #: one is fail-open (nothing hidden), and the count reaches the job's
+        #: warnings as exactly one aggregated line. Reset per run.
+        self._parent_pages_unread = 0
 
     # -- paths / persistence -------------------------------------------
 
@@ -1907,6 +1920,13 @@ class RefreshCoordinator:
         # The per-object read diagnostics ride the same bounded channel, so an
         # operator can tell which object failed and with which exception class.
         warnings = [*warnings, *self._unreadable_object_warnings()]
+        # One aggregated, content-free line for the page bodies this run could
+        # not read: their child tasks are visible, which is the fail-open answer.
+        page_warning = capacities_embedded.parent_pages_warning(
+            self._parent_pages_unread
+        )
+        if page_warning and page_warning not in warnings:
+            warnings = [*warnings, page_warning]
         existing = list(job.get("warnings", ()))
         for warning in warnings:
             if warning not in existing:
@@ -2537,10 +2557,48 @@ class RefreshCoordinator:
                 "A required Capacities object read was malformed; no complete "
                 "result was published."
             )
+        self._attach_parent_blocks(object_id, type_key, content)
         self.store.put(
             object_id, type_key, content, content_read_at=self._wall_clock()
         )
         return content, True
+
+    def _attach_parent_blocks(
+        self, object_id: str, type_key: str, content: dict[str, Any]
+    ) -> None:
+        """Attach one Project/Continual page body to the content record.
+
+        Runs only for the two embedding parent structures, because no other
+        structure carries child tasks in its page body, so no other read spends
+        a budget slot on one.
+
+        The body is attached *before* the content is cached, and the cache is
+        the only copy of it this run keeps: a later refresh that reuses this
+        content therefore reuses its body too, with no second read. A cache
+        written before this feature simply has no body, which hides nothing.
+
+        Fail-open (see :mod:`capacities_embedded`): a missing, refused, or failed
+        read leaves ``blocks`` absent, so every child stays visible, and the run
+        counts one unread parent for its single aggregated warning. It never
+        fails the object read, and it never raises.
+        """
+        if type_key not in capacities_embedded.EMBEDDING_PARENT_STRUCTURES:
+            return
+        reader = getattr(self.provider, "get_object_blocks", None)
+        if not callable(reader):
+            # No page-body seam at all: an ordinary REST-only run, not a
+            # failure, so it contributes no warning.
+            return
+        # A property on the split source, so this reads a bool, not a method.
+        if getattr(self.provider, "supports_object_blocks", True) is False:
+            # The run has no page-body source right now (MCP never opened or
+            # fell back), which the fallback warning already reports.
+            return
+        body, warning = capacities_embedded.read_blocks(reader, object_id)
+        if body is not None:
+            content["blocks"] = body
+        elif warning is not None:
+            self._parent_pages_unread += 1
 
     def _read_object(self, object_id: str, type_key: str, *, rescan: bool):
         """Read one object, retrying ONE transient failure through the pacer.

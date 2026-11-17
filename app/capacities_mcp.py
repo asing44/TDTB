@@ -64,6 +64,7 @@ import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
@@ -91,6 +92,10 @@ AUTHORIZATION_SERVER_METADATA_URL = (
 CONTENT_TOOL_SUFFIX = "getObjectContent"
 #: The one argument the content tool takes.
 CONTENT_TOOL_ARGUMENT = "id"
+#: The page-body tool is resolved the same way, and takes its id under a
+#: different argument name. It is a separate budget line from content reads.
+BLOCKS_TOOL_SUFFIX = "readObjectBlocks"
+BLOCKS_TOOL_ARGUMENT = "objectId"
 #: Placeholder redirect URI. This provider never runs a consent flow; the value
 #: exists only so ``OAuthClientMetadata`` validates (a refresh sends no
 #: ``redirect_uri``). It is the same loopback origin the authorize CLI uses.
@@ -138,6 +143,7 @@ _MAX_LOG_MESSAGE = 200
 _UNUSABLE_PAYLOAD = "capacities MCP content payload is not usable"
 _TOOL_ERROR = "capacities MCP content tool reported an error"
 _MISSING_IDENTITY = "capacities MCP content read needs an object id and a structure id"
+_UNUSABLE_BLOCKS = "capacities MCP page-body payload is not usable"
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +555,12 @@ class McpProvider:
         #: The recorded metadata failure. The document is fetched once per
         #: provider: a transient 5xx must not be re-fetched on every read.
         self._metadata_error: BaseException | None = None
+        #: Page-body reads run on the refresh read loop while content reads run
+        #: on the MCP worker, so session/portal creation and teardown are
+        #: serialized: two threads must never each open a session (and leak the
+        #: loser's stream and loop thread). Re-entrant because opening a
+        #: session can abandon (discard) it on failure.
+        self._session_lock = threading.RLock()
         self._portal_cm: Any = None
         self._portal: Any = None
         self._sync_cm: Any = None
@@ -556,6 +568,7 @@ class McpProvider:
         self._session: McpSession | None = None
         self._auth: OAuthClientProvider | None = None
         self._tool_name: str | None = None
+        self._blocks_tool_name: str | None = None
 
     def __repr__(self) -> str:
         # Deliberately carries no path and no credential.
@@ -634,6 +647,40 @@ class McpProvider:
             payload, structure_id=structure, space_id=self._space_id
         )
 
+    def read_object_blocks(self, object_id: str) -> dict[str, Any]:
+        """One page-body read: the raw ``{"blocks": {...}}`` payload.
+
+        Deliberately NOT normalized: a page body is not object content, so no
+        REST shape exists to normalize it to. The payload is returned as the
+        provider sent it, and the caller reads only its ``blocks`` mapping.
+
+        Unlike a content read, a failure here never abandons the session: a page
+        body is a display detail (which child tasks are embedded), so the read
+        fails open and must not cost the run its content source. The caller
+        swallows the exception, hides nothing, and stops asking for the run.
+        """
+        identity = _text(object_id)
+        if identity is None:
+            raise capacities_adapter.CapacitiesContractError(_MISSING_IDENTITY)
+        session = self._ensure_session()
+        tool_name = self._blocks_tool()
+        arguments = {BLOCKS_TOOL_ARGUMENT: identity}
+        try:
+            result = self._portal.call(
+                functools.partial(
+                    session.call_tool,
+                    tool_name,
+                    arguments,
+                    read_timeout_seconds=timedelta(seconds=self._timeout),
+                )
+            )
+        except (KeyboardInterrupt, SystemExit):  # pragma: no cover - operator signals
+            raise
+        payload = payload_from_result(result)
+        if not isinstance(payload.get("blocks"), dict):
+            raise capacities_adapter.CapacitiesContractError(_UNUSABLE_BLOCKS)
+        return payload
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -657,6 +704,13 @@ class McpProvider:
         return self._portal
 
     def _ensure_session(self) -> McpSession:
+        session = self._session
+        if session is not None:
+            return session
+        with self._session_lock:
+            return self._open_session()
+
+    def _open_session(self) -> McpSession:
         if self._session is not None:
             return self._session
         install_secret_free_logging()
@@ -751,6 +805,24 @@ class McpProvider:
         # "The tool is unavailable" is a documented R6 fallback condition.
         raise unavailable_from(None)
 
+    def _blocks_tool(self) -> str:
+        """The resolved page-body tool name, cached for this session."""
+        if self._blocks_tool_name is not None:
+            return self._blocks_tool_name
+        try:
+            listed = self._portal.call(self._session.list_tools)
+        except (KeyboardInterrupt, SystemExit):  # pragma: no cover
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            raise self._abandon(exc) from None
+        for tool in getattr(listed, "tools", None) or []:
+            name = getattr(tool, "name", None)
+            if isinstance(name, str) and name.endswith(BLOCKS_TOOL_SUFFIX):
+                self._blocks_tool_name = name
+                return name
+        # No page-body tool: the read fails open, and the caller stops asking.
+        raise unavailable_from(None)
+
     def _abandon(self, cause: BaseException | None) -> Any:
         """Discard the session and return the source-loss exception to raise.
 
@@ -763,6 +835,10 @@ class McpProvider:
 
     def _discard_session(self) -> BaseException | None:
         """Close the session, then stop the loop. Returns the exit error, if any."""
+        with self._session_lock:
+            return self._discard_session_locked()
+
+    def _discard_session_locked(self) -> BaseException | None:
         context_manager = self._sync_cm
         recorder = self._session_context
         self._sync_cm = None
@@ -770,6 +846,7 @@ class McpProvider:
         self._session = None
         self._auth = None
         self._tool_name = None
+        self._blocks_tool_name = None
         error: BaseException | None = None
         if context_manager is not None:
             try:

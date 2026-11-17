@@ -204,6 +204,8 @@ class FakeMcp:
         *,
         begin_error: BaseException | None = None,
         behaviors=None,
+        blocks=None,
+        blocks_error: BaseException | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._contents = dict(contents or {})
@@ -212,6 +214,11 @@ class FakeMcp:
         self.begin_calls = 0
         self.end_calls = 0
         self.calls: list[tuple[str, str | None]] = []
+        #: Page bodies served by the page-body tool, and its own call log: a
+        #: body read is a separate MCP tool, so it is counted separately too.
+        self._blocks = dict(blocks or {})
+        self.blocks_error = blocks_error
+        self.blocks_calls: list[str] = []
         #: Fires after each MCP read, which is how a test gates the REST worker
         #: behind the first MCP claim without a sleep.
         self.on_get = None
@@ -240,6 +247,14 @@ class FakeMcp:
     def ids(self) -> list[str]:
         with self._lock:
             return [object_id for object_id, _ in self.calls]
+
+    def read_object_blocks(self, object_id: str) -> dict:
+        """The raw page-body payload, exactly as ``McpProvider`` returns it."""
+        with self._lock:
+            self.blocks_calls.append(object_id)
+        if self.blocks_error is not None:
+            raise self.blocks_error
+        return {"blocks": self._blocks.get(object_id, {})}
 
 
 class SplitProvider:
@@ -318,6 +333,13 @@ class SplitProvider:
     def get_object(self, object_id, *, for_completion: bool = False):
         return self._bound().get_object(object_id, for_completion=for_completion)
 
+    @property
+    def supports_object_blocks(self) -> bool:
+        return self._bound().supports_object_blocks
+
+    def get_object_blocks(self, object_id: str):
+        return self._bound().get_object_blocks(object_id)
+
     def prime(self, entries) -> None:
         self.primed.extend(tuple(entry) for entry in entries)
         self._bound().prime(entries)
@@ -350,14 +372,18 @@ class SplitProvider:
             self.rest.close()
 
 
-def split_provider(*, objects, structures=None, behaviors=None, begin_error=None):
+def split_provider(
+    *, objects, structures=None, behaviors=None, begin_error=None, blocks=None
+):
     """A REST double plus an MCP double over the same objects, as one provider."""
     rest = _paged_provider(objects=objects, structures=structures)
     contents = {}
     for type_id, ids in objects.items():
         for object_id in ids:
             contents[object_id] = _content(object_id, type_id)
-    mcp = FakeMcp(contents, behaviors=behaviors, begin_error=begin_error)
+    mcp = FakeMcp(
+        contents, behaviors=behaviors, begin_error=begin_error, blocks=blocks
+    )
     return SplitProvider(rest, mcp), rest, mcp
 
 

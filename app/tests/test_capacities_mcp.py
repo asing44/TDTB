@@ -806,3 +806,38 @@ def test_the_provider_never_prints_a_credential_in_its_own_repr(tmp_path):
         assert str(tmp_path) not in repr(provider)
     finally:
         provider.close()
+
+
+class _SlowFactory(FakeFactory):
+    """Widens the session-open window so two threads would both open one."""
+
+    def __call__(self, auth):
+        time.sleep(0.2)
+        return super().__call__(auth)
+
+
+def test_two_threads_open_one_session(tmp_path):
+    # Page-body reads (refresh read loop) and content reads (MCP worker) can
+    # both be first to need the session; only one may open it.
+    factory = _SlowFactory()
+    provider = _provider(_storage(tmp_path), factory)
+    sessions: list = []
+    errors: list = []
+
+    def open_session():
+        try:
+            sessions.append(provider._ensure_session())
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=open_session) for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        provider.close()
+    assert errors == []
+    assert factory.opens == 1
+    assert len(sessions) == 2 and sessions[0] is sessions[1]
