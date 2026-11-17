@@ -82,6 +82,20 @@ export interface CapacitiesDeclarationDiagnostic {
   structureLabel: string;
   /** The server's one-sentence explanation, shown verbatim. */
   reason: string;
+  /** Additive fallback detail: the property id the declaration pins, present
+      only when the read still satisfies that declaration by following the
+      property's last-known NAME instead of this id. The panel then says so in
+      one short sentence instead of the longer server sentence, and keeps the
+      ids secondary. Each field is absent when the backend sends nothing (a
+      plain drift entry, or an older backend), so such an entry renders exactly
+      as before. */
+  declaredProperty?: string;
+  /** The live property id the remembered name resolved to. */
+  resolvedProperty?: string;
+  /** The remembered display name the read is following, e.g. `Assigned`. */
+  propertyName?: string;
+  /** ISO-8601 UTC moment that name was last observed for the saved id. */
+  since?: string;
 }
 
 /** The local, versioned Capacities policy returned by the settings API.

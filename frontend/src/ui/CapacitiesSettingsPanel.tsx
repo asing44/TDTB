@@ -44,6 +44,7 @@ import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
   CapacitiesCatalog,
+  CapacitiesDeclarationDiagnostic,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesTypeDeclaration,
@@ -62,6 +63,58 @@ function messageOf(error: unknown): string {
 /** Advisories listed inline before the rest fold into one "and N more" tail,
     so a long drift list cannot push the rule controls off the panel. */
 export const CAPACITIES_DECLARATION_DIAGNOSTIC_CAP = 5;
+
+/** The moment a remembered property name was last observed, as the short
+    "Nov 17" form used elsewhere in the panel. An unusable timestamp yields
+    null so the sentence simply omits it instead of printing a broken date. */
+function observedDay(since: string): string | null {
+  const at = new Date(since);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** The plain sentence for a declaration the read still honours by following
+    the property's remembered NAME: the saved id is gone, yet the type admits
+    things today, so the ask is to re-pick the property and make it permanent.
+
+    Null when the server sent no name — the panel then shows its own reason
+    verbatim, exactly as for a plain drift entry. The backend's sentence is not
+    reused here because it quotes two raw property ids, which is what makes a
+    fallback read like a failure rather than a repair. */
+/** Headline chip: a fallback entry still admits (it follows a remembered
+    name), so only entries without one "do nothing yet". */
+function declarationHeadline(diagnostics: CapacitiesDeclarationDiagnostic[]): string {
+  const following = diagnostics.filter((d) => d.propertyName).length;
+  const idle = diagnostics.length - following;
+  const parts: string[] = [];
+  if (idle > 0) parts.push(idle === 1 ? "1 mapping does nothing yet" : `${idle} mappings do nothing yet`);
+  if (following > 0) {
+    parts.push(
+      following === 1 ? "1 mapping follows a property by name" : `${following} mappings follow a property by name`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+function fallbackSentence(diagnostic: CapacitiesDeclarationDiagnostic): string | null {
+  const name = diagnostic.propertyName;
+  if (!name) return null;
+  const day = diagnostic.since ? observedDay(diagnostic.since) : null;
+  const following = day
+    ? `following '${name}' by name since ${day}`
+    : `following '${name}' by name`;
+  return `${following} — the saved property is gone. Re-pick it to make this permanent.`;
+}
+
+/** The saved and resolved property ids of a fallback entry, shown only as a
+    hover detail: the entry's sentence is the message, the ids are provenance. */
+function fallbackIdsTitle(diagnostic: CapacitiesDeclarationDiagnostic): string | undefined {
+  if (!diagnostic.declaredProperty) return undefined;
+  const resolved = diagnostic.resolvedProperty;
+  return resolved
+    ? `saved property ${diagnostic.declaredProperty}, following ${resolved}`
+    : `saved property ${diagnostic.declaredProperty}`;
+}
 
 /** The draft is a full-replacement document: every key the save route replaces
     wholesale is copied here, including each declaration's `statuses`
@@ -183,6 +236,8 @@ export function CapacitiesSettingsPanel({
   // the last published Capacities contract does not define, so it admits
   // nothing today. Non-blocking — the panel still saves, and nothing here
   // edits a declaration. The list is bounded so a long drift list stays compact.
+  // An entry carrying the by-name fallback details is the exception: that type
+  // does admit things today, so it reads as a repair rather than a failure.
   const declarationDiagnostics = settings?.declarationDiagnostics ?? [];
   const shownDeclarationDiagnostics = declarationDiagnostics.slice(
     0,
@@ -391,13 +446,13 @@ export function CapacitiesSettingsPanel({
               >
                 <p class="capacities-declarations__head">
                   <span class="chip chip--warn">
-                    {declarationDiagnostics.length === 1
-                      ? "1 mapping does nothing yet"
-                      : `${declarationDiagnostics.length} mappings do nothing yet`}
+                    {declarationHeadline(declarationDiagnostics)}
                   </span>
                   <span>
                     This is a saved setting, not a read failure. Planning still works; pick a live
-                    property in the rule below, or switch that type off.
+                    property in the rule below{declarationDiagnostics.every((d) => d.propertyName)
+                      ? "."
+                      : ", or switch that type off."}
                   </span>
                 </p>
                 <ul class="capacities-declarations__list">
@@ -410,7 +465,12 @@ export function CapacitiesSettingsPanel({
                           ? diagnostic.structureLabel
                           : diagnostic.structureId}
                       </strong>
-                      <span class="capacities-declarations__reason">{diagnostic.reason}</span>
+                      <span
+                        class="capacities-declarations__reason"
+                        title={fallbackIdsTitle(diagnostic)}
+                      >
+                        {fallbackSentence(diagnostic) ?? diagnostic.reason}
+                      </span>
                     </li>
                   ))}
                 </ul>
