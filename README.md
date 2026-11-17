@@ -24,6 +24,24 @@ cockpit plan referenced above is host-owned history, preserved in the Claudius
 repo's `Plans Link/`. Installed launchd files, restart links, and other
 machine-local wiring are projections, not project source.
 
+## Plan-row diffs across commits
+
+`tools/plan_diff.py` shows what a Capacities plan change does to real rows:
+it materializes a base ref and a head ref as detached worktrees, evaluates
+each ref's own offline projection (`read_direct_intake` + `load_direct_rows`)
+over one private copy of the machine-local cache, and reports rows only in
+base, only in head, changed fields, hidden children with their parents, and
+any row that vanished with no recorded drop reason. It is read-only and
+offline (Capacities only).
+
+```bash
+app/.venv/bin/python tools/plan_diff.py --base d47b8c7 --head HEAD --day 2026-11-17 \
+  --md-out docs/reports/2026-11-17-child-task-plan-diff.md --fail-on-unexplained
+```
+
+Run reports live under `docs/reports/`. Failure drills for the page-body read
+path are `app/tests/test_stress_drills.py`.
+
 ## Current boundary
 
 Phase 1 establishes this project boundary and keeps the existing app in place.
