@@ -621,7 +621,10 @@ def placement_window_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Preserve the schedulable source metadata for the frontend and the
         # write-preview routing, without copying the whole prompt item into a
         # sequence row.
-        for key in ("source", "mint_session", "mint_session_id", "calendar_class"):
+        for key in (
+            "source", "mint_session", "mint_session_id", "calendar_class",
+            "title",
+        ):
             if key in item:
                 row[key] = item[key]
         rows.append(row)
@@ -635,7 +638,10 @@ def placement_window_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "end": f"{window[1] // 60:02d}:{window[1] % 60:02d}",
             "zone": item.get("zone"),
         }
-        for key in ("source", "mint_session", "mint_session_id", "calendar_class"):
+        for key in (
+            "source", "mint_session", "mint_session_id", "calendar_class",
+            "title",
+        ):
             if key in item:
                 row[key] = item[key]
         rows.append(row)

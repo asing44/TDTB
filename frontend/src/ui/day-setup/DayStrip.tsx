@@ -86,6 +86,8 @@ const ANCHOR_ROW_PREFERENCE: Record<string, number> = {
 export interface StripSession {
   id: string;
   name: string;
+  /** Time-free display title; falls back to ``name``. */
+  title?: string;
   start: string;
   end: string;
 }
@@ -196,9 +198,12 @@ export interface DayStripProps {
 }
 
 /** The visible label of a Mint slot: a chosen session reads "Mint session · 1h";
-    an unchosen ghost slot keeps its own name. */
-function slotText(session: { name: string; start: string; end: string }, selected: boolean): string {
-  if (!selected) return session.name;
+    an unchosen ghost slot keeps its own time-free display title. */
+function slotText(
+  session: { name: string; title?: string; start: string; end: string },
+  selected: boolean,
+): string {
+  if (!selected) return session.title ?? session.name;
   const mins = toMinutes(session.end) - toMinutes(session.start);
   const h = Math.floor(mins / 60);
   const m = mins % 60;
@@ -1080,7 +1085,7 @@ export function DayStrip(props: DayStripProps) {
                 pos.last ? " strip-slot--run-last" : ""
               }`;
               const slotStyle = { left: `${left}%`, width: `${width}%` };
-              const slotLabel = `${session.name} ${display12h(session.start)}–${display12h(session.end)} — ${
+              const slotLabel = `${session.title ?? session.name} ${display12h(session.start)}–${display12h(session.end)} — ${
                 blocked ? "blocked by wall" : selected ? "selected" : "available"
               }`;
               if (props.readOnly) {

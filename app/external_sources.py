@@ -1159,7 +1159,15 @@ def mint_session_options(config: dict[str, Any]) -> list[dict[str, str]]:
             seen.add(session_id)
             out.append({
                 "id": session_id,
+                # ``name`` is the STABLE identity (persisted selections accept
+                # it, the block row's id, the commit ledger's ``touched`` key),
+                # so it keeps the timestamp that makes sibling sessions in one
+                # slot distinct.
                 "name": f"Mint {label} · {_fmt_hhmm(session_start)}",
+                # ``title`` is what the owner reads and what TDTB writes to the
+                # calendar: the block's start is already beside it, so the
+                # timestamp is noise (cockpit showed "Mint Afternoon · 16:00").
+                "title": f"Mint {label}",
                 "slot": label,
                 "start": _fmt_hhmm(session_start),
                 "end": _fmt_hhmm(session_end),
@@ -1468,6 +1476,7 @@ def build_schedulable_blocks(
                     items.append({
                         "id": option["name"],
                         "name": option["name"],
+                        "title": option["title"],
                         "blocks": 1,
                         "duration": 30,
                         "source": "schedulable",

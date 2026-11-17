@@ -74,7 +74,13 @@ export function placedBlocks(s: AppState): { blocks: PlacedBlock[]; unplaced: Un
     calendarWalls(effective),
   );
   for (const m of sessions.filter((x) => ids.includes(x.id))) {
-    blocks.push({ id: m.id, name: m.name, start: m.start, end: m.end, lane: "mint" });
+    blocks.push({
+      id: m.id,
+      name: m.title ?? m.name,
+      start: m.start,
+      end: m.end,
+      lane: "mint",
+    });
   }
 
   const work = (s.sequence ?? []).filter((r) => r.kind === "work");

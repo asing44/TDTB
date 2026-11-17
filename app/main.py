@@ -4223,6 +4223,34 @@ def _frame_for_writes(
     return frame.as_dict()
 
 
+def _restamp_display_titles(
+    rows: list[dict[str, Any]], sched_items: list[Any],
+) -> None:
+    """Stamp each committed row's display ``title`` from the server projection.
+
+    A display title is server metadata, never client input: the calendar
+    create writes it verbatim. A row the server gave a title (Mint sessions)
+    gets that title by id/name; any title the client sent for another row is
+    dropped.
+    """
+    server_titles: dict[str, str] = {}
+    for item in sched_items:
+        if not isinstance(item, dict):
+            continue
+        item_title = str(item.get("title") or "").strip()
+        if not item_title:
+            continue
+        for key in (item.get("id"), item.get("name")):
+            if key:
+                server_titles[str(key).strip()] = item_title
+    for row in rows:
+        stamped = server_titles.get(str(row.get("id") or "").strip())
+        if stamped:
+            row["title"] = stamped
+        else:
+            row.pop("title", None)
+
+
 def _mint_grant_placed_row_ids(
     authorized_matches: list[tuple[dict[str, Any], dict[str, Any]]],
     sequence_rows: list[dict[str, Any]],
@@ -8324,6 +8352,8 @@ def create_app() -> FastAPI:
                 detail=f"commit refused: server schedulable eligibility unavailable ({exc})"
                        " — nothing was written",
             ) from exc
+
+        _restamp_display_titles(valid_rows, sched_items)
 
         # The caller's pin list is only diagnostic input. Native protection is
         # server-derived for the assigned rows actually included in this

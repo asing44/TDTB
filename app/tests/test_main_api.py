@@ -1263,6 +1263,9 @@ class TestSequenceInjection:
             "mint_session": True,
             "mint_session_id": "mint:morning:08:30",
             "calendar_class": "mint",
+            # Time-free display title (the block time is already shown); the
+            # id stays the timestamped identity.
+            "title": "Mint Morning",
         }]
 
     def test_sequence_reconciles_a_dropped_leading_icon(self, client, monkeypatch):

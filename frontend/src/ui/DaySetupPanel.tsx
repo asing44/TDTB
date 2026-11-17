@@ -1227,7 +1227,7 @@ export function DaySetupPanel({
                   data-selected={checked ? "true" : "false"}
                   key={session.id}
                 >
-                  <span>{session.name}</span>
+                  <span>{session.title ?? session.name}</span>
                   <span>{display12h(session.start)}–{display12h(session.end)}</span>
                   <span class="mint-session-row__state">{sessionState}</span>
                 </div>
