@@ -136,12 +136,10 @@ copy_state_into() {
   done
 
   if [[ -d "$STATE_HOME/state" ]]; then
-    if ! rsync -a \
-      --exclude='*.lock' \
-      --exclude='.env' \
-      --exclude='*.env' \
-      --exclude='capacities-mcp' \
-      "$STATE_HOME/state/" "$dest/state/"; then
+    # The seat is still running, so a run record can vanish between rsync's
+    # listing and its copy. One retry settles that race; a real failure
+    # (permissions, full disk) fails both attempts.
+    if ! copy_state_dir "$dest" && ! copy_state_dir "$dest"; then
       print -u2 -- "  snapshot    FAILED — could not copy state/"
       return 1
     fi
@@ -158,13 +156,27 @@ copy_state_into() {
   return 0
 }
 
+copy_state_dir() {
+  rsync -a \
+    --exclude='*.lock' \
+    --exclude='.env' \
+    --exclude='*.env' \
+    --exclude='capacities-mcp' \
+    "$STATE_HOME/state/" "$1/state/"
+}
+
+# Keep the snapshot just taken plus the newest BACKUP_KEEP-1 others. Ranking
+# is by NAME (the timestamp in it), never by mtime, and `keep` itself is never
+# a deletion candidate, so clock skew or restored backup sets cannot delete
+# the backup this run is about to advertise.
 prune_snapshots() {
-  local old
+  local keep="$1" old
   local -a snaps
 
-  snaps=( $BACKUP_ROOT/pre-restart-*(Nom) )
-  (( $#snaps > BACKUP_KEEP )) || return 0
-  for old in "${snaps[@]:$BACKUP_KEEP}"; do
+  snaps=( $BACKUP_ROOT/pre-restart-*(N/On) )
+  snaps=( ${snaps:#$keep} )
+  (( $#snaps > BACKUP_KEEP - 1 )) || return 0
+  for old in "${snaps[@]:$(( BACKUP_KEEP - 1 ))}"; do
     rm -rf -- "$old" 2>/dev/null
   done
   return 0
@@ -191,7 +203,7 @@ snapshot_state() {
     return 1
   fi
 
-  prune_snapshots
+  prune_snapshots "$dest"
   print -- "$dest"
 }
 
@@ -296,8 +308,14 @@ if [[ -z "$health" ]]; then
   print -u2 -- "  rollback — run these by hand; nothing was reverted automatically:"
   print -u2 -- "    1. unload the broken job:      launchctl bootout gui/$UID/$LABEL"
   print -u2 -- "    2. return to the last good:    git -C '$TASK_DIR' switch --detach ${last_good:-<commit>}"
-  print -u2 -- "    3. restore the snapshot:       rsync -a '$snapshot_path'/state/ '$STATE_HOME'/state/"
-  print -u2 -- "       plus the top-level files it holds:  cp -p '$snapshot_path'/config.json '$snapshot_path'/producer-rules.json '$STATE_HOME'/"
+  # Name only what the snapshot actually holds, so every printed command runs.
+  # The restore overlays: files the broken run created are left in place.
+  local_files=( $snapshot_path/*(N.) )
+  print -u2 -- "    3. restore the snapshot (overlays; new files are kept):"
+  [[ -d "$snapshot_path/state" ]] \
+    && print -u2 -- "       rsync -a '$snapshot_path'/state/ '$STATE_HOME'/state/"
+  (( $#local_files )) \
+    && print -u2 -- "       cp -p ${(j: :)${(qq)local_files}} '$STATE_HOME'/"
   print -u2 -- "    4. restart on that code:       zsh '$TASK_DIR'/restart-live.sh --no-build"
   print -u2 -- ""
   exit 1

@@ -205,7 +205,8 @@ def test_pruning_keeps_the_newest_five(seat):
     now = time.time()
     old_dirs = []
     for age in range(7, 0, -1):
-        path = seat.backups / f"pre-restart-2020010{age}-000000"
+        # Names carry the timestamp, oldest first, matching the mtimes.
+        path = seat.backups / f"pre-restart-2020010{8 - age}-000000"
         path.mkdir()
         (path / "config.json").write_text("{}")
         stamp = now - age * 100
@@ -223,6 +224,41 @@ def test_pruning_keeps_the_newest_five(seat):
         assert pruned not in remaining
     for kept in old_dirs[3:]:
         assert kept in remaining
+
+
+def test_pruning_never_deletes_the_snapshot_just_taken(seat):
+    # Five older snapshots whose mtimes are in the future (clock skew, a restored
+    # backup set) must not push the fresh snapshot out of the kept set.
+    seat.backups.mkdir()
+    future = time.time() + 3600
+    for n in range(1, 6):
+        path = seat.backups / f"pre-restart-2020010{n}-000000"
+        path.mkdir()
+        os.utime(path, (future, future))
+
+    result = seat.run("--no-build")
+
+    assert result.returncode == 0, result.stderr
+    fresh = next(
+        line.split("snapshot    ", 1)[1]
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("snapshot    ")
+    )
+    assert Path(fresh).is_dir()
+    assert len(seat.snapshots()) == 5
+    assert not (seat.backups / "pre-restart-20200101-000000").exists()
+
+
+def test_rollback_names_only_files_the_snapshot_holds(tmp_path):
+    seat = Seat(tmp_path / "seat", healthy=False)
+    (seat.state_home / "producer-rules.json").write_text("{}")
+
+    result = seat.run("--no-build", TDTB_HEALTH_TIMEOUT="2")
+
+    assert result.returncode != 0
+    assert "producer-rules.json" in result.stderr
+    assert "config.json" not in result.stderr
+    assert "/state/ " not in result.stderr
 
 
 def test_failed_snapshot_aborts_before_anything_is_stopped(seat):

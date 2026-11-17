@@ -78,7 +78,8 @@ switch.
 `$TDTB_HOME/backups/pre-restart-YYYYMMDD-HHMMSS/` before it stops anything —
 `config.json`, `producer-rules.json`, `state/`, and the
 `tdtb-capacities-*.json` caches, excluding `*.lock`, env files, and
-`capacities-mcp/` — keeps the newest 5, and prints the git HEAD that was live.
+`capacities-mcp/` — keeps the newest 5, and prints the last commit that served (recorded in
+`backups/last-good-commit` after each healthy restart from a clean tree).
 A failed snapshot aborts the restart while the old seat keeps running. If
 `/health` does not answer within `TDTB_HEALTH_TIMEOUT` (default 25s), it prints
 the last 30 log lines, the snapshot path, and the exact rollback steps; it
