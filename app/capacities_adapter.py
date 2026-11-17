@@ -33,10 +33,12 @@ from capacities_assignment import (
     MODE_ACTIVE,
     MODE_ASSIGNED,
     MODE_ASSIGNED_ON,
+    NATIVE_TASK_STRUCTURES,
     AssignmentCandidate,
     AssignmentSettings,
     evaluate_assignment,
 )
+import capacities_embedded
 import capacities_rules
 from producer_rules import _capacities_predicate_record
 import tag_exclusions
@@ -1154,6 +1156,10 @@ DROP_REASON_MALFORMED = "malformed"
 DROP_REASON_UNREADABLE = "unreadable"
 DROP_REASON_STRUCTURE_NOT_ELIGIBLE = "structure-not-eligible"
 DROP_REASON_STRUCTURE_UNMAPPED = "structure-unmapped"
+#: A Capacities Task embedded in the page body of a parent object that is
+#: itself admitted on this read. The owner recognises the parent as the
+#: assigned unit, so the child is not shown separately.
+DROP_REASON_EMBEDDED_IN_PARENT = "embedded-in-assigned-parent"
 #: Not a drop: the type has no open vocabulary that resolves against the live
 #: label set, so its mapped status decided nothing and every affected row was
 #: KEPT as an unassigned review candidate. It lives in the review tally, never
@@ -1278,6 +1284,25 @@ def retained_scope_warning(label: str, counts: Mapping[str, int]) -> str:
     return (
         f"Capacities type {label!r}: {total} {noun} retained with their "
         f"original timestamps; not refreshed — {_reason_listing(counts)}"
+    )
+
+
+def embedded_parent_warning(
+    label: str, parent_id: str, parent_title: str | None, count: int
+) -> str:
+    """One bounded line for the children one admitted parent hides.
+
+    Names the hidden task type, the count, and the parent by id (and by title
+    when it has one), because the parent is the row the operator recognises. No
+    child title, property value, or body text is ever included.
+    """
+    if count < 1:
+        return ""
+    noun = "object" if count == 1 else "objects"
+    named = f"{parent_title!r} ({parent_id})" if parent_title else str(parent_id)
+    return (
+        f"Capacities type {label!r}: {count} {noun} hidden — "
+        f"{DROP_REASON_EMBEDDED_IN_PARENT} of {named}"
     )
 
 
@@ -3073,6 +3098,12 @@ class CapacitiesAdapter:
             warnings.extend(exclusion_report["warnings"])
             if exclusion_report["excluded_counts"]["total"]:
                 warnings.append(_tag_exclusion_warning(exclusion_report))
+        # Page-body membership: a task embedded in a parent that is itself
+        # admitted on this same read is not shown separately. Applied to the
+        # SURVIVING rows, so an unassigned candidate (the surface an owner
+        # selection promotes) is never hidden, and a parent the exclusion pass
+        # removed hides nothing.
+        items, self._embedded_hidden = self._hide_embedded_children(items, objects)
         # Recompute the review surface from the SURVIVING items so an excluded
         # UNKNOWN row cannot produce a misleading review warning. Every review
         # row stayed an item, so the warning is a supplementary surface on a
@@ -3101,6 +3132,7 @@ class CapacitiesAdapter:
         self._review_dropped = set()
         self._vocabularies = {}
         self._structures_not_read = {}
+        self._embedded_hidden = {}
         items, warnings, evaluated, malformed, skipped = self._project_objects(
             logical_day, objects
         )
@@ -3279,6 +3311,55 @@ class CapacitiesAdapter:
         ]
         return [warning for warning in warnings if warning]
 
+    def _hide_embedded_children(
+        self, items: list[dict[str, Any]], objects: Sequence[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[tuple[str, str, str], int]]:
+        """Hide tasks embedded in the page body of an admitted parent object.
+
+        Membership is an ``EntityBlock`` embed at any nesting depth in the
+        parent's body (:mod:`capacities_embedded`); an inline ``LinkToken`` is a
+        reference and never hides anything. A task stays visible unless all
+        three hold: its structure is a native task structure, its own row is
+        source- or rule-assigned, and the parent that embeds it is itself
+        admitted on this same read. The assigned-only condition is what keeps an
+        owner pick visible: a selected row is promoted from the unassigned
+        surface, which this stage never touches.
+
+        Returns the surviving items and one ``(structure_id, parent_id,
+        parent_title) -> count`` tally for the warning surface.
+        """
+        embedded = capacities_embedded.embedded_child_map(objects)
+        if not embedded:
+            return list(items), {}
+        tasks = getattr(
+            self.config.assignment_settings, "native_task_structures", None
+        ) or NATIVE_TASK_STRUCTURES
+        admitted = {
+            _text(row.get("capacities_id"))
+            for row in items
+            if row.get("assigned") is True
+        }
+        kept: list[dict[str, Any]] = []
+        hidden: list[tuple[str, str, str]] = []
+        for row in items:
+            child_id = _text(row.get("capacities_id"))
+            parent = embedded.get(child_id) if child_id else None
+            structure_id = _text(row.get("capacities_structure_id")) or ""
+            if (
+                parent is not None
+                and row.get("assigned") is True
+                and structure_id in tasks
+                and parent[0] in admitted
+            ):
+                hidden.append((structure_id, parent[0], parent[1]))
+                continue
+            kept.append(row)
+        tally: dict[tuple[str, str, str], int] = {}
+        for key in hidden:
+            tally[key] = tally.get(key, 0) + 1
+            self._note_drop(key[0], DROP_REASON_EMBEDDED_IN_PARENT)
+        return kept, tally
+
     def _note_drop(self, structure_id: str, reason: str) -> None:
         """Count one dropped object under its structure and reason code."""
         if not structure_id:
@@ -3316,6 +3397,23 @@ class CapacitiesAdapter:
             )
             for structure_id, reason in sorted(self._structures_not_read.items())
         )
+        hidden = sorted((getattr(self, "_embedded_hidden", None) or {}).items())
+        shown = hidden[:MAX_DROP_REASONS_PER_LINE]
+        warnings.extend(
+            embedded_parent_warning(
+                structure_label(self._structure_defs, structure_id),
+                parent_id,
+                parent_title,
+                count,
+            )
+            for (structure_id, parent_id, parent_title), count in shown
+        )
+        remaining = len(hidden) - len(shown)
+        if remaining > 0:
+            warnings.append(
+                f"Capacities type embedded children: {remaining} more parent(s) "
+                f"hidden — {DROP_REASON_EMBEDDED_IN_PARENT}"
+            )
         return [warning for warning in warnings if warning]
 
     def _assigned_on_warnings(self) -> list[str]:
@@ -3373,6 +3471,7 @@ class CapacitiesAdapter:
         self._review_dropped = set()
         self._vocabularies = {}
         self._structures_not_read = {}
+        self._embedded_hidden = {}
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = list(self._contract_warnings)
         evaluated: set[str] = set()
