@@ -64,6 +64,7 @@ import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
@@ -554,6 +555,12 @@ class McpProvider:
         #: The recorded metadata failure. The document is fetched once per
         #: provider: a transient 5xx must not be re-fetched on every read.
         self._metadata_error: BaseException | None = None
+        #: Page-body reads run on the refresh read loop while content reads run
+        #: on the MCP worker, so session/portal creation and teardown are
+        #: serialized: two threads must never each open a session (and leak the
+        #: loser's stream and loop thread). Re-entrant because opening a
+        #: session can abandon (discard) it on failure.
+        self._session_lock = threading.RLock()
         self._portal_cm: Any = None
         self._portal: Any = None
         self._sync_cm: Any = None
@@ -697,6 +704,13 @@ class McpProvider:
         return self._portal
 
     def _ensure_session(self) -> McpSession:
+        session = self._session
+        if session is not None:
+            return session
+        with self._session_lock:
+            return self._open_session()
+
+    def _open_session(self) -> McpSession:
         if self._session is not None:
             return self._session
         install_secret_free_logging()
@@ -821,6 +835,10 @@ class McpProvider:
 
     def _discard_session(self) -> BaseException | None:
         """Close the session, then stop the loop. Returns the exit error, if any."""
+        with self._session_lock:
+            return self._discard_session_locked()
+
+    def _discard_session_locked(self) -> BaseException | None:
         context_manager = self._sync_cm
         recorder = self._session_context
         self._sync_cm = None

@@ -202,13 +202,15 @@ def test_non_mapping_and_absent_bodies_contribute_nothing():
     assert ce.embedded_child_map([{"id": "p"}]) == {}
 
 
-def test_embedded_child_map_records_the_parent_once():
+def test_embedded_child_map_keeps_every_parent_once_in_read_order():
+    embed = {"b": [{"type": "EntityBlock", "entityId": CHILD_ID},
+                   {"type": "EntityBlock", "entityId": CHILD_ID}]}
     objects = [
-        {"id": PARENT_ID, "title": "Garage Buildout", "blocks": {"b": [{"type": "EntityBlock", "entityId": CHILD_ID}]}},
-        {"id": "other", "title": "Other", "blocks": {"b": [{"type": "EntityBlock", "entityId": CHILD_ID}]}},
+        {"id": PARENT_ID, "title": "Garage Buildout", "blocks": embed},
+        {"id": "other", "title": "Other", "blocks": embed},
     ]
     assert ce.embedded_child_map(objects) == {
-        CHILD_ID: (PARENT_ID, "Garage Buildout")
+        CHILD_ID: [(PARENT_ID, "Garage Buildout"), ("other", "Other")]
     }
 
 
@@ -249,6 +251,26 @@ def test_child_whose_parent_is_not_admitted_stays_visible():
     # embedded task is admitted exactly as today.
     assert sorted(row["name"] for row in result.items) == ["Orphaned child"]
     assert ca.DROP_REASON_EMBEDDED_IN_PARENT not in result.drop_tally.get(TASKS, {})
+
+
+def test_child_in_two_parents_is_hidden_when_the_later_one_is_admitted():
+    adapter = _adapter()
+    embed = {"body": [{"type": "EntityBlock", "entityId": CHILD_ID}]}
+    result = adapter.items_for_day_from_objects(
+        DAY,
+        [
+            _project("idle-parent", "Idle Project", assigned=False, blocks=embed),
+            _project(PARENT_ID, "Garage Buildout", blocks=embed),
+            _task(CHILD_ID, "Shared child"),
+        ],
+    )
+    assert [row["name"] for row in result.items] == ["Garage Buildout"]
+    hidden = [
+        line for line in result.warnings
+        if ca.DROP_REASON_EMBEDDED_IN_PARENT in line and "hidden" in line
+    ]
+    assert len(hidden) == 1
+    assert PARENT_ID in hidden[0] and "idle-parent" not in hidden[0]
 
 
 def test_task_not_embedded_anywhere_is_untouched():

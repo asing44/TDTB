@@ -114,15 +114,16 @@ def _object_title(obj: dict[str, Any]) -> str:
 
 def embedded_child_map(
     objects: Iterable[Any],
-) -> dict[str, tuple[str, str]]:
-    """``child_id -> (parent_id, parent_title)`` from one read's objects.
+) -> dict[str, list[tuple[str, str]]]:
+    """``child_id -> [(parent_id, parent_title), ...]`` from one read's objects.
 
     An object contributes only when its body mapping is present; a parent is
-    recorded once and a self-embed is dropped. The first parent that embeds a
-    child wins, which keeps the answer deterministic when two parents embed the
-    same task.
+    recorded once per child and a self-embed is dropped. Every embedding parent
+    is kept, in read order, so a task embedded in two pages is hidden when
+    EITHER parent is admitted; the caller picks the first admitted one, which
+    keeps the answer deterministic.
     """
-    children: dict[str, tuple[str, str]] = {}
+    children: dict[str, list[tuple[str, str]]] = {}
     for obj in objects or ():
         if not isinstance(obj, dict):
             continue
@@ -134,9 +135,11 @@ def embedded_child_map(
             continue
         title = _object_title(obj)
         for child in embedded_entity_ids(body):
-            if child == parent_id or child in children:
+            if child == parent_id:
                 continue
-            children[child] = (parent_id, title)
+            parents = children.setdefault(child, [])
+            if all(existing[0] != parent_id for existing in parents):
+                parents.append((parent_id, title))
     return children
 
 

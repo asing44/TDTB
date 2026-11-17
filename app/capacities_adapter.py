@@ -3343,13 +3343,14 @@ class CapacitiesAdapter:
         hidden: list[tuple[str, str, str]] = []
         for row in items:
             child_id = _text(row.get("capacities_id"))
-            parent = embedded.get(child_id) if child_id else None
+            parents = embedded.get(child_id, ()) if child_id else ()
+            # The first embedding parent admitted on this read hides the task.
+            parent = next((p for p in parents if p[0] in admitted), None)
             structure_id = _text(row.get("capacities_structure_id")) or ""
             if (
                 parent is not None
                 and row.get("assigned") is True
                 and structure_id in tasks
-                and parent[0] in admitted
             ):
                 hidden.append((structure_id, parent[0], parent[1]))
                 continue
