@@ -74,8 +74,22 @@ availability before doing so. Run `tdtb-bootstrap` from any directory to
 re-validate and update seat projections after a repo checkout or worktree
 switch.
 
+**Restart safety:** `restart-live.sh` snapshots the machine-local state into
+`$TDTB_HOME/backups/pre-restart-YYYYMMDD-HHMMSS/` before it stops anything —
+`config.json`, `producer-rules.json`, `state/`, and the
+`tdtb-capacities-*.json` caches, excluding `*.lock`, env files, and
+`capacities-mcp/` — keeps the newest 5, and prints the last commit that served (recorded in
+`backups/last-good-commit` after each healthy restart from a clean tree).
+A failed snapshot aborts the restart while the old seat keeps running. If
+`/health` does not answer within `TDTB_HEALTH_TIMEOUT` (default 25s), it prints
+the last 30 log lines, the snapshot path, and the exact rollback steps; it
+never reverts code or state by itself.
+
 **Tests:** `app/tests/test_bootstrap_seat.py` — fixture-based, fakes uv/npm,
 uses a temporary HOME/repo, never touches real infrastructure.
+`app/tests/test_restart_live.py` covers the restart in the same way (stub
+`launchctl`/`curl`, temporary HOME and `TDTB_HOME`, no live seat or launchd
+contact).
 
 ## Micro-adventure sources
 
