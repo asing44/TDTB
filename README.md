@@ -42,6 +42,23 @@ app/.venv/bin/python tools/plan_diff.py --base d47b8c7 --head HEAD --day 2026-11
 Run reports live under `docs/reports/`. Failure drills for the page-body read
 path are `app/tests/test_stress_drills.py`.
 
+### Before and after a Capacities rework
+
+The same tool compares two saved snapshots of your data under one code ref.
+Take a baseline, change Capacities and refresh TDTB, then diff:
+
+```bash
+app/.venv/bin/python tools/plan_diff.py snapshot --out ~/.config/tdtb/snapshots/pre-rework
+app/.venv/bin/python tools/plan_diff.py --base-state ~/.config/tdtb/snapshots/pre-rework \
+  --head-state ~/.config/tdtb --day 2026-11-17 --fail-on-unexplained
+```
+
+`snapshot` copies state, caches, contracts and the property-name store (no
+locks, env files, MCP state or backups) and writes a `manifest.json`; it never
+changes the source. Without `--out` it writes
+`$TDTB_HOME/snapshots/plan-diff-YYYYMMDD-HHMMSS/`. Pass the same `--day` on
+both runs so date drift is not reported as change.
+
 ## Current boundary
 
 Phase 1 establishes this project boundary and keeps the existing app in place.
