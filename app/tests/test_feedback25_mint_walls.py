@@ -586,6 +586,8 @@ def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
         "mint_session": True,
         "mint_session_id": "mint:afternoon:14:00",
         "calendar_class": "mint",
+        # Time-free display title; the id stays the timestamped identity.
+        "title": "Mint Afternoon",
     }]
 
 

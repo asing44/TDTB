@@ -1717,9 +1717,14 @@ export function projectDaySemantics(wire: Wire): DaySemantics {
           const id = String(raw?.id ?? "").trim();
           const name = String(raw?.name ?? "").trim();
           if (!id || !name || !start || !end) return null;
+          // The server sends the time-free display title beside the
+          // timestamped identity name; fall back to the name so a payload
+          // without one renders exactly as before.
+          const title = String(raw?.title ?? "").trim() || name;
           return {
             id,
             name,
+            title,
             slot: String(raw?.slot ?? name).trim(),
             start,
             end,

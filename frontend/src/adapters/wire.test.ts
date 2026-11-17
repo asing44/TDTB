@@ -1706,10 +1706,28 @@ describe("projectDaySetup edge shapes", () => {
     expect(d.mintSessions).toEqual([{
       id: "mint:morning",
       name: "Mint Morning",
+      title: "Mint Morning",
       slot: "Morning",
       start: "08:30",
       end: "12:30",
     }]);
+  });
+
+  it("keeps a Mint session's time-free title beside its timestamped name", () => {
+    const d = projectDaySemantics({
+      enabled_zones: [{ name: "work_hours" }],
+      mint_enabled: true,
+      mint_sessions: [{
+        id: "mint:afternoon:16:00",
+        name: "Mint Afternoon · 16:00",
+        title: "Mint Afternoon",
+        slot: "Afternoon",
+        start: "16:00",
+        end: "16:30",
+      }],
+    });
+    expect(d.mintSessions?.[0].name).toBe("Mint Afternoon · 16:00");
+    expect(d.mintSessions?.[0].title).toBe("Mint Afternoon");
   });
 });
 

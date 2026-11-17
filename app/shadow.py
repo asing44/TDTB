@@ -119,6 +119,13 @@ class ManifestEntry:
     # description link. Internal — never rendered.
     capacities_identity: str | None = None
     capacities_link: str | None = None
+    # Display title for the calendar event this row writes, when it differs
+    # from ``name``. ``name`` stays the STABLE identity (write dedupe, the
+    # commit ledger's ``touched`` map, reconciliation keys); the display title
+    # is what the owner reads on the timeline. The only current source is a
+    # Mint session row: name "Mint Afternoon · 16:00", title "Mint Afternoon".
+    # Kept out of ``as_dict`` so the public manifest shape is unchanged.
+    title: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -539,6 +546,18 @@ def _schedulable_routing(name: Any) -> str:
     )
 
 
+def _row_display_title(row: dict[str, Any]) -> str | None:
+    """The row's time-free display title, or None when it has none.
+
+    A sequence row carries ``title`` only when its schedulable source does
+    (selected Mint sessions). Everything else writes its identity ``name``
+    exactly as before.
+    """
+    raw = row.get("title")
+    text = str(raw).strip() if raw is not None else ""
+    return text or None
+
+
 def _hhmm_minutes(value: Any) -> int | None:
     """Minutes-since-midnight for an hh:mm-ish value, or None if unparseable."""
     text = time_engine.to_hhmm(value)
@@ -724,7 +743,9 @@ def build_plan_manifest(
             entries.append(ManifestEntry(
                 step="D", system="calendar", action="create-event",
                 name=str(row_id), id_or_path=str(row_id),
-                time=start, duration_min=duration, routing=_schedulable_routing(row_id),
+                time=start, duration_min=duration,
+                routing=_schedulable_routing(row_id),
+                title=_row_display_title(row),
             ))
 
     # T22 Step E parity: the cockpit's staged sequence carries movable work +
@@ -968,14 +989,21 @@ def _event_start_hhmm(event: dict[str, Any]) -> str | None:
 
 
 def _match_calendar_event(
-    name: str, time: str | None, events: list[dict[str, Any]]
+    name: str, time: str | None, events: list[dict[str, Any]],
+    title: str | None = None,
 ) -> dict[str, Any] | None:
     # Prefer an exact-time hit, but fall back to a same-day title match at ANY
     # time: the calendar bridge cannot move events, so a time-shifted live
     # event must diff as the counterpart (no-op), never as a duplicate create.
+    #
+    # A row whose display ``title`` differs from its identity ``name`` (Mint
+    # blocks: "Mint Afternoon" vs "Mint Afternoon · 16:00") accepts EITHER
+    # form: events TDTB already wrote are titled with the timestamped form, and
+    # they must stay the same own block — a title change is never a duplicate.
+    forms = {name} if not title else {name, title}
     title_hit: dict[str, Any] | None = None
     for e in events:
-        if (e.get("title") or "") != name:
+        if (e.get("title") or "") not in forms:
             continue
         if time is None or _event_start_hhmm(e) == time:
             return e
@@ -1155,9 +1183,12 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
                     e for e in calendar_events
                     if str(e.get("calendar_id") or "") in own
                 ]
-            match = _match_calendar_event(m.name, m.time, candidates)
+            match = _match_calendar_event(m.name, m.time, candidates, m.title)
             if match is None:
-                entries.append(ShadowDiffEntry(m, CREATE, {"title": m.name, "start": m.time}))
+                entries.append(ShadowDiffEntry(
+                    m, CREATE,
+                    {"title": m.title or m.name, "start": m.time},
+                ))
             else:
                 detail: dict[str, Any] = {"event_id": match.get("id")}
                 live_start = _event_start_hhmm(match)

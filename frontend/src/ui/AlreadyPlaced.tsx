@@ -52,7 +52,7 @@ export function AlreadyPlaced() {
     .filter((session) => selectedMintIds.includes(session.id))
     .map((session) => ({
       id: session.id,
-      name: session.name,
+      name: session.title ?? session.name,
       start: session.start,
       end: session.end,
     }));

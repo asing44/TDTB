@@ -726,6 +726,10 @@ export interface DaySetupSaveResult {
 export interface MintSession {
   id: string;
   name: string;
+  /** Time-free display title ("Mint Afternoon"). ``name`` stays the
+      timestamped identity the server keys selections and writes on, so every
+      display site reads ``title ?? name``. */
+  title?: string;
   slot: string;
   start: string;
   end: string;

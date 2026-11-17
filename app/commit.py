@@ -133,6 +133,12 @@ class WriteIntent:
     calendar_id: str | None = None
     start: datetime | None = None
     end: datetime | None = None
+    # Display title for the event a calendar create writes, when the row's
+    # identity ``name`` is not what the owner should read (Mint blocks: name
+    # "Mint Afternoon · 16:00", title "Mint Afternoon"). Matching against live
+    # events accepts EITHER form so an event TDTB already wrote in the older
+    # form stays the same block — never a duplicate and never a title drift.
+    title: str | None = None
     # date-only Todoist work / captures
     due_all_day_today: bool = False   # due_string "today", no time
     payload: dict[str, Any] | None = None  # B6: the captures key/value map
@@ -661,7 +667,7 @@ def _plan_calendar(
     start = _hhmm_to_dt(today, m.time)
     end = start + timedelta(minutes=m.duration_min) if start else None
     return WriteIntent(
-        step=m.step, surface="calendar", op=op, name=m.name,
+        step=m.step, surface="calendar", op=op, name=m.name, title=m.title,
         due_time=m.time, duration_min=m.duration_min, start=start, end=end,
         calendar_id=cal_id,
     )
@@ -1165,6 +1171,7 @@ def _match_event(
     hhmm: str | None,
     events: list[dict[str, Any]],
     calendar_id: str | None = None,
+    title: str | None = None,
 ) -> dict[str, Any] | None:
     """Match a calendar event by title (+start time) for idempotency/noop
     resolution.
@@ -1173,9 +1180,14 @@ def _match_event(
     this intent (FEEDBACK-26): an imported/read-only SOURCE event that happens
     to share the title+time must never be treated as our own write — otherwise
     the intended create collapses into a no-op and lands nowhere, and a wrong
-    event reads back as success."""
+    event reads back as success.
+
+    ``title`` is the row's time-free display title. A Mint block writes that
+    title now, while events TDTB already wrote carry the timestamped identity
+    ``name``; both forms are the same block, so both match here."""
+    forms = {name} if not title else {name, title}
     for ev in events:
-        if (ev.get("title") or "") != name:
+        if (ev.get("title") or "") not in forms:
             continue
         if calendar_id is not None and (ev.get("calendar_id") or "") != calendar_id:
             continue
@@ -1210,14 +1222,18 @@ def write_calendar(
 
     for i in cal:
         if i.op == "noop":
-            match = _match_event(i.name, i.due_time, live_events, i.calendar_id)
+            match = _match_event(
+                i.name, i.due_time, live_events, i.calendar_id, i.title,
+            )
             if match:
                 result.noops.append(match.get("id", ""))
                 touched[i.name] = match.get("id", "")
             continue
         # create — idempotency check first (scoped to the TDTB-owned output
         # calendar so a same-title source event never collapses our write)
-        existing = _match_event(i.name, i.due_time, live_events, i.calendar_id)
+        existing = _match_event(
+            i.name, i.due_time, live_events, i.calendar_id, i.title,
+        )
         if existing is not None:
             result.noops.append(existing.get("id", ""))
             touched[i.name] = existing.get("id", "")
@@ -1225,7 +1241,8 @@ def write_calendar(
         try:
             calendar_bridge.assert_write_target(i.calendar_id, live_cals)
             spec = calendar_bridge.EventSpec(
-                title=i.name, start=i.start, end=i.end, calendar_id=i.calendar_id,
+                title=i.title or i.name, start=i.start, end=i.end,
+                calendar_id=i.calendar_id,
             )
             eid = store.create_event(spec)
         except calendar_bridge.CalendarWriteError as exc:
@@ -1252,9 +1269,20 @@ def write_calendar(
             continue
         found += 1
         spec = calendar_bridge.EventSpec(
-            title=i.name, start=i.start, end=i.end, calendar_id=i.calendar_id,
+            title=i.title or i.name, start=i.start, end=i.end,
+            calendar_id=i.calendar_id,
         )
         mismatches = calendar_bridge.event_readback_mismatches(spec, back)
+        # A no-op match may be a live event still titled in the row's other
+        # accepted form (one TDTB wrote before the time-free display title
+        # existed). That is the same own block, not a title drift, and this
+        # commit never rewrites an existing event.
+        accepted_titles = {t for t in (spec.title, i.name) if t}
+        mismatches = [
+            m for m in mismatches
+            if not (m.get("field") == "title"
+                    and m.get("live") in accepted_titles)
+        ]
         if not mismatches:
             continue
         fields = {m["field"] for m in mismatches}
