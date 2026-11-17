@@ -36,6 +36,7 @@ import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.
 import capacities_builder  # noqa: E402
 import capacities_refresh  # noqa: E402
 import capacities_rules  # noqa: E402
+import capacities_property_names  # noqa: E402
 import capacities_tag_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
@@ -194,6 +195,13 @@ def load_direct_rows(
                 settings=read.settings,
                 rules=rules,
                 exclusion_policy=policy,
+                # Read-only: the replay follows remembered names the last
+                # refresh recorded, but never creates or changes the store.
+                property_names=capacities_property_names.PropertyNameMemory(
+                    read.space_id,
+                    capacities_tag_titles.provider_base_url(),
+                    writable=False,
+                ),
             ),
         )
         # Tag titles are display-only and were resolved by the refresh that

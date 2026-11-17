@@ -98,6 +98,7 @@ import capacities_cache_io
 import capacities_embedded
 import capacities_refresh_state as refresh_state
 import capacities_schema
+import capacities_property_names
 import capacities_tag_titles
 import tag_exclusions
 
@@ -1419,6 +1420,13 @@ class RefreshCoordinator:
                 rules=rules,
                 exclusion_policy=exclusion_policy,
                 content_cache=None,
+                # Refresh is the read that sees the LIVE contract, so it is the
+                # one that records each declared property's name for a later
+                # fallback (and follows a remembered name if an id vanished).
+                property_names=capacities_property_names.PropertyNameMemory(
+                    self.space_id,
+                    capacities_tag_titles.provider_base_url(self.provider),
+                ),
             ),
             # Tag titles the catalog read resolves here are display metadata for
             # the next OFFLINE replay: the digest route projects the cached

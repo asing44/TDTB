@@ -653,3 +653,60 @@ def test_declaration_diagnostics_says_why_no_fallback_applied(monkeypatch):
     assert "declared_property" not in diagnostic
     assert "did not resolve to a single live property" in diagnostic["reason"]
     assert ASSIGNED_PROP in diagnostic["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Store bounds, read-only replay, and wiring into the live paths
+# ---------------------------------------------------------------------------
+
+def _stamps():
+    counter = iter(range(10_000))
+    return lambda: f"2026-11-17T00:00:{next(counter):04d}"
+
+
+def test_the_store_keeps_only_the_newest_records_per_structure(tmp_path):
+    path = tmp_path / "names.json"
+    memory = cpn.PropertyNameMemory("space", BASE_URL, path=path, now=_stamps())
+    total = cpn.MAX_RECORDS_PER_STRUCTURE + 5
+    for n in range(total):
+        memory.record("s", f"p{n}", name=f"Assigned {n}", kind="boolean", resolved=f"p{n}")
+    assert memory.flush()
+    kept = cpn.read_property_names("space", BASE_URL, path=path)["s"]
+    assert len(kept) == cpn.MAX_RECORDS_PER_STRUCTURE
+    assert "p0" not in kept and f"p{total - 1}" in kept
+
+
+def test_a_read_only_memory_answers_but_never_writes(tmp_path):
+    path = tmp_path / "names.json"
+    writer = cpn.PropertyNameMemory("space", BASE_URL, path=path)
+    writer.record("s", "old", name="Assigned", kind="boolean", resolved="old")
+    assert writer.flush()
+    before = path.read_bytes()
+
+    reader = cpn.PropertyNameMemory("space", BASE_URL, path=path, writable=False)
+    assert reader.known("s", "old") == ("Assigned", "boolean")
+    reader.record("s", "new", name="Assigned", kind="boolean", resolved="new")
+    assert reader.flush()
+    assert path.read_bytes() == before
+
+    missing = tmp_path / "absent.json"
+    cpn.PropertyNameMemory("space", BASE_URL, path=missing, writable=False).flush()
+    assert not missing.exists()
+
+
+def test_the_offline_plan_replay_uses_a_read_only_memory():
+    import capacities_intake
+
+    source = Path(capacities_intake.__file__).read_text()
+    assert "property_names=capacities_property_names.PropertyNameMemory(" in source
+    assert "writable=False" in source
+
+
+def test_refresh_records_names_from_the_live_contract():
+    import capacities_refresh
+
+    source = Path(capacities_refresh.__file__).read_text()
+    block = source[source.index("self.adapter = capacities_adapter.CapacitiesAdapter("):]
+    block = block[: block.index("# Tag titles the catalog read resolves")]
+    assert "property_names=capacities_property_names.PropertyNameMemory(" in block
+    assert "writable=False" not in block

@@ -72,6 +72,11 @@ PROPERTY_NAMES_FILENAME = "property-names.json"
 #: read and refused on write: an unknown kind can never authorize a fallback.
 REMEMBERED_KINDS = frozenset({"boolean", "date", "datetime"})
 
+#: Per-structure record cap. A structure declares one admission property, so a
+#: live record only competes with past reworks' records; 64 reworks of a single
+#: type before its live record ranks out is far beyond any realistic churn.
+MAX_RECORDS_PER_STRUCTURE = 64
+
 _OWNER_ONLY_FILE_MODE = 0o600
 _PRIVATE_DIR_MODE = 0o700
 
@@ -308,7 +313,12 @@ class PropertyNameMemory:
         *,
         path: str | Path | None = None,
         now: Callable[[], str] | None = None,
+        writable: bool = True,
     ) -> None:
+        #: A read-only memory (the offline plan replay) answers ``known`` from
+        #: the store but never persists: replays must not create or change
+        #: machine-local files. Refresh, which sees the live contract, writes.
+        self._writable = writable
         self._space_id = space_id
         self._base_url = base_url
         self._path = path
@@ -377,8 +387,31 @@ class PropertyNameMemory:
             for structure_id, properties in self._records.items()
         }
 
+    def _prune(self) -> None:
+        """Bound the store: newest ``MAX_RECORDS_PER_STRUCTURE`` per structure.
+
+        Every rework adds records (old declared id plus the id it resolved to),
+        so without a cap the file only grows. Ranking is by ``since`` (ISO UTC,
+        so string order is time order), which moves only when a record's name
+        or kind changes; the cap is set high enough that a live record is never
+        displaced by realistic rework churn.
+        """
+        for structure_id, properties in list(self._records.items()):
+            if len(properties) <= MAX_RECORDS_PER_STRUCTURE:
+                continue
+            keep = sorted(
+                properties.items(),
+                key=lambda item: item[1].get("since") or "",
+                reverse=True,
+            )[:MAX_RECORDS_PER_STRUCTURE]
+            self._records[structure_id] = dict(keep)
+            self._changed = True
+
     def flush(self) -> bool:
         """Persist what changed since the last flush; never raises."""
+        if not self._writable:
+            return True
+        self._prune()
         if not self._changed:
             return True
         try:
