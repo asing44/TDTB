@@ -855,6 +855,11 @@ describe("CapacitiesSettingsPanel", () => {
 describe("CapacitiesSettingsPanel declaration advisories", () => {
   const NOTICE_NAME =
     "Saved mappings the last published Capacities contract does not define";
+  const FALLBACK_SINCE = "2025-11-17T18:19:00Z";
+  const FALLBACK_DAY = new Date(FALLBACK_SINCE).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 
   /** One server-shaped diagnostic: the reason is the backend's own sentence. */
   function diagnostic(
@@ -913,5 +918,69 @@ describe("CapacitiesSettingsPanel declaration advisories", () => {
     await loaded(rendered);
     expect(rendered.queryByRole("region", { name: NOTICE_NAME })).toBeNull();
     expect(rendered.queryByText(/mappings do nothing yet/)).toBeNull();
+  });
+
+  /** A by-name fallback entry: the saved property id is gone, yet the read
+      still honours the declaration by following the remembered name, so the
+      backend adds the detail fields beside the reason. */
+  function fallbackDiagnostic(
+    structureId: string,
+    structureLabel: string,
+    overrides: Partial<CapacitiesDeclarationDiagnostic> = {},
+  ): CapacitiesDeclarationDiagnostic {
+    return {
+      ...diagnostic(structureId, structureLabel, "gone"),
+      declaredProperty: "gone",
+      resolvedProperty: "live-assigned",
+      propertyName: "Assigned",
+      since: FALLBACK_SINCE,
+      ...overrides,
+    };
+  }
+
+  it("states a by-name fallback plainly and keeps the property ids secondary", async () => {
+    const { rendered } = openPanel({
+      declarationDiagnostics: [fallbackDiagnostic("custom-project", "Custom project")],
+    });
+    await loaded(rendered);
+
+    const notice = rendered.getByRole("region", { name: NOTICE_NAME });
+    expect(within(notice).getByText("Custom project")).toBeTruthy();
+    const reason = within(notice).getByText(
+      `following 'Assigned' by name since ${FALLBACK_DAY} — the saved property is gone. ` +
+        "Re-pick it to make this permanent.",
+    );
+    // The ids are a hover detail, never the message.
+    expect(reason.getAttribute("title")).toBe("saved property gone, following live-assigned");
+    expect(within(notice).queryByText(/names property 'gone'/)).toBeNull();
+  });
+
+  it("leaves an entry without the fallback details exactly as before", async () => {
+    const { rendered } = openPanel({
+      declarationDiagnostics: [diagnostic("custom-project", "Custom project", "gone")],
+    });
+    await loaded(rendered);
+
+    const notice = rendered.getByRole("region", { name: NOTICE_NAME });
+    const reason = within(notice).getByText(/names property 'gone'.*clear the mapping\./);
+    expect(reason.getAttribute("title")).toBeNull();
+    expect(within(notice).queryByText(/by name/)).toBeNull();
+  });
+
+  it("drops the observed day when the server sent no usable one", async () => {
+    const { rendered } = openPanel({
+      declarationDiagnostics: [
+        fallbackDiagnostic("custom-project", "Custom project", { since: undefined }),
+        fallbackDiagnostic(LONG_ID, "", { since: "not-a-time" }),
+      ],
+    });
+    await loaded(rendered);
+
+    const notice = rendered.getByRole("region", { name: NOTICE_NAME });
+    const plain =
+      "following 'Assigned' by name — the saved property is gone. Re-pick it to make this permanent.";
+    expect(within(notice).getAllByText(plain).length).toBe(2);
+    // Without a cached title the id is still the label.
+    expect(within(notice).getByText(LONG_ID)).toBeTruthy();
   });
 });

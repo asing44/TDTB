@@ -2414,6 +2414,93 @@ describe("capacities settings advisory metadata (read-only projections)", () => 
     }
   });
 
+  it("projects the by-name fallback details when the server sends them", () => {
+    const reason =
+      "Assigned declaration names property 'gone', which the last published Capacities " +
+      "contract does not define; the read falls back to property 'live-assigned', remembered " +
+      "as 'Assigned' since 2025-11-17T18:19:00Z. Re-pick the property in Settings to make " +
+      "this permanent.";
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: baseSettings(),
+      declaration_diagnostics: [
+        {
+          structure_id: "custom-project",
+          structure_label: "Custom project",
+          reason,
+          declared_property: "gone",
+          resolved_property: "live-assigned",
+          property_name: "Assigned",
+          since: "2025-11-17T18:19:00Z",
+        },
+      ],
+    });
+    expect(projected.declarationDiagnostics).toEqual([
+      {
+        structureId: "custom-project",
+        structureLabel: "Custom project",
+        reason,
+        declaredProperty: "gone",
+        resolvedProperty: "live-assigned",
+        propertyName: "Assigned",
+        since: "2025-11-17T18:19:00Z",
+      },
+    ]);
+  });
+
+  it("projects the by-name fallback details as absent when the server omits them", () => {
+    // An older backend omits the keys; the current one sends its
+    // empty-string "nothing observed" sentinel. Both project to nothing, so
+    // such an entry stays indistinguishable from a plain drift entry.
+    const reason = "Assigned declaration names property 'gone'.";
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: baseSettings(),
+      declaration_diagnostics: [
+        { structure_id: "custom-project", structure_label: "Custom project", reason },
+        {
+          structure_id: "custom-project",
+          structure_label: "Custom project",
+          reason,
+          declared_property: "",
+          resolved_property: "",
+          property_name: "",
+          since: "",
+        },
+      ],
+    });
+    const plain = { structureId: "custom-project", structureLabel: "Custom project", reason };
+    expect(projected.declarationDiagnostics).toEqual([plain, plain]);
+    // The keys are dropped, not carried as undefined.
+    expect(Object.keys(projected.declarationDiagnostics[1])).toEqual([
+      "structureId",
+      "structureLabel",
+      "reason",
+    ]);
+  });
+
+  it("throws when a declaration_diagnostics fallback detail is malformed", () => {
+    for (const bad of [
+      { declared_property: 1 },
+      { declared_property: "gone " },
+      { resolved_property: ["live"] },
+      { property_name: " Assigned" },
+      { property_name: null },
+      { since: {} },
+      { since: "2025-11-17 " },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          declaration_diagnostics: [
+            { structure_id: "custom-project", structure_label: "x", reason: "y", ...bad },
+          ],
+        }),
+      ).toThrow(/declaration_diagnostics/);
+    }
+  });
+
   it("recognizes canonical structure ids", () => {
     expect(isCanonicalCapacitiesStructureId("custom-project")).toBe(true);
     expect(isCanonicalCapacitiesStructureId("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBe(true);

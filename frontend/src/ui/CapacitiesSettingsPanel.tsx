@@ -44,6 +44,7 @@ import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
   CapacitiesCatalog,
+  CapacitiesDeclarationDiagnostic,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesTypeDeclaration,
@@ -62,6 +63,43 @@ function messageOf(error: unknown): string {
 /** Advisories listed inline before the rest fold into one "and N more" tail,
     so a long drift list cannot push the rule controls off the panel. */
 export const CAPACITIES_DECLARATION_DIAGNOSTIC_CAP = 5;
+
+/** The moment a remembered property name was last observed, as the short
+    "Nov 17" form used elsewhere in the panel. An unusable timestamp yields
+    null so the sentence simply omits it instead of printing a broken date. */
+function observedDay(since: string): string | null {
+  const at = new Date(since);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** The plain sentence for a declaration the read still honours by following
+    the property's remembered NAME: the saved id is gone, yet the type admits
+    things today, so the ask is to re-pick the property and make it permanent.
+
+    Null when the server sent no name — the panel then shows its own reason
+    verbatim, exactly as for a plain drift entry. The backend's sentence is not
+    reused here because it quotes two raw property ids, which is what makes a
+    fallback read like a failure rather than a repair. */
+function fallbackSentence(diagnostic: CapacitiesDeclarationDiagnostic): string | null {
+  const name = diagnostic.propertyName;
+  if (!name) return null;
+  const day = diagnostic.since ? observedDay(diagnostic.since) : null;
+  const following = day
+    ? `following '${name}' by name since ${day}`
+    : `following '${name}' by name`;
+  return `${following} — the saved property is gone. Re-pick it to make this permanent.`;
+}
+
+/** The saved and resolved property ids of a fallback entry, shown only as a
+    hover detail: the entry's sentence is the message, the ids are provenance. */
+function fallbackIdsTitle(diagnostic: CapacitiesDeclarationDiagnostic): string | undefined {
+  if (!diagnostic.declaredProperty) return undefined;
+  const resolved = diagnostic.resolvedProperty;
+  return resolved
+    ? `saved property ${diagnostic.declaredProperty}, following ${resolved}`
+    : `saved property ${diagnostic.declaredProperty}`;
+}
 
 /** The draft is a full-replacement document: every key the save route replaces
     wholesale is copied here, including each declaration's `statuses`
@@ -183,6 +221,8 @@ export function CapacitiesSettingsPanel({
   // the last published Capacities contract does not define, so it admits
   // nothing today. Non-blocking — the panel still saves, and nothing here
   // edits a declaration. The list is bounded so a long drift list stays compact.
+  // An entry carrying the by-name fallback details is the exception: that type
+  // does admit things today, so it reads as a repair rather than a failure.
   const declarationDiagnostics = settings?.declarationDiagnostics ?? [];
   const shownDeclarationDiagnostics = declarationDiagnostics.slice(
     0,
@@ -410,7 +450,12 @@ export function CapacitiesSettingsPanel({
                           ? diagnostic.structureLabel
                           : diagnostic.structureId}
                       </strong>
-                      <span class="capacities-declarations__reason">{diagnostic.reason}</span>
+                      <span
+                        class="capacities-declarations__reason"
+                        title={fallbackIdsTitle(diagnostic)}
+                      >
+                        {fallbackSentence(diagnostic) ?? diagnostic.reason}
+                      </span>
                     </li>
                   ))}
                 </ul>

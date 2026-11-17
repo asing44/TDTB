@@ -297,6 +297,22 @@ function projectAdmissionValues(raw: unknown, key: string): string[] {
   return [...new Set(values)].sort();
 }
 
+/** Project one optional diagnostic detail: absent when the server omits the
+    key or sends its empty-string "nothing observed" sentinel, malformed
+    otherwise. Strict like every other field here, so a wrong type is a
+    contract violation rather than a silently ignored detail. */
+function projectDeclarationDiagnosticDetail(
+  record: Wire,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value !== value.trim()) {
+    throw capacitiesSettingsError(`declaration_diagnostics contains an invalid ${key}`);
+  }
+  return value.length > 0 ? value : undefined;
+}
+
 /** Project the read-only advisory ``declaration_diagnostics`` list: one entry
     per saved Assigned / Assigned On declaration naming a property the last
     published Capacities contract does not define. Tolerant when absent (an
@@ -327,7 +343,18 @@ function projectDeclarationDiagnostics(raw: unknown): CapacitiesDeclarationDiagn
     if (typeof reason !== "string" || reason.trim().length === 0) {
       throw capacitiesSettingsError("declaration_diagnostics contains an invalid reason");
     }
-    return { structureId, structureLabel, reason };
+    const diagnostic: CapacitiesDeclarationDiagnostic = { structureId, structureLabel, reason };
+    // The by-name fallback details are additive: projected only when the
+    // server carries them, so an entry without them stays exactly as it was.
+    const declaredProperty = projectDeclarationDiagnosticDetail(record, "declared_property");
+    const resolvedProperty = projectDeclarationDiagnosticDetail(record, "resolved_property");
+    const propertyName = projectDeclarationDiagnosticDetail(record, "property_name");
+    const since = projectDeclarationDiagnosticDetail(record, "since");
+    if (declaredProperty !== undefined) diagnostic.declaredProperty = declaredProperty;
+    if (resolvedProperty !== undefined) diagnostic.resolvedProperty = resolvedProperty;
+    if (propertyName !== undefined) diagnostic.propertyName = propertyName;
+    if (since !== undefined) diagnostic.since = since;
+    return diagnostic;
   });
 }
 
