@@ -1,27 +1,30 @@
 /* CapacitiesAdmissionRow — ONE admission rule per Capacities item type.
 
    Schema version 2 gives each type exactly one rule for getting into the plan,
-   so the row is one five-option mode selector plus the two controls a mode may
+   so the row is one six-option mode selector plus the two controls a mode may
    need:
 
-     off         no declaration at all (the type admits nothing)
-     active      status only — inherits or states its own open names
-     assigned    an `assigned` checkbox property (boolean) must be true
-     assignedOn  an `assignedOn` date property must be today or earlier
-     native      the built-in rules: status-open, due, or deadline in window
+     off                no declaration at all (the type admits nothing)
+     active             status only — inherits or states its own open names
+     assigned           an `assigned` checkbox property (boolean) must be true
+     assignedOn         an `assignedOn` date property must be today or earlier
+     activeOrAssigned   open status OR the `assigned` checkbox, whichever hits
+     native             the built-in rules: status-open, due, or deadline in window
 
-   The property picker appears only for the two property modes and offers only
-   properties of the matching kind (boolean for Assigned, date for Assigned On),
-   fed by the same provider discovery the source mapping editor uses. The status
-   control appears only for the two status modes and has three states that map
-   one-to-one onto the wire's tri-state:
+   The property picker appears only for the property modes and offers only
+   properties of the matching kind (boolean for Assigned and Status or Assigned
+   checkbox, date for Assigned On), fed by the same provider discovery the
+   source mapping editor uses. The status control appears only for the status
+   modes and has three states that map one-to-one onto the wire's tri-state:
 
      Inherit the shared list  -> statuses: null
      Don't use status         -> statuses: []
      Custom names             -> statuses: ["In Progress", ...]
 
    `null` and `[]` mean opposite things to the evaluator (inherit vs. no status
-   admission at all), so the row never collapses one into the other. */
+   admission at all), so the row never collapses one into the other. The union
+   rule needs BOTH halves stated, so it warns while its statuses are inherited
+   or disabled. */
 
 import { useState } from "preact/hooks";
 import type {
@@ -42,6 +45,7 @@ export const ADMISSION_MODES: ReadonlyArray<{
   { value: "active", label: "Active by status" },
   { value: "assigned", label: "Assigned checkbox" },
   { value: "assignedOn", label: "Assigned On date" },
+  { value: "activeOrAssigned", label: "Status or Assigned checkbox" },
   { value: "native", label: "Native task rules" },
 ];
 
@@ -52,12 +56,17 @@ const DATE_KINDS = new Set(["date", "datetime"]);
 
 /** Modes whose declaration is meaningless without a picked property. */
 export function isPropertyMode(mode: CapacitiesAdmissionMode): boolean {
-  return mode === "assigned" || mode === "assignedOn";
+  return mode === "assigned" || mode === "assignedOn" || mode === "activeOrAssigned";
 }
 
 /** Modes whose decision consults the status condition at all. */
 export function usesStatus(mode: CapacitiesAdmissionMode): boolean {
-  return mode === "active" || mode === "native";
+  return mode === "active" || mode === "native" || mode === "activeOrAssigned";
+}
+
+/** Whether the mode reads a boolean checkbox property (as opposed to a date). */
+export function usesCheckboxProperty(mode: CapacitiesAdmissionMode): boolean {
+  return mode === "assigned" || mode === "activeOrAssigned";
 }
 
 /** The properties the picker may offer for a mode, in discovery order. A
@@ -67,7 +76,11 @@ export function propertiesForMode(
   mode: CapacitiesAdmissionMode,
 ): CapacitiesCatalogProperty[] {
   if (properties === null) return [];
-  const kinds = mode === "assigned" ? CHECKBOX_KINDS : mode === "assignedOn" ? DATE_KINDS : null;
+  const kinds = usesCheckboxProperty(mode)
+    ? CHECKBOX_KINDS
+    : mode === "assignedOn"
+      ? DATE_KINDS
+      : null;
   if (kinds === null) return [];
   return properties.filter((property) => kinds.has((property.type ?? "").toLowerCase()));
 }
@@ -244,7 +257,7 @@ export function CapacitiesAdmissionRow({
           ) : (
             <label class="capacities-admission__mode">
               <span class="capacities-admission__label">
-                {mode === "assigned" ? "Assigned checkbox property" : "Assigned On date property"}
+                {mode === "assignedOn" ? "Assigned On date property" : "Assigned checkbox property"}
               </span>
               <select
                 aria-label={`Assignment property for ${label}`}
@@ -272,7 +285,7 @@ export function CapacitiesAdmissionRow({
               )}
               {!declaredMissing && choices.length === 0 && (
                 <span class="capacities-admission__warn" role="status">
-                  Capacities reports no {mode === "assigned" ? "checkbox" : "date"} property for
+                  Capacities reports no {mode === "assignedOn" ? "date" : "checkbox"} property for
                   this type.
                 </span>
               )}
@@ -294,6 +307,12 @@ export function CapacitiesAdmissionRow({
             onChoiceChange={onStatusChoiceChange}
             onNamesChange={onCustomStatusesChange}
           />
+        )}
+
+        {mode === "activeOrAssigned" && statusChoice !== "custom" && (
+          <span class="capacities-admission__warn" role="status">
+            This rule needs the status names its open half admits on; choose Custom names.
+          </span>
         )}
       </div>
     </div>

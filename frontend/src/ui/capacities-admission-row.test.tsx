@@ -2,7 +2,7 @@
 
    Schema v2 collapsed the three overlapping v1 controls (native-task toggles,
    per-type Active/Assigned/Assigned On switches, a bare open-status list) into
-   one row per type: a five-option rule selector plus the two controls a mode
+   one row per type: a six-option rule selector plus the two controls a mode
    may need. These tests pin the row's own contract — the selector options, the
    property picker and its kind filter, the tri-state status control and its
    three wire states, the missing-property warnings, and the display identity —
@@ -22,6 +22,7 @@ import {
   isPropertyMode,
   propertiesForMode,
   statusChoiceOf,
+  usesCheckboxProperty,
   usesStatus,
   type CapacitiesAdmissionMode,
   type CapacitiesStatusChoice,
@@ -224,6 +225,31 @@ describe("propertiesForMode", () => {
     expect((["active", "native"] as const).every(usesStatus)).toBe(true);
     expect((["off", "assigned", "assignedOn"] as const).some(usesStatus)).toBe(false);
   });
+
+  it("gives the union mode both halves: a boolean picker and the status control", () => {
+    // Status or Assigned checkbox reads a boolean property AND the status
+    // names, so it must appear in both mode families rather than a new one.
+    expect(isPropertyMode("activeOrAssigned")).toBe(true);
+    expect(usesStatus("activeOrAssigned")).toBe(true);
+    expect(usesCheckboxProperty("activeOrAssigned")).toBe(true);
+    expect(usesCheckboxProperty("assignedOn")).toBe(false);
+    expect(propertiesForMode(ALL_PROPERTIES, "activeOrAssigned").map((p) => p.propertyId)).toEqual([
+      "checkbox-prop",
+      "checkbox-kind",
+    ]);
+    // A property never travels for a mode that must not declare one.
+    const draft = applyAdmissionMode(
+      draftOf(),
+      "custom-project",
+      "activeOrAssigned",
+      "checkbox-prop",
+    );
+    expect(draft.types["custom-project"]).toEqual({
+      mode: "activeOrAssigned",
+      property: "checkbox-prop",
+      statuses: null,
+    });
+  });
 });
 
 describe("displayIdOf", () => {
@@ -234,7 +260,7 @@ describe("displayIdOf", () => {
 });
 
 describe("CapacitiesAdmissionRow", () => {
-  it("renders one five-option rule select and no mode-specific control for Off", () => {
+  it("renders one six-option rule select and no mode-specific control for Off", () => {
     const { props, rendered } = renderRow({ mode: "off" });
     const select = rendered.getByLabelText("Admission for custom-project") as HTMLSelectElement;
     expect(select.value).toBe("off");
@@ -246,6 +272,7 @@ describe("CapacitiesAdmissionRow", () => {
       "Active by status",
       "Assigned checkbox",
       "Assigned On date",
+      "Status or Assigned checkbox",
       "Native task rules",
     ]);
     // One control per type: off declares nothing, so no picker and no status

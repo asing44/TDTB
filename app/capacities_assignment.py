@@ -21,6 +21,9 @@ Every structure carries exactly one ``mode``:
   and is never enumerated.
 - ``active`` admits only when the source status label NAME resolves into that
   structure's open status names.
+- ``activeOrAssigned`` admits when EITHER the status label NAME is one of that
+  structure's open status names OR the declared boolean property reads
+  ``true``; the two sets are a union, so a row in both is admitted once.
 - ``assigned`` admits only when the declared boolean property reads ``true``.
 - ``assignedOn`` admits only when the declared date property is on or before
   the logical day.
@@ -73,19 +76,28 @@ DEFAULT_ACTIVE_STATUSES = frozenset({"active"})
 #: ``deadline <= logical_day + N calendar days`` (inclusive), per contract.
 DEFAULT_DEADLINE_HORIZON_DAYS = 2
 
-#: The five admission modes, exactly as the settings document spells them.
+#: The six admission modes, exactly as the settings document spells them.
 MODE_OFF = "off"
 MODE_ACTIVE = "active"
 MODE_ASSIGNED = "assigned"
 MODE_ASSIGNED_ON = "assignedOn"
 MODE_NATIVE = "native"
+#: The union mode: open status NAME *or* the declared boolean property.
+MODE_ACTIVE_OR_ASSIGNED = "activeOrAssigned"
 ADMISSION_MODES = frozenset(
-    {MODE_OFF, MODE_ACTIVE, MODE_ASSIGNED, MODE_ASSIGNED_ON, MODE_NATIVE}
+    {
+        MODE_OFF,
+        MODE_ACTIVE,
+        MODE_ASSIGNED,
+        MODE_ASSIGNED_ON,
+        MODE_NATIVE,
+        MODE_ACTIVE_OR_ASSIGNED,
+    }
 )
 #: Modes whose decision reads a declared provider property.
-PROPERTY_MODES = frozenset({MODE_ASSIGNED, MODE_ASSIGNED_ON})
+PROPERTY_MODES = frozenset({MODE_ASSIGNED, MODE_ASSIGNED_ON, MODE_ACTIVE_OR_ASSIGNED})
 #: Modes whose decision consults the status condition at all.
-STATUS_MODES = frozenset({MODE_ACTIVE, MODE_NATIVE})
+STATUS_MODES = frozenset({MODE_ACTIVE, MODE_NATIVE, MODE_ACTIVE_OR_ASSIGNED})
 
 
 class AssignmentMode(str, Enum):
@@ -468,9 +480,11 @@ def _auto_conditions(
 
     Each mode reads exactly the signals its declaration names, and no other
     mode's signal is consulted: ``assigned`` reads the declared boolean,
-    ``assignedOn`` the declared date, ``active`` the status label NAME, and
-    ``native`` the OR of status-open, due, and deadline-within-horizon. An
-    absent signal never matches.
+    ``assignedOn`` the declared date, ``active`` the status label NAME,
+    ``activeOrAssigned`` the OR of the status label NAME and the declared
+    boolean, and ``native`` the OR of status-open, due, and
+    deadline-within-horizon. An absent signal never matches, and a union mode
+    that matches both of its conditions reports both once in one decision.
     """
     mode = type_mode.mode
     if mode == MODE_ASSIGNED:
@@ -489,6 +503,17 @@ def _auto_conditions(
         if _admits_on_status(candidate, settings.open_statuses_for(structure_id)):
             return ("status-active",)
         return ()
+    if mode == MODE_ACTIVE_OR_ASSIGNED:
+        # A UNION, never a sum: the conditions are the evidence for ONE
+        # decision, so an object that satisfies both is admitted once.
+        matched: list[str] = []
+        if structure_id is not None and _admits_on_status(
+            candidate, settings.open_statuses_for(structure_id)
+        ):
+            matched.append("status-active")
+        if candidate.assigned_property is True:
+            matched.append("assigned-property")
+        return tuple(matched)
     if mode != MODE_NATIVE:
         return ()
     matched: list[str] = []

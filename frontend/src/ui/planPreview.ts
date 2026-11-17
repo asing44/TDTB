@@ -55,6 +55,10 @@ export function hasMapping(cap: CapacitiesSettings, structureId: string): boolea
   if (declaration.mode === "assigned" || declaration.mode === "assignedOn") {
     return (declaration.property ?? "") !== "";
   }
+  if (declaration.mode === "activeOrAssigned") {
+    // The union rule is only complete with both halves stated.
+    return (declaration.property ?? "") !== "" && (declaration.statuses ?? []).length > 0;
+  }
   return true;
 }
 

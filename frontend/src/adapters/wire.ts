@@ -244,9 +244,16 @@ export function isCanonicalCapacitiesIdentity(value: unknown): value is string {
 const CAPACITIES_SETTINGS_NATIVE_KEYS = ["deadline_horizon_days"] as const;
 const CAPACITIES_SETTINGS_STATUS_KEYS = ["open", "completed"] as const;
 const CAPACITIES_TYPE_DECLARATION_KEYS = ["mode", "property", "statuses"] as const;
-const CAPACITIES_TYPE_MODES = ["off", "active", "assigned", "assignedOn", "native"] as const;
+const CAPACITIES_TYPE_MODES = [
+  "off",
+  "active",
+  "assigned",
+  "assignedOn",
+  "activeOrAssigned",
+  "native",
+] as const;
 /** Modes whose declaration is meaningless without a raw provider property id. */
-const CAPACITIES_PROPERTY_MODES = ["assigned", "assignedOn"] as const;
+const CAPACITIES_PROPERTY_MODES = ["assigned", "assignedOn", "activeOrAssigned"] as const;
 
 /** Validate and return an Active-enabled custom structure id, mirroring the
     backend's ``canonical_active_structure_id``: a non-empty, whitespace-free
@@ -564,6 +571,11 @@ function typeDeclarationToWire(
     if (!statuses.every(isCanonicalAdmissionValue)) {
       throw new Error(`${key}.statuses contains an invalid value`);
     }
+  }
+  // The union rule's status half needs its own names: the backend rejects
+  // "inherit" (null) and "off" ([]) here, so refuse before the round trip.
+  if (mode === "activeOrAssigned" && (statuses === null || statuses.length === 0)) {
+    throw new Error(`${key}.statuses must name at least one status for mode ${mode}`);
   }
   return { mode, property: requiresProperty ? declaration.property : null, statuses };
 }

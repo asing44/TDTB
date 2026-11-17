@@ -31,6 +31,7 @@ import uuid
 
 from capacities_assignment import (
     MODE_ACTIVE,
+    MODE_ACTIVE_OR_ASSIGNED,
     MODE_ASSIGNED,
     MODE_ASSIGNED_ON,
     NATIVE_TASK_STRUCTURES,
@@ -2460,8 +2461,12 @@ class CapacitiesAdapter:
         # The resolution needs the version-2 settings document, which is the
         # per-type declaration; the legacy mapping carrier keeps its shipped
         # review-candidate behaviour unchanged.
+        # The union mode (``activeOrAssigned``) has the same answer once its
+        # checkbox half is not set: status is then its only remaining signal,
+        # so an undecidable status is a drop for review, never a candidate an
+        # "Okay to plan all" could promote.
         status_only_undecidable = (
-            declared_mode == MODE_ACTIVE
+            declared_mode in (MODE_ACTIVE, MODE_ACTIVE_OR_ASSIGNED)
             and source_assigned is not True
             and vocabulary is not None
             and vocabulary.resolvable
@@ -2585,6 +2590,27 @@ class CapacitiesAdapter:
         unresolved_status = (
             unresolved_status or dead_status_member or vocabulary_unknown
         )
+
+        # The union mode (``activeOrAssigned``) admits on the open status NAME
+        # *or* its declared boolean, so a readable label that is merely not
+        # open (the owner's ``Background``) is not completed evidence: the
+        # checked box still admits the row. The owner's completed vocabulary
+        # stays a hard exclusion, exactly as it is for the ``assigned`` modes,
+        # and an unchecked row keeps today's closed-source-status drop.
+        if (
+            declared_mode == MODE_ACTIVE_OR_ASSIGNED
+            and status_is_open is False
+            and source_assigned is True
+        ):
+            status_names = _status_label_names(
+                properties.get(mapping.open_status_property)
+                if mapping.open_status_property
+                else None
+            )
+            if not status_names.intersection(
+                _completed_status_names(self.config.settings)
+            ):
+                status_is_open = None
 
         # Completion availability on the stored-rule path. A mapping that
         # shares the open-status field checks the configured completed value

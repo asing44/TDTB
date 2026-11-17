@@ -23,7 +23,7 @@ export interface CapacitiesNativePolicy {
   deadlineHorizonDays: number;
 }
 
-/** The five admission modes, mirrored from the backend's `TYPE_MODES`.
+/** The admission modes, mirrored from the backend's `TYPE_MODES`.
     Exactly one mode per structure, which is why the old contradictory dual
     declaration is no longer representable. */
 export type CapacitiesTypeMode =
@@ -31,18 +31,21 @@ export type CapacitiesTypeMode =
   | "active"
   | "assigned"
   | "assignedOn"
+  | "activeOrAssigned"
   | "native";
 
 /** Modes whose declaration is meaningless without a raw provider property id. */
 export const CAPACITIES_PROPERTY_MODES: ReadonlyArray<CapacitiesTypeMode> = [
   "assigned",
   "assignedOn",
+  "activeOrAssigned",
 ];
 
 /** Modes whose admission decision consults the status condition at all. */
 export const CAPACITIES_STATUS_MODES: ReadonlyArray<CapacitiesTypeMode> = [
   "active",
   "native",
+  "activeOrAssigned",
 ];
 
 /** One structure's declaration: exactly one admission mode.
