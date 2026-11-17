@@ -259,18 +259,56 @@ def test_health_timeout_prints_log_tail_snapshot_and_rollback(tmp_path):
     snapshot = seat.snapshots()[0]
     assert str(snapshot) in result.stderr
     assert (snapshot / "config.json").exists()
-    assert "switch --detach" in result.stderr
+    assert "switch --detach <commit>" in result.stderr
+    assert "last good   unknown" in result.stderr
     assert "launchctl bootout gui/" in result.stderr
     assert str(seat.state_home) in result.stderr
+    # A failed restart never records itself as last good.
+    assert not (seat.backups / "last-good-commit").exists()
     # Instructions only: the script neither checked out code nor restored state.
     if head_before:
-        assert head_before[:12] in result.stderr
         assert subprocess.run(
             ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
         ).stdout.strip() == head_before
     assert (seat.state_home / "config.json").read_text() == '{"anchored_blocks": []}'
+
+
+def test_rollback_names_the_last_healthy_commit_not_the_deploy(tmp_path):
+    seat = Seat(tmp_path / "seat", healthy=False)
+    _populate_state(seat.state_home)
+    seat.backups.mkdir()
+    good = "0123456789abcdef0123456789abcdef01234567"
+    (seat.backups / "last-good-commit").write_text(good + "\n")
+
+    result = seat.run("--no-build", TDTB_HEALTH_TIMEOUT="2")
+
+    assert result.returncode != 0
+    assert f"switch --detach {good}" in result.stderr
+    # The failed deploy leaves the last-good record untouched.
+    assert (seat.backups / "last-good-commit").read_text().strip() == good
+
+
+def test_a_healthy_clean_restart_records_last_good(seat):
+    dirty = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--", "app", "frontend"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    head = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+
+    result = seat.run("--no-build")
+
+    assert result.returncode == 0, result.stderr
+    record = seat.backups / "last-good-commit"
+    if dirty:
+        # A working tree that differs from HEAD is not a commit anyone can return to.
+        assert not record.exists()
+    else:
+        assert record.read_text().strip() == head
 
 
 def test_bootstrap_retry_still_recovers_a_transient_failure(seat):

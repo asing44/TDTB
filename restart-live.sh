@@ -35,6 +35,10 @@ readonly LOG="$HOME/Library/Logs/tdtb-server.log"
 readonly STATE_HOME="${TDTB_HOME:-$HOME/.config/tdtb}"
 readonly BACKUP_ROOT="$STATE_HOME/backups"
 readonly BACKUP_KEEP=5
+# The commit of the last restart that answered /health. The checkout's HEAD at
+# restart time is the code being DEPLOYED, so it can never be the rollback
+# target; this file names the code that was last known to serve.
+readonly LAST_GOOD="$BACKUP_ROOT/last-good-commit"
 
 skip_build=0
 [[ "${1:-}" == "--no-build" ]] && skip_build=1
@@ -212,11 +216,16 @@ else
 fi
 
 # --- 2. snapshot state and record the live code, before anything stops ------
-live_head="$(git -C "$TASK_DIR" rev-parse HEAD 2>/dev/null)"
-[[ -n "$live_head" ]] || live_head="unknown"
-live_head_short="${live_head[1,12]}"
-live_subject="$(git -C "$TASK_DIR" log -1 --format='%s' "$live_head" 2>/dev/null)"
-print -- "  live code   $live_head_short $live_subject"
+deploy_head="$(git -C "$TASK_DIR" rev-parse HEAD 2>/dev/null)"
+last_good=""
+[[ -f "$LAST_GOOD" ]] && last_good="$(head -1 "$LAST_GOOD" 2>/dev/null | tr -d '[:space:]')"
+if [[ -n "$last_good" ]]; then
+  last_good_subject="$(git -C "$TASK_DIR" log -1 --format='%s' "$last_good" 2>/dev/null)"
+  print -- "  last good   ${last_good[1,12]} $last_good_subject"
+else
+  print -- "  last good   unknown (no healthy restart recorded yet)"
+fi
+print -- "  deploying   ${deploy_head[1,12]}"
 
 snapshot_path="$(snapshot_state)" || snapshot_path=""
 if [[ -z "$snapshot_path" ]]; then
@@ -271,7 +280,11 @@ if [[ -z "$health" ]]; then
   print -u2 -- ""
   print -u2 -- "  health      NO RESPONSE after ${HEALTH_TIMEOUT}s — the seat did not come back"
   print -u2 -- "  snapshot    $snapshot_path"
-  print -u2 -- "  live code   $live_head_short $live_subject (HEAD before this restart)"
+  if [[ -n "$last_good" ]]; then
+    print -u2 -- "  last good   ${last_good[1,12]} $last_good_subject (last restart that served)"
+  else
+    print -u2 -- "  last good   unknown — pick the commit to return to from: git -C '$TASK_DIR' log --oneline"
+  fi
   print -u2 -- ""
   print -u2 -- "  last $LOG_LINES log lines ($LOG):"
   if [[ -f "$LOG" ]]; then
@@ -282,7 +295,7 @@ if [[ -z "$health" ]]; then
   print -u2 -- ""
   print -u2 -- "  rollback — run these by hand; nothing was reverted automatically:"
   print -u2 -- "    1. unload the broken job:      launchctl bootout gui/$UID/$LABEL"
-  print -u2 -- "    2. return to the live commit:  git -C '$TASK_DIR' switch --detach $live_head"
+  print -u2 -- "    2. return to the last good:    git -C '$TASK_DIR' switch --detach ${last_good:-<commit>}"
   print -u2 -- "    3. restore the snapshot:       rsync -a '$snapshot_path'/state/ '$STATE_HOME'/state/"
   print -u2 -- "       plus the top-level files it holds:  cp -p '$snapshot_path'/config.json '$snapshot_path'/producer-rules.json '$STATE_HOME'/"
   print -u2 -- "    4. restart on that code:       zsh '$TASK_DIR'/restart-live.sh --no-build"
@@ -303,6 +316,10 @@ served="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$TASK_DIR/app/static/cockpi
 dirty="$(git -C "$TASK_DIR" status --porcelain -- "$TASK_DIR/app" "$TASK_DIR/frontend" 2>/dev/null | wc -l | tr -d ' ')"
 
 print -- "  health      $health"
+if [[ -n "$deploy_head" ]] && (( dirty == 0 )); then
+  print -- "$deploy_head" > "$LAST_GOOD" 2>/dev/null \
+    || print -u2 -- "  note        could not record $LAST_GOOD"
+fi
 print -- "  pid         $pid  (started $started)"
 print -- "  restarted   $head_commit"
 print -- "  bundle      $served"
