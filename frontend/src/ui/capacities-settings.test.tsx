@@ -953,6 +953,26 @@ describe("CapacitiesSettingsPanel declaration advisories", () => {
     // The ids are a hover detail, never the message.
     expect(reason.getAttribute("title")).toBe("saved property gone, following live-assigned");
     expect(within(notice).queryByText(/names property 'gone'/)).toBeNull();
+    // A followed mapping still admits, so the headline does not call it idle.
+    expect(within(notice).getByText("1 mapping follows a property by name")).toBeTruthy();
+    expect(within(notice).queryByText(/do nothing yet/)).toBeNull();
+    expect(within(notice).queryByText(/switch that type off/)).toBeNull();
+  });
+
+  it("counts idle and followed mappings separately in the headline", async () => {
+    const { rendered } = openPanel({
+      declarationDiagnostics: [
+        fallbackDiagnostic("custom-project", "Custom project"),
+        diagnostic("custom-press", "Custom press", "gone"),
+      ],
+    });
+    await loaded(rendered);
+
+    const notice = rendered.getByRole("region", { name: NOTICE_NAME });
+    expect(
+      within(notice).getByText("1 mapping does nothing yet · 1 mapping follows a property by name"),
+    ).toBeTruthy();
+    expect(within(notice).getByText(/switch that type off/)).toBeTruthy();
   });
 
   it("leaves an entry without the fallback details exactly as before", async () => {

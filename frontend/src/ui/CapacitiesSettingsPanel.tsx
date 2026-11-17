@@ -81,6 +81,21 @@ function observedDay(since: string): string | null {
     verbatim, exactly as for a plain drift entry. The backend's sentence is not
     reused here because it quotes two raw property ids, which is what makes a
     fallback read like a failure rather than a repair. */
+/** Headline chip: a fallback entry still admits (it follows a remembered
+    name), so only entries without one "do nothing yet". */
+function declarationHeadline(diagnostics: CapacitiesDeclarationDiagnostic[]): string {
+  const following = diagnostics.filter((d) => d.propertyName).length;
+  const idle = diagnostics.length - following;
+  const parts: string[] = [];
+  if (idle > 0) parts.push(idle === 1 ? "1 mapping does nothing yet" : `${idle} mappings do nothing yet`);
+  if (following > 0) {
+    parts.push(
+      following === 1 ? "1 mapping follows a property by name" : `${following} mappings follow a property by name`,
+    );
+  }
+  return parts.join(" · ");
+}
+
 function fallbackSentence(diagnostic: CapacitiesDeclarationDiagnostic): string | null {
   const name = diagnostic.propertyName;
   if (!name) return null;
@@ -431,13 +446,13 @@ export function CapacitiesSettingsPanel({
               >
                 <p class="capacities-declarations__head">
                   <span class="chip chip--warn">
-                    {declarationDiagnostics.length === 1
-                      ? "1 mapping does nothing yet"
-                      : `${declarationDiagnostics.length} mappings do nothing yet`}
+                    {declarationHeadline(declarationDiagnostics)}
                   </span>
                   <span>
                     This is a saved setting, not a read failure. Planning still works; pick a live
-                    property in the rule below, or switch that type off.
+                    property in the rule below{declarationDiagnostics.every((d) => d.propertyName)
+                      ? "."
+                      : ", or switch that type off."}
                   </span>
                 </p>
                 <ul class="capacities-declarations__list">
