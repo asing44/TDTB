@@ -588,6 +588,10 @@ class ReadSourceSplitter:
         )
         #: Whether the MCP worker may claim in this run (begin_run's verdict).
         self._mcp_active = False
+        #: Whether a page-body read failed this run. Fail-open by design: the
+        #: first failure stops page-body reads, so one failure costs one
+        #: warning rather than one failed request per parent object.
+        self._blocks_unavailable = False
         #: Consecutive MCP failures; a success resets it (KTD7 breaker).
         self._mcp_failures = 0
 
@@ -723,6 +727,42 @@ class ReadSourceSplitter:
     def read_counts(self) -> dict[str, Any]:
         return self.queue.read_counts()
 
+    # -- page bodies -----------------------------------------------------
+
+    @property
+    def supports_object_blocks(self) -> bool:
+        """Whether this run can read an object's page body right now.
+
+        A REST-only provider cannot: page bodies are an MCP tool, and REST
+        ``GET /object`` carries no ``blocks``. A run that lost MCP (custody, auth,
+        or the breaker) is in the same position. Saying so keeps such a run from
+        reporting a page-body warning for a read it never attempted.
+        """
+        return self.mcp is not None and self._mcp_active
+
+    def get_object_blocks(self, object_id: str) -> dict[str, Any] | None:
+        """One page-body read for a parent object; ``None`` when unavailable.
+
+        Fail-open: a page body only decides whether an embedded child task is
+        hidden, so every failure answers ``None`` (hide nothing) and disables
+        the read for the rest of the run. Paced on the MCP budget and never on
+        the REST one, because the page body is served by MCP alone.
+        """
+        if self._blocks_unavailable or not self._mcp_active or self.mcp is None:
+            return None
+        reader = getattr(self.mcp, "read_object_blocks", None)
+        if not callable(reader):
+            self._blocks_unavailable = True
+            return None
+        self._mcp_pace()
+        if self.cancel_event.is_set():
+            return None
+        try:
+            return reader(object_id)
+        except Exception:  # noqa: BLE001 — a page body never fails a run
+            self._blocks_unavailable = True
+            return None
+
     # -- lifecycle -------------------------------------------------------
 
     def begin_run(self) -> None:
@@ -730,6 +770,7 @@ class ReadSourceSplitter:
         self.queue.begin_run()
         self._mcp_active = False
         self._mcp_failures = 0
+        self._blocks_unavailable = False
         if self.mcp is None:
             return
         try:
