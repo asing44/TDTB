@@ -218,6 +218,18 @@ def test_settings_document_rejects_incomplete_union_declarations(overrides):
         cset._decode(_document(**overrides))
 
 
+def test_builder_resolves_the_union_declaration_onto_the_boolean_property():
+    import capacities_builder as cb
+
+    mapping = ca.StructureMapping(structure_id=PROJECTS)
+    (resolved,) = cb._resolve_assigned_structures((mapping,), _settings())
+    # The union mode's checkbox half reaches the adapter exactly the way the
+    # ``assigned`` mode's does, and its date half stays untouched.
+    assert resolved.assigned_property == ASSIGNED_PROP
+    assert resolved.assigned_on_property is None
+    assert resolved.assignment_property is None
+
+
 # ---------------------------------------------------------------------------
 # Adapter end-to-end
 # ---------------------------------------------------------------------------
