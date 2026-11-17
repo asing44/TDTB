@@ -10,7 +10,7 @@
 # Before anything is stopped, the machine-local state under
 # ~/.config/tdtb (honours TDTB_HOME) is snapshotted to
 # ~/.config/tdtb/backups/pre-restart-YYYYMMDD-HHMMSS/ (newest 5 kept), and the
-# git HEAD that was live is printed. If /health does not come back, the script
+# last commit that served (backups/last-good-commit) is printed. If /health does not come back, the script
 # prints the log tail, the snapshot path, and the exact rollback steps — it
 # never reverts code or state by itself.
 #
@@ -145,9 +145,11 @@ copy_state_into() {
     fi
   fi
 
+  # Same vanishing-file race as state/: re-glob and retry once.
   caches=( $STATE_HOME/tdtb-capacities-*.json(N.) )
-  if (( $#caches )); then
-    if ! cp -p "${caches[@]}" "$dest/"; then
+  if (( $#caches )) && ! cp -p "${caches[@]}" "$dest/" 2>/dev/null; then
+    caches=( $STATE_HOME/tdtb-capacities-*.json(N.) )
+    if (( $#caches )) && ! cp -p "${caches[@]}" "$dest/"; then
       print -u2 -- "  snapshot    FAILED — could not copy the Capacities caches"
       return 1
     fi
@@ -191,7 +193,8 @@ snapshot_state() {
   dest="$BACKUP_ROOT/pre-restart-$stamp"
   while [[ -e "$dest" ]]; do
     n=$(( n + 1 ))
-    dest="$BACKUP_ROOT/pre-restart-$stamp-$n"
+    # Zero-padded so a same-second suffix still sorts by name in order.
+    dest="$BACKUP_ROOT/pre-restart-$stamp-${(l:2::0:)n}"
   done
 
   if ! mkdir -p "$dest"; then
@@ -315,7 +318,8 @@ if [[ -z "$health" ]]; then
   [[ -d "$snapshot_path/state" ]] \
     && print -u2 -- "       rsync -a '$snapshot_path'/state/ '$STATE_HOME'/state/"
   (( $#local_files )) \
-    && print -u2 -- "       cp -p ${(j: :)${(qq)local_files}} '$STATE_HOME'/"
+    && quoted=( "${(@qq)local_files}" ) \
+    && print -u2 -- "       cp -p ${(j: :)quoted} '$STATE_HOME'/"
   print -u2 -- "    4. restart on that code:       zsh '$TASK_DIR'/restart-live.sh --no-build"
   print -u2 -- ""
   exit 1

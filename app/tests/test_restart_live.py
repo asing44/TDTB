@@ -261,6 +261,50 @@ def test_rollback_names_only_files_the_snapshot_holds(tmp_path):
     assert "/state/ " not in result.stderr
 
 
+def test_the_printed_restore_commands_run_and_restore_every_file(tmp_path):
+    seat = Seat(tmp_path / "seat", healthy=False)
+    _populate_state(seat.state_home)
+
+    result = seat.run("--no-build", TDTB_HEALTH_TIMEOUT="2")
+    assert result.returncode != 0
+
+    restore = [
+        line.strip()
+        for line in result.stderr.splitlines()
+        if line.strip().startswith(("cp -p ", "rsync -a "))
+    ]
+    assert len(restore) == 2, result.stderr
+    # Simulate the broken run's damage, then run the printed lines verbatim.
+    for name in ("config.json", "producer-rules.json", "tdtb-capacities-content-cache.json"):
+        (seat.state_home / name).unlink()
+    (seat.state_home / "state" / "planning-artifact.json").write_text("broken")
+    for line in restore:
+        run = subprocess.run(["zsh", "-c", line], capture_output=True, text=True)
+        assert run.returncode == 0, (line, run.stderr)
+
+    assert (seat.state_home / "config.json").read_text() == '{"anchored_blocks": []}'
+    assert (seat.state_home / "producer-rules.json").exists()
+    assert (seat.state_home / "tdtb-capacities-content-cache.json").exists()
+    assert (seat.state_home / "state" / "planning-artifact.json").read_text() == "{}"
+
+
+def test_same_second_snapshots_get_a_zero_padded_suffix(seat):
+    # Pre-create every un-suffixed name the next minute could produce, so the
+    # run is forced onto the suffix path whatever second it lands on.
+    seat.backups.mkdir()
+    for second in range(60):
+        for offset in (0, 1):
+            minute = time.strftime("%Y%m%d-%H%M", time.localtime(time.time() + 60 * offset))
+            (seat.backups / f"pre-restart-{minute}{second:02d}").write_text("")
+
+    result = seat.run("--no-build")
+
+    assert result.returncode == 0, result.stderr
+    fresh = [p.name for p in seat.snapshots()]
+    assert len(fresh) == 1
+    assert fresh[0].rsplit("-", 1)[1] == "02"
+
+
 def test_failed_snapshot_aborts_before_anything_is_stopped(seat):
     # A regular file where the backups directory must go makes the snapshot fail.
     seat.backups.write_text("not a directory")
