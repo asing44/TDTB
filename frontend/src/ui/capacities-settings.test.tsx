@@ -218,9 +218,9 @@ describe("CapacitiesSettingsPanel", () => {
     expect(headingInfo.getAttribute("aria-describedby")).toBe(tooltip.getAttribute("id"));
     fireEvent.blur(headingInfo);
     expect(rendered.queryByRole("tooltip")).toBeNull();
-    // The named modes are the section's own vocabulary, so the five-option
+    // The named modes are the section's own vocabulary, so the six-option
     // selector is the per-type affordance rather than a second toggle.
-    expect(admissionSelect(rendered).options[4].textContent).toBe("Native task rules");
+    expect(admissionSelect(rendered).options[5].textContent).toBe("Native task rules");
   });
 
   it("saves the full replacement draft with the loaded revision", async () => {
