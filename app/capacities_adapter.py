@@ -239,6 +239,13 @@ class CapacitiesConfig:
     #: legacy projection unchanged. The adapter never reads settings storage or
     #: a credential itself.
     exclusion_policy: tag_exclusions.ExclusionPolicy | None = None
+    #: Optional machine-local property-name store
+    #: (``capacities_property_names.PropertyNameMemory``). It supplies the
+    #: last-known display name of a declared property id whose id has since
+    #: vanished, and receives every resolution this contract build observes.
+    #: ``None`` reads and persists nothing, which is what offline replays and
+    #: tests want; the adapter still opens no file itself.
+    property_names: Any = None
 
 
 @dataclass(frozen=True)
@@ -476,6 +483,149 @@ def _property_label(
     """The quoted, length-bounded display name of ``prop_id`` for a warning."""
     name = _text(definitions[prop_id].get("name"))[:_PROPERTY_LABEL_MAX_CHARS]
     return f"'{name or default}'"
+
+
+@dataclass(frozen=True)
+class _NameFallback:
+    """Outcome of resolving one dead declaration by property NAME.
+
+    ``source`` records which evidence resolved it: ``"remembered"`` when the
+    name store's last-known name matched exactly one live property of the kind
+    the mode needs, ``"generic"`` for the pre-store heuristic over the built-in
+    ``Assigned`` / ``Assigned On`` names, and ``None`` when nothing applied.
+    ``reason`` names why no fallback applied and is only set on failure.
+    """
+
+    resolved: str | None
+    source: str | None
+    name: str = ""
+    reason: str | None = None
+
+
+def _properties_named(
+    definitions: dict[str, dict[str, Any]], name: str
+) -> list[str]:
+    """Every property whose normalized name equals ``name`` (exact, no fuzzy)."""
+    target = _normalized(name)
+    if not target:
+        return []
+    return [
+        prop_id
+        for prop_id, definition in definitions.items()
+        if _normalized(definition.get("name")) == target
+    ]
+
+
+def _name_fallback(
+    definitions: dict[str, dict[str, Any]],
+    remembered: tuple[str, str] | None,
+    generic_names: frozenset[str],
+    kinds: frozenset[str],
+) -> _NameFallback:
+    """Resolve a dead declaration by its last-known NAME, then generically.
+
+    The remembered name wins because it is what THIS declaration was observed
+    to point at; it is only usable when exactly one live property carries that
+    name AND that property's kind is one the mode may read. Zero, several, or a
+    wrong kind never guess: the caller keeps its unknown-property behaviour and
+    surfaces ``reason``. The built-in name heuristic is the post-deploy first
+    run's only evidence, so it remains the last resort, unchanged.
+    """
+    reason: str | None = None
+    kind_word = "boolean" if "boolean" in kinds else "date"
+    if remembered is not None:
+        name, remembered_kind = remembered
+        if remembered_kind not in kinds:
+            reason = (
+                f"the remembered property named {name!r} is a "
+                f"{remembered_kind}, not a {kind_word}"
+            )
+        else:
+            named = _properties_named(definitions, name)
+            matching = [
+                prop_id
+                for prop_id in named
+                if _text(definitions[prop_id].get("type")) in kinds
+            ]
+            if len(matching) == 1:
+                resolved = matching[0]
+                return _NameFallback(
+                    resolved=resolved,
+                    source="remembered",
+                    name=_text(definitions[resolved].get("name"))[
+                        :_PROPERTY_LABEL_MAX_CHARS
+                    ],
+                )
+            if not named:
+                reason = f"no property is named {name!r} any more"
+            elif len(named) > 1:
+                reason = (
+                    f"{len(named)} properties are named {name!r}, so a match "
+                    "would be a guess"
+                )
+            else:
+                live_kind = _text(definitions[named[0]].get("type")) or "unknown kind"
+                reason = (
+                    f"the only property named {name!r} is a {live_kind}, "
+                    f"not a {kind_word}"
+                )
+    generic = _single_property_by_name(definitions, generic_names, kinds)
+    if generic is not None:
+        return _NameFallback(
+            resolved=generic,
+            source="generic",
+            name=_text(definitions[generic].get("name"))[: _PROPERTY_LABEL_MAX_CHARS],
+        )
+    return _NameFallback(resolved=None, source=None, reason=reason)
+
+
+def _remembered_property(
+    memory: Any, structure_id: str, property_id: str
+) -> tuple[str, str] | None:
+    """``(name, kind)`` last observed for one declared id, or ``None``.
+
+    A store problem can never fail a read: the name is only ever used to
+    recover a dead declaration, never to decide whether one is dead.
+    """
+    if memory is None:
+        return None
+    try:
+        return memory.known(structure_id, property_id)
+    except Exception:  # noqa: BLE001 — a store problem must never block a read
+        return None
+
+
+def _remember_property(
+    memory: Any,
+    structure_id: str,
+    property_id: str,
+    definitions: dict[str, dict[str, Any]],
+    resolved: str,
+) -> None:
+    """Record what a declaration resolved to, so a later read can follow it.
+
+    ``property_id`` is the DECLARED id and ``resolved`` the live one it maps to
+    this read (the same id when the declaration is still valid). Either may be
+    unreadable; nothing here raises, and no provider call is made.
+    """
+    if memory is None:
+        return
+    definition = definitions.get(resolved) or {}
+    name = _text(definition.get("name"))
+    kind = _text(definition.get("type"))
+    if not name or not kind:
+        return
+    try:
+        memory.record(
+            structure_id, property_id, name=name, kind=kind, resolved=resolved
+        )
+    except Exception:  # noqa: BLE001 — a store problem must never block a read
+        pass
+
+
+def _structure_warning_label(structure: dict[str, Any], structure_id: str) -> str:
+    """The human label for a contract warning: the type's title, else its id."""
+    return _text(structure.get("title")) or structure_id
 
 
 def _label_identifiers(definition: Any) -> set[str]:
@@ -1881,6 +2031,11 @@ class CapacitiesAdapter:
 
         mappings: dict[str, StructureMapping] = {}
         declaration_warnings: list[str] = []
+        # Optional machine-local name store (``CapacitiesConfig.property_names``):
+        # the last-known display name of every declared property id. ``None``
+        # keeps every read behaviour without persistence, which is what offline
+        # replays and tests want.
+        property_names = self.config.property_names
         for mapping in self.config.mappings:
             sid = _text(mapping.structure_id)
             if not sid or sid in mappings:
@@ -2007,26 +2162,53 @@ class CapacitiesAdapter:
                 # boolean named "Assigned"/"Assigned To Me" is unambiguous, so
                 # it is used and reported; zero or several mean guessing would
                 # be wrong, so the declaration stays ignored.
-                resolved = _single_property_by_name(
-                    definitions, _ASSIGNED_NAMES, _ASSIGNED_TYPES
+                declared = mapping.assigned_property
+                fallback = _name_fallback(
+                    definitions,
+                    _remembered_property(property_names, sid, declared),
+                    _ASSIGNED_NAMES,
+                    _ASSIGNED_TYPES,
                 )
-                if resolved is None:
+                if fallback.resolved is None:
                     declaration_warnings.append(
                         "ignored Capacities assignment declaration for structure "
-                        f"{sid!r}: unknown property {mapping.assigned_property!r}; "
+                        f"{sid!r}: unknown property {declared!r}; "
                         "no single 'Assigned' property was found, so choose one "
                         "in Settings."
                     )
+                    if fallback.reason:
+                        declaration_warnings.append(
+                            "Capacities assignment declaration for structure "
+                            f"{sid!r} named property {declared!r}, which is gone; "
+                            "the remembered-name fallback did not apply because "
+                            f"{fallback.reason}. Pick a live property in Settings."
+                        )
                     mapping = replace(mapping, assigned_property=None)
+                elif fallback.source == "remembered":
+                    declaration_warnings.append(
+                        f"{_structure_warning_label(structure, sid)}: Assigned "
+                        f"property {declared!r} is gone; using '{fallback.name}' "
+                        f"({fallback.resolved!r}) by name — re-pick it in Settings "
+                        "to make this permanent."
+                    )
+                    mapping = replace(mapping, assigned_property=fallback.resolved)
                 else:
                     declaration_warnings.append(
                         "Capacities assignment declaration for structure "
-                        f"{sid!r} pointed at property {mapping.assigned_property!r}, "
+                        f"{sid!r} pointed at property {declared!r}, "
                         "which no longer exists; using "
-                        f"{_property_label(definitions, resolved, 'Assigned')} "
-                        f"({resolved!r}) instead. Re-save Settings to keep it."
+                        f"{_property_label(definitions, fallback.resolved, 'Assigned')} "
+                        f"({fallback.resolved!r}) instead. Re-save Settings to keep it."
                     )
-                    mapping = replace(mapping, assigned_property=resolved)
+                    mapping = replace(mapping, assigned_property=fallback.resolved)
+                if mapping.assigned_property:
+                    _remember_property(
+                        property_names,
+                        sid,
+                        declared,
+                        definitions,
+                        mapping.assigned_property,
+                    )
             # The Assigned On declaration follows the same fail-open contract:
             # unknown or non-date declarations are ignored with one bounded
             # warning so the mapping's own seams keep working, and nothing
@@ -2036,26 +2218,53 @@ class CapacitiesAdapter:
                 mapping.assigned_on_property
                 and mapping.assigned_on_property not in definitions
             ):
-                resolved = _single_property_by_name(
-                    definitions, _ASSIGNED_ON_NAMES, _ASSIGNED_ON_TYPES
+                declared_on = mapping.assigned_on_property
+                fallback = _name_fallback(
+                    definitions,
+                    _remembered_property(property_names, sid, declared_on),
+                    _ASSIGNED_ON_NAMES,
+                    _ASSIGNED_ON_TYPES,
                 )
-                if resolved is None:
+                if fallback.resolved is None:
                     declaration_warnings.append(
                         "ignored Capacities Assigned On declaration for structure "
-                        f"{sid!r}: unknown property {mapping.assigned_on_property!r}; "
+                        f"{sid!r}: unknown property {declared_on!r}; "
                         "no single 'Assigned On' property was found, so choose one "
                         "in Settings."
                     )
+                    if fallback.reason:
+                        declaration_warnings.append(
+                            "Capacities Assigned On declaration for structure "
+                            f"{sid!r} named property {declared_on!r}, which is gone; "
+                            "the remembered-name fallback did not apply because "
+                            f"{fallback.reason}. Pick a live date property in Settings."
+                        )
                     mapping = replace(mapping, assigned_on_property=None)
+                elif fallback.source == "remembered":
+                    declaration_warnings.append(
+                        f"{_structure_warning_label(structure, sid)}: Assigned On "
+                        f"property {declared_on!r} is gone; using '{fallback.name}' "
+                        f"({fallback.resolved!r}) by name — re-pick it in Settings "
+                        "to make this permanent."
+                    )
+                    mapping = replace(mapping, assigned_on_property=fallback.resolved)
                 else:
                     declaration_warnings.append(
                         "Capacities Assigned On declaration for structure "
-                        f"{sid!r} pointed at property {mapping.assigned_on_property!r}, "
+                        f"{sid!r} pointed at property {declared_on!r}, "
                         "which no longer exists; using "
-                        f"{_property_label(definitions, resolved, 'Assigned On')} "
-                        f"({resolved!r}) instead. Re-save Settings to keep it."
+                        f"{_property_label(definitions, fallback.resolved, 'Assigned On')} "
+                        f"({fallback.resolved!r}) instead. Re-save Settings to keep it."
                     )
-                    mapping = replace(mapping, assigned_on_property=resolved)
+                    mapping = replace(mapping, assigned_on_property=fallback.resolved)
+                if mapping.assigned_on_property:
+                    _remember_property(
+                        property_names,
+                        sid,
+                        declared_on,
+                        definitions,
+                        mapping.assigned_on_property,
+                    )
             # A settings declaration that overrode a DIFFERENT record-level
             # value shadows the operator's record mapping. The declaration
             # still wins, but the override is surfaced once as a bounded note
@@ -2100,6 +2309,18 @@ class CapacitiesAdapter:
                     "and the Assigned checkbox is ignored. Clear one of the two "
                     "mappings in Settings."
                 )
+            # Remember the display name of every declaration that DID resolve,
+            # so a later rename, delete, or recreate can follow the name once
+            # instead of silently emptying this type. Both declaration kinds are
+            # stored under their DECLARED id with the kind the mode reads.
+            for declared_id in (
+                mapping.assigned_property,
+                mapping.assigned_on_property,
+            ):
+                if declared_id:
+                    _remember_property(
+                        property_names, sid, declared_id, definitions, declared_id
+                    )
             # Mapped but with no requested open names is NOT a contract
             # failure: ``statuses: []`` disables status admission for the type
             # (the owner's RootTask date-only decision), so the mapped status
@@ -2147,6 +2368,13 @@ class CapacitiesAdapter:
                 "RootTask must be explicitly mapped",
                 detail=_contract_detail(phrase="RootTask missing"),
             )
+        # One write per contract build, and only when something changed: the
+        # name store must never be able to fail or slow a read.
+        if property_names is not None:
+            try:
+                property_names.flush()
+            except Exception:  # noqa: BLE001 — a store problem never fails a read
+                pass
         self._structure_defs = structures
         self._mappings = mappings
         self._contract_warnings = declaration_warnings

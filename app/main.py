@@ -82,6 +82,7 @@ import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_mirror  # noqa: E402
 import capacities_builder  # noqa: E402
+import capacities_property_names  # noqa: E402
 import capacities_intake  # noqa: E402
 import capacities_rules  # noqa: E402
 import capacities_selections  # noqa: E402
@@ -1668,6 +1669,37 @@ def _capacities_published_contract_schema() -> dict[str, dict[str, str]]:
     return schema_by_structure if contract_available else {}
 
 
+def _capacities_property_name_records() -> dict[str, dict[str, dict[str, str]]]:
+    """Last-known declared-property records for this space, or ``{}``.
+
+    Read-only and fail-soft: a missing source record or an unreadable store is
+    "nothing remembered", never an error, and no provider call is made. These
+    records are machine-local observations, not settings, so a stale one can
+    only inform a diagnostic — it never rewrites the declaration."""
+    try:
+        record = capacities_builder.read_source()
+    except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+        print(f"capacities source read failed: {exc}", file=sys.stderr)
+        return {}
+    if record is None:
+        return {}
+    try:
+        return capacities_property_names.read_property_names(
+            record.space_id, capacities_builder.CAPACITIES_BASE_URL
+        )
+    except Exception:  # noqa: BLE001 — a diagnostic read never fails a request
+        return {}
+
+
+#: The property kinds each property-reading mode may read. A remembered name
+#: resolving to any other kind is exactly the retype the owner is warned about.
+_CAPACITIES_DECLARATION_KINDS = {
+    "assigned": frozenset({"boolean"}),
+    capacities_settings.CAPACITIES_MODE_ACTIVE_OR_ASSIGNED: frozenset({"boolean"}),
+    "assignedOn": frozenset({"date", "datetime"}),
+}
+
+
 def _capacities_declaration_diagnostics(
     settings: capacities_settings.CapacitiesSettings,
     structure_titles: dict[str, str],
@@ -1687,7 +1719,7 @@ def _capacities_declaration_diagnostics(
     checked. A contract that is missing or unusable yields ``[]``: absence of
     evidence is not evidence of drift, and the drawer then simply shows
     nothing."""
-    declarations: list[tuple[str, str, str]] = [
+    declarations: list[tuple[str, str, str, frozenset[str]]] = [
         (
             structure_id,
             declaration.property_id,
@@ -1695,6 +1727,7 @@ def _capacities_declaration_diagnostics(
                 "assigned": "Assigned",
                 "activeOrAssigned": "Assigned checkbox",
             }.get(declaration.mode, "Assigned On"),
+            _CAPACITIES_DECLARATION_KINDS.get(declaration.mode, frozenset()),
         )
         for structure_id, declaration in settings.types.items()
         if declaration.mode in capacities_settings.PROPERTY_MODES
@@ -1705,22 +1738,56 @@ def _capacities_declaration_diagnostics(
     schema_by_structure = _capacities_published_contract_schema()
     if not schema_by_structure:
         return []
+    records = _capacities_property_name_records()
     diagnostics: list[dict[str, str]] = []
-    for structure_id, property_id, declaration in sorted(declarations):
-        if property_id in schema_by_structure.get(structure_id, {}):
+    for structure_id, property_id, declaration, kinds in sorted(
+        declarations, key=lambda row: (row[0], row[1])
+    ):
+        schema = schema_by_structure.get(structure_id, {})
+        if property_id in schema:
             continue
-        diagnostics.append(
-            {
-                "structure_id": structure_id,
-                "structure_label": structure_titles.get(structure_id, ""),
-                "reason": (
-                    f"{declaration} declaration names property {property_id!r}, "
-                    "which the last published Capacities contract does not "
-                    "define; pick a live property in Settings or clear the "
-                    "mapping."
-                ),
-            }
-        )
+        entry = {
+            "structure_id": structure_id,
+            "structure_label": structure_titles.get(structure_id, ""),
+            "reason": (
+                f"{declaration} declaration names property {property_id!r}, "
+                "which the last published Capacities contract does not "
+                "define; pick a live property in Settings or clear the "
+                "mapping."
+            ),
+        }
+        # A dead declaration the read still satisfies by following the
+        # property's last-known NAME is not a broken declaration any more: it
+        # is a working fallback the owner should make permanent. The record
+        # carries the name and the id it last resolved to, so the drawer can
+        # say exactly what happened without a provider call.
+        remembered = records.get(structure_id, {}).get(property_id) or {}
+        resolved = remembered.get("resolved", "")
+        name = remembered.get("name", "")
+        if resolved and resolved != property_id and schema.get(resolved) in kinds:
+            entry.update(
+                {
+                    "declared_property": property_id,
+                    "resolved_property": resolved,
+                    "property_name": name,
+                    "since": remembered.get("since", ""),
+                    "reason": (
+                        f"{declaration} declaration names property {property_id!r}, "
+                        "which the last published Capacities contract does not "
+                        f"define; the read falls back to property {resolved!r}, "
+                        f"remembered as {name!r} since "
+                        f"{remembered.get('since', 'an unknown time')}. Re-pick "
+                        "the property in Settings to make this permanent."
+                    ),
+                }
+            )
+        elif remembered:
+            entry["reason"] += (
+                f" A remembered name ({name!r}) did not resolve to a single "
+                "live property of the kind this mode reads, so nothing was "
+                "substituted."
+            )
+        diagnostics.append(entry)
     return diagnostics
 
 
