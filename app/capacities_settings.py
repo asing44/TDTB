@@ -177,15 +177,18 @@ DEFAULT_READ_SOURCE = "rest"
 BACKUP_INFIX = ".bak-v1-"
 BACKUP_INFIX_V2 = ".bak-v2-"
 
-#: The five admission modes. ``off`` is the default for an undeclared
+#: The six admission modes. ``off`` is the default for an undeclared
 #: structure, so the settings document stays sparse.
-TYPE_MODES = frozenset({"off", "active", "assigned", "assignedOn", "native"})
+CAPACITIES_MODE_ACTIVE_OR_ASSIGNED = "activeOrAssigned"
+TYPE_MODES = frozenset(
+    {"off", "active", "assigned", "assignedOn", "native", CAPACITIES_MODE_ACTIVE_OR_ASSIGNED}
+)
 #: Modes whose declaration is meaningless without a raw provider property id.
-PROPERTY_MODES = frozenset({"assigned", "assignedOn"})
+PROPERTY_MODES = frozenset({"assigned", "assignedOn", CAPACITIES_MODE_ACTIVE_OR_ASSIGNED})
 #: Modes whose admission decision consults the status condition at all. The
 #: other modes never admit on status, so a declared ``statuses`` list is
 #: persisted and validated but not applicable to them.
-STATUS_MODES = frozenset({"active", "native"})
+STATUS_MODES = frozenset({"active", "native", CAPACITIES_MODE_ACTIVE_OR_ASSIGNED})
 
 #: ``statuses.open`` default: the single ``active`` label the evaluator has
 #: always used (imported from the evaluator so the two can never drift).
@@ -430,10 +433,13 @@ class TypeDeclaration:
     """One structure's declaration: exactly one admission mode.
 
     ``property_id`` (the persisted ``property`` key) is required iff the mode
-    is ``assigned``/``assignedOn`` and forbidden otherwise. ``statuses`` is
-    tri-state: ``None`` inherits the top-level open vocabulary, ``()``
-    disables status admission for this structure, and non-empty names are that
-    structure's own open set.
+    is ``assigned``/``assignedOn``/``activeOrAssigned`` and forbidden
+    otherwise. ``statuses`` is tri-state: ``None`` inherits the top-level open
+    vocabulary, ``()`` disables status admission for this structure, and
+    non-empty names are that structure's own open set. The union mode is the
+    one mode that needs BOTH halves, so it requires a non-empty list rather
+    than inheriting: a declaration that admits on status *or* a checkbox must
+    state which statuses count.
     """
 
     mode: str = "off"
@@ -445,6 +451,11 @@ class TypeDeclaration:
             raise ValueError(
                 f"{self.mode!r} is not a supported type mode "
                 f"(expected one of {sorted(TYPE_MODES)})"
+            )
+        if self.mode == CAPACITIES_MODE_ACTIVE_OR_ASSIGNED and not self.statuses:
+            raise ValueError(
+                f"mode {self.mode!r} requires a non-empty statuses list, "
+                f"got {self.statuses!r}"
             )
         if self.mode in PROPERTY_MODES:
             if not isinstance(self.property_id, str) or not self.property_id:
@@ -460,6 +471,10 @@ class TypeDeclaration:
             return
         names = canonical_unique_admission_values(self.statuses, "statuses")
         object.__setattr__(self, "statuses", tuple(sorted(names)))
+        if self.mode == CAPACITIES_MODE_ACTIVE_OR_ASSIGNED and not names:
+            raise ValueError(
+                f"mode {self.mode!r} requires a non-empty statuses list"
+            )
 
     @property
     def requires_property(self) -> bool:
@@ -475,10 +490,13 @@ class TypeDeclaration:
     def status_admission_enabled(self) -> bool:
         """Whether a status label can admit an object of this structure.
 
-        Only the ``active`` and ``native`` modes admit on status at all. For
-        them, inherited (``None``) and explicitly non-empty name lists both
-        admit, while ``()`` — the ``RootTask`` date-only decision — does not.
-        Every other mode reports ``False``: its decision never reads status.
+        Only the status-reading modes admit on status at all: ``active``,
+        ``native``, and the union ``activeOrAssigned``. For them, inherited
+        (``None``) and explicitly non-empty name lists both admit, while
+        ``()`` — the ``RootTask`` date-only decision — does not. The union mode
+        additionally refuses ``None`` and ``()`` at construction, so it always
+        names its own statuses. Every other mode reports ``False``: its
+        decision never reads status.
         """
         return self.uses_status and (
             self.statuses is None or len(self.statuses) > 0
@@ -978,6 +996,11 @@ def _decode_types(data: dict[str, Any]) -> dict[str, TypeDeclaration]:
                     f"capacities settings type {canonical_id!r} has an invalid "
                     "status entry"
                 ) from exc
+        if mode == CAPACITIES_MODE_ACTIVE_OR_ASSIGNED and not statuses:
+            raise SettingsFormatError(
+                f"capacities settings type {canonical_id!r} mode {mode!r} "
+                "requires a non-empty statuses list"
+            )
         if mode in PROPERTY_MODES:
             if property_id is None:
                 raise SettingsFormatError(

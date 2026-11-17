@@ -1691,7 +1691,10 @@ def _capacities_declaration_diagnostics(
         (
             structure_id,
             declaration.property_id,
-            "Assigned" if declaration.mode == "assigned" else "Assigned On",
+            {
+                "assigned": "Assigned",
+                "activeOrAssigned": "Assigned checkbox",
+            }.get(declaration.mode, "Assigned On"),
         )
         for structure_id, declaration in settings.types.items()
         if declaration.mode in capacities_settings.PROPERTY_MODES

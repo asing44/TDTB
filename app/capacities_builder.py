@@ -1147,9 +1147,11 @@ def _mode_declarations(settings: Any) -> tuple[dict[str, str], dict[str, str]]:
 
     Every non-``off`` mode is enumerated here, so the declaration pass below
     sees the whole policy rather than one hard-coded mode: ``assigned`` yields
-    the structure's boolean property declaration and ``assignedOn`` the
-    read-only date one. ``active`` and ``native`` carry no property — they
-    reach the adapter's enumeration gate through the evaluator seam
+    the structure's boolean property declaration, ``activeOrAssigned`` the same
+    boolean (its status half is carried by the settings document itself), and
+    ``assignedOn`` the read-only date one. ``active`` and ``native`` carry no
+    property — they reach the adapter's enumeration gate through the evaluator
+    seam
     (:meth:`capacities_assignment.AssignmentSettings.from_v2` projects them
     onto ``active_structures`` / ``native_task_structures``) — so they
     resolve nothing here. A declaration without a property id is skipped
@@ -1164,7 +1166,7 @@ def _mode_declarations(settings: Any) -> tuple[dict[str, str], dict[str, str]]:
         property_id = getattr(declaration, "property_id", None)
         if not isinstance(property_id, str) or not property_id:
             continue
-        if mode == "assigned":
+        if mode in {"assigned", "activeOrAssigned"}:
             declarations[structure_id] = property_id
         elif mode == "assignedOn":
             on_declarations[structure_id] = property_id
