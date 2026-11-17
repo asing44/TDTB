@@ -55,6 +55,7 @@ from typing import Any, Callable, Iterable, Iterator
 
 import app_config
 import capacities_cache_io
+import capacities_property_names
 import capacities_refresh
 import capacities_refresh_state
 import capacities_rules
@@ -1128,6 +1129,10 @@ class CapacitiesBuilderConfig:
     #: Machine-local durable-cache path. ``None`` uses
     #: ``DEFAULT_CONTENT_CACHE_PATH``; tests inject a ``tmp_path``.
     cache_path: Path | None = None
+    #: Machine-local property-name store path (``capacities_property_names``).
+    #: ``None`` uses the direct-refresh state root the contract cache lives in;
+    #: tests inject a ``tmp_path``.
+    property_names_path: Path | None = None
     #: Machine-local direct-refresh store root. ``None`` uses
     #: ``refresh_state_dir()``; tests inject a ``tmp_path``.
     refresh_state_path: Path | None = None
@@ -1323,6 +1328,11 @@ def build_capacities_adapter(
             assignment_settings=assignment_settings,
             settings=settings,
             content_cache=content_cache,
+            property_names=capacities_property_names.PropertyNameMemory(
+                record.space_id,
+                cfg.base_url,
+                path=cfg.property_names_path,
+            ),
         ),
     )
 
