@@ -1000,14 +1000,20 @@ def _match_calendar_event(
     # blocks: "Mint Afternoon" vs "Mint Afternoon · 16:00") accepts EITHER
     # form: events TDTB already wrote are titled with the timestamped form, and
     # they must stay the same own block — a title change is never a duplicate.
+    #
+    # The time-free title is SHARED by every session in one Mint slot, so it
+    # identifies a block only at the planned start: matching it at any time
+    # would let the 15:30 sibling absorb the 16:00 session (a silent missing
+    # create). Only the unique identity ``name`` keeps the any-time fallback.
     forms = {name} if not title else {name, title}
     title_hit: dict[str, Any] | None = None
     for e in events:
-        if (e.get("title") or "") not in forms:
+        event_title = e.get("title") or ""
+        if event_title not in forms:
             continue
         if time is None or _event_start_hhmm(e) == time:
             return e
-        if title_hit is None:
+        if title_hit is None and event_title == name:
             title_hit = e
     return title_hit
 

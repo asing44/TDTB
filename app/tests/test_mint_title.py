@@ -210,3 +210,53 @@ class TestPersistedSelection:
         )
         assert out["sessions"] == ["mint:afternoon:14:00", SESSION_ID]
         assert out["n"] == 2
+
+
+def test_sibling_sessions_sharing_a_title_stay_distinct():
+    """Every session in one slot is titled "Mint Afternoon"; the 15:30 event
+    must not absorb the 16:00 session (silent missing create)."""
+    items, _z, _n = ext.build_schedulable_blocks(
+        CFG,
+        {"schedulable": {"minting": {"on": True, "sessions": [
+            "mint:afternoon:15:30", "mint:afternoon:16:00"]}}},
+        MONDAY, "09:00",
+        resolved_day_semantics={"effective_allotment_minutes": 60},
+    )
+    mint = [i for i in items if i.get("mint_session")]
+    assert len(mint) == 2
+    manifest = shadow.build_plan_manifest(
+        {}, {"sequence": sequence_module.placement_window_rows(mint)}, CFG,
+    )
+    event_1530 = {
+        "id": "e-1530", "title": DISPLAY_TITLE,
+        "start": datetime(2026, 7, 13, 15, 30), "end": datetime(2026, 7, 13, 16, 0),
+        "calendar_id": OWN_CAL,
+    }
+    diff = shadow.diff_against_live(
+        manifest, {"todoist_tasks": [], "calendar_events": [dict(event_1530)]},
+    )
+    by_name = {e.manifest.name: e for e in diff.entries if e.manifest.system == "calendar"}
+    assert by_name["Mint Afternoon · 15:30"].classification == shadow.NOOP
+    assert by_name["Mint Afternoon · 16:00"].classification == shadow.CREATE
+
+    intents = [i for i in commit.plan_writes(diff, RESOLVED, CFG, today=MONDAY)
+               if i.surface == "calendar"]
+    store = FakeStore(calendars=CALENDARS, events=[dict(event_1530)])
+    result = commit.write_calendar(intents, store, today=MONDAY)
+    assert result.ok and store.created_calls == 1
+    assert sorted(e["start"].strftime("%H:%M") for e in store.query_events(None, None)) == [
+        "15:30", "16:00",
+    ]
+
+
+def test_a_client_title_never_reaches_the_calendar_write():
+    import main
+
+    rows = [
+        {"id": SESSION_ID, "title": "CLIENT TITLE"},
+        {"id": "Some Other Block", "title": "CLIENT TITLE"},
+    ]
+    sched = [{"id": SESSION_ID, "name": LEGACY_NAME, "title": DISPLAY_TITLE}]
+    main._restamp_display_titles(rows, sched)
+    assert rows[0]["title"] == DISPLAY_TITLE
+    assert "title" not in rows[1]
